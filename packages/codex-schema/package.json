@@ -1,0 +1,11 @@
+{
+  "name": "@codex-web/codex-schema",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./generated/index.ts",
+    "./generated/*": "./generated/*.ts",
+    "./v2/*": "./generated/v2/*.ts"
+  }
+}

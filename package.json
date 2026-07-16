@@ -1,0 +1,32 @@
+{
+  "name": "my-codex-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "bin": { "codex-web": "./bin/codex-web.mjs" },
+  "scripts": {
+    "predev": "npm run build:packages",
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev -w @codex-web/server\" \"npm run dev -w @codex-web/web\"",
+    "build:packages": "npm run build -w @codex-web/shared-types && npm run build -w @codex-web/codex-adapter",
+    "build": "npm run build:packages && npm run build -w @codex-web/web && npm run build -w @codex-web/server",
+    "start": "node apps/server/dist/index.js",
+    "check": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "schema:generate": "node scripts/generate-schema.mjs",
+    "schema:check": "node scripts/check-schema.mjs",
+    "protocol:harness": "tsx scripts/protocol-harness.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": { "node": ">=22" }
+}

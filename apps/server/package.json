@@ -1,0 +1,26 @@
+{
+  "name": "@codex-web/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@codex-web/codex-adapter": "*",
+    "@codex-web/shared-types": "*",
+    "@fastify/cookie": "^11.0.0",
+    "@fastify/static": "^8.2.0",
+    "better-sqlite3": "^12.2.0",
+    "fastify": "^5.5.0",
+    "open": "^10.2.0",
+    "pino": "^9.9.0",
+    "ws": "^8.18.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/ws": "^8.18.1"
+  }
+}

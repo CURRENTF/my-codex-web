@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Codex Web / Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.DS_Store
+*.log
+*.db
+*.db-shm
+*.db-wal
+.runtime/
+playwright-report/
+test-results/
+.playwright-cli/
+output/

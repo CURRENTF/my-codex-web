@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "dist", "noEmit": true },
+  "references": [
+    { "path": "../../packages/shared-types" },
+    { "path": "../../packages/codex-adapter" }
+  ],
+  "include": ["src"]
+}
