@@ -12,13 +12,15 @@ export async function pickDirectory(): Promise<string | null> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("User canceled") || message.includes("-128")) return null;
-      throw error;
+      return null;
     }
   }
   if (process.platform === "win32") {
-    const script = "Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; if($d.ShowDialog() -eq 'OK'){Write-Output $d.SelectedPath}";
-    const { stdout } = await execFileAsync("powershell", ["-NoProfile", "-Command", script], { timeout: 120_000 });
-    return stdout.trim() || null;
+    try {
+      const script = "Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; if($d.ShowDialog() -eq 'OK'){Write-Output $d.SelectedPath}";
+      const { stdout } = await execFileAsync("powershell", ["-NoProfile", "-Command", script], { timeout: 120_000 });
+      return stdout.trim() || null;
+    } catch { return null; }
   }
   for (const [command, args] of [["zenity", ["--file-selection", "--directory"]], ["kdialog", ["--getexistingdirectory"]]] as const) {
     try {
@@ -27,4 +29,16 @@ export async function pickDirectory(): Promise<string | null> {
     } catch { /* try next picker */ }
   }
   return null;
+}
+
+export async function revealDirectory(directoryPath: string): Promise<void> {
+  if (process.platform === "darwin") {
+    await execFileAsync("open", ["-R", directoryPath]);
+    return;
+  }
+  if (process.platform === "win32") {
+    await execFileAsync("explorer.exe", [directoryPath]);
+    return;
+  }
+  await execFileAsync("xdg-open", [directoryPath]);
 }

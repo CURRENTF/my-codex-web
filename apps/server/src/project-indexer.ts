@@ -1,15 +1,10 @@
-import { access, realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import type { Project } from "@codex-web/shared-types";
 import type { CodexAdapter } from "@codex-web/codex-adapter";
 import { Repositories } from "./database.js";
-
-function sourceKind(source: unknown): string {
-  if (typeof source === "string") return source;
-  if (source && typeof source === "object" && "custom" in source) return String((source as { custom: unknown }).custom);
-  return "unknown";
-}
 
 export function isPathInside(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
@@ -22,13 +17,15 @@ export function longestProjectMatch(cwd: string, projects: Project[]): Project |
     .sort((left, right) => right.canonicalPath.length - left.canonicalPath.length)[0] ?? null;
 }
 
-export class ProjectIndexer {
+export class ProjectIndexer extends EventEmitter {
   private scanning: Promise<void> | null = null;
+  private scanAgain = false;
 
-  constructor(private readonly repositories: Repositories, private readonly adapter: CodexAdapter) {}
+  constructor(private readonly repositories: Repositories, private readonly adapter: CodexAdapter) { super(); }
 
   async addProject(rootPath: string, displayName?: string): Promise<Project> {
-    await access(rootPath);
+    if (!path.isAbsolute(rootPath)) throw new Error("Project path must be absolute");
+    if (!(await stat(rootPath)).isDirectory()) throw new Error("Project path must be a directory");
     const canonicalPath = await realpath(rootPath);
     const existing = this.repositories.getProjectByCanonicalPath(canonicalPath);
     if (existing) return existing;
@@ -53,26 +50,44 @@ export class ProjectIndexer {
   }
 
   async scanRoot(project: Project): Promise<void> {
-    const response = await this.adapter.listSessions({ cwd: project.canonicalPath, limit: 100 });
     const now = Date.now();
-    for (const thread of response.data) {
-      this.repositories.upsertProjectSession({
-        thread_id: thread.id,
-        project_id: project.id,
-        cwd_snapshot: thread.cwd,
-        source_kind: sourceKind(thread.source),
-        origin: "discovered",
-        parent_thread_id: thread.forkedFromId,
-        fork_turn_id: null,
-        added_at: now,
-        last_seen_at: now,
-      });
-    }
+    let cursor: string | null = null;
+    do {
+      const response = await this.adapter.listSessions({ cwd: project.canonicalPath, cursor, limit: 100 });
+      for (const thread of response.data) {
+        this.repositories.upsertProjectSession({
+          thread_id: thread.id,
+          project_id: project.id,
+          cwd_snapshot: thread.cwd,
+          source_kind: thread.sourceKind,
+          origin: "discovered",
+          parent_thread_id: thread.forkedFromId,
+          fork_turn_id: null,
+          added_at: now,
+          last_seen_at: now,
+        });
+      }
+      cursor = response.nextCursor;
+    } while (cursor);
+  }
+
+  async scanStartupRoots(): Promise<void> {
+    const projects = this.repositories.listProjects().filter((project) => project.available);
+    await Promise.all(projects.map((project) => this.scanRoot(project)));
   }
 
   async scanAll(): Promise<void> {
-    if (this.scanning) return this.scanning;
-    this.scanning = this.performScanAll().finally(() => { this.scanning = null; });
+    if (this.scanning) {
+      this.scanAgain = true;
+      return this.scanning;
+    }
+    this.scanning = (async () => {
+      do {
+        this.scanAgain = false;
+        await this.performScanAll();
+        this.emit("scanComplete");
+      } while (this.scanAgain);
+    })().finally(() => { this.scanning = null; });
     return this.scanning;
   }
 
@@ -94,7 +109,7 @@ export class ProjectIndexer {
           thread_id: thread.id,
           project_id: existing?.origin === "manual" ? existing.project_id : project.id,
           cwd_snapshot: canonicalCwd,
-          source_kind: sourceKind(thread.source),
+          source_kind: thread.sourceKind,
           origin: existing?.origin ?? "discovered",
           parent_thread_id: existing?.parent_thread_id ?? thread.forkedFromId,
           fork_turn_id: existing?.fork_turn_id ?? null,

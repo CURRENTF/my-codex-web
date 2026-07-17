@@ -1,0 +1,9 @@
+[
+  { "method": "turn/started", "params": { "threadId": "thread-fixture", "turn": { "id": "turn-fixture", "status": "inProgress" } } },
+  { "method": "item/reasoning/summaryTextDelta", "params": { "threadId": "thread-fixture", "turnId": "turn-fixture", "itemId": "reasoning-fixture", "delta": "sanitized reasoning summary" } },
+  { "method": "item/started", "params": { "threadId": "thread-fixture", "turnId": "turn-fixture", "item": { "type": "commandExecution", "id": "command-fixture", "command": "sanitized read-only command", "cwd": "/sanitized/project", "status": "inProgress", "aggregatedOutput": null, "exitCode": null, "durationMs": null } } },
+  { "method": "item/commandExecution/outputDelta", "params": { "threadId": "thread-fixture", "turnId": "turn-fixture", "itemId": "command-fixture", "delta": "sanitized output\n" } },
+  { "method": "item/completed", "params": { "threadId": "thread-fixture", "turnId": "turn-fixture", "item": { "type": "commandExecution", "id": "command-fixture", "command": "sanitized read-only command", "cwd": "/sanitized/project", "status": "completed", "aggregatedOutput": "sanitized output\n", "exitCode": 0, "durationMs": 10 } } },
+  { "method": "item/agentMessage/delta", "params": { "threadId": "thread-fixture", "turnId": "turn-fixture", "itemId": "agent-fixture", "delta": "sanitized final response" } },
+  { "method": "turn/completed", "params": { "threadId": "thread-fixture", "turn": { "id": "turn-fixture", "status": "completed" } } }
+]

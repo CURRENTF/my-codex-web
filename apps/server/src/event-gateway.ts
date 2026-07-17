@@ -14,6 +14,8 @@ export class EventGateway extends EventEmitter {
     });
   }
 
+  get currentSeq(): number { return this.seq; }
+
   handleUpgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
     if (!this.authenticate(request)) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");

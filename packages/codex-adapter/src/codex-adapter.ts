@@ -1,9 +1,8 @@
 import { EventEmitter } from "node:events";
-import type { AccessMode, ModelOption } from "@codex-web/shared-types";
+import type { AccessMode, Goal, ModelOption, SessionThread, SessionTurn } from "@codex-web/shared-types";
 import type { Account } from "@codex-web/codex-schema/v2/Account";
 import type { GetAccountResponse } from "@codex-web/codex-schema/v2/GetAccountResponse";
 import type { ModelListResponse } from "@codex-web/codex-schema/v2/ModelListResponse";
-import type { Thread } from "@codex-web/codex-schema/v2/Thread";
 import type { ThreadForkResponse } from "@codex-web/codex-schema/v2/ThreadForkResponse";
 import type { ThreadGoal } from "@codex-web/codex-schema/v2/ThreadGoal";
 import type { ThreadGoalGetResponse } from "@codex-web/codex-schema/v2/ThreadGoalGetResponse";
@@ -11,10 +10,15 @@ import type { ThreadGoalSetParams } from "@codex-web/codex-schema/v2/ThreadGoalS
 import type { ThreadGoalSetResponse } from "@codex-web/codex-schema/v2/ThreadGoalSetResponse";
 import type { ThreadListResponse } from "@codex-web/codex-schema/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "@codex-web/codex-schema/v2/ThreadReadResponse";
+import type { ThreadResumeResponse } from "@codex-web/codex-schema/v2/ThreadResumeResponse";
 import type { ThreadStartResponse } from "@codex-web/codex-schema/v2/ThreadStartResponse";
+import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
 import type { TurnStartResponse } from "@codex-web/codex-schema/v2/TurnStartResponse";
-import type { RpcServerRequest } from "./json-rpc-transport.js";
+import { JsonRpcError, type RpcServerRequest } from "./json-rpc-transport.js";
+import { projectAdapterEvent } from "./adapter-events.js";
+import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
+import { projectThread, projectTurn } from "./ui-projection.js";
 
 export interface AdapterOptions {
   cwd: string;
@@ -32,9 +36,23 @@ export interface ListSessionsInput {
 }
 
 export interface SessionSettings {
-  model?: string | null;
-  reasoning?: string | null;
+  model: string | null;
+  reasoning: string | null;
   accessMode: AccessMode;
+}
+
+export interface ResumedSession {
+  thread: SessionThread;
+  settings: SessionSettings;
+}
+
+export interface ListedSession {
+  id: string; preview: string; name: string | null; cwd: string; sourceKind: string;
+  createdAt: number; updatedAt: number; forkedFromId: string | null;
+}
+
+export interface GoalUpdate {
+  threadId: string; objective?: string; status?: "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete"; tokenBudget?: number | null;
 }
 
 const SIDE_CHAT_INSTRUCTIONS = `You are in a side chat forked from a parent Codex session. The parent history is reference context only. Do not continue the parent task or plan. Only messages after the side-chat boundary define the current task. Default to explanation and lightweight exploration. Modify files only when the side-chat user explicitly asks. Do not start, steer, or control subagents belonging to the parent session.`;
@@ -57,11 +75,41 @@ function sandboxPolicy(accessMode: AccessMode, cwd: string) {
   };
 }
 
+function reasoningConfig(settings: Pick<SessionSettings, "reasoning">): { model_reasoning_effort: string } | undefined {
+  return settings.reasoning ? { model_reasoning_effort: settings.reasoning } : undefined;
+}
+
+type ProtocolSessionSettings = Pick<ThreadSettings, "model" | "effort" | "approvalPolicy" | "sandboxPolicy">;
+
+export function projectSessionSettings(settings: ProtocolSessionSettings): SessionSettings {
+  const accessMode: AccessMode = settings.sandboxPolicy.type === "dangerFullAccess" && settings.approvalPolicy === "never"
+    ? "fullAccess"
+    : settings.sandboxPolicy.type === "workspaceWrite"
+      ? "workspaceWrite"
+      : "readOnly";
+  return {
+    model: settings.model || null,
+    reasoning: settings.effort ?? null,
+    accessMode,
+  };
+}
+
+function projectResumeSettings(response: ThreadResumeResponse): SessionSettings {
+  return projectSessionSettings({
+    model: response.model,
+    effort: response.reasoningEffort,
+    approvalPolicy: response.approvalPolicy,
+    sandboxPolicy: response.sandbox,
+  });
+}
+
 export class CodexAdapter extends EventEmitter {
   readonly supervisor: CodexProcessSupervisor;
   private ready = false;
   private accountValue: Account | null = null;
+  private accountChecked = false;
   private modelsValue: ModelOption[] = [];
+  private readonly pendingRequests = new Map<string, RpcServerRequest>();
 
   constructor(private readonly options: AdapterOptions) {
     super();
@@ -70,14 +118,30 @@ export class CodexAdapter extends EventEmitter {
       cwd: options.cwd,
       codexHome: options.codexHome,
     });
-    this.supervisor.on("notification", (message) => this.emit("notification", message));
-    this.supervisor.on("serverRequest", (request) => this.emit("serverRequest", request));
+    this.supervisor.on("notification", (message) => {
+      const event = projectAdapterEvent(message);
+      if (!event) return;
+      if (event.type === "serverRequestResolved") this.pendingRequests.delete(event.requestId);
+      this.emit("event", event);
+    });
+    this.supervisor.on("serverRequest", (request: RpcServerRequest) => {
+      const projected = projectPendingRequest(request);
+      if (!projected) {
+        this.supervisor.transport.respondError(request.id, -32_601, "Codex Web does not support this server request");
+        return;
+      }
+      this.pendingRequests.set(projected.id, request);
+      this.emit("pendingRequest", projected);
+    });
     this.supervisor.on("stderr", (line) => this.emit("stderr", line));
     this.supervisor.on("disconnected", (details) => {
       this.ready = false;
       this.emit("connection", { state: "disconnected", details });
     });
-    this.supervisor.on("restart", () => void this.initialize().catch((error) => this.emit("error", error)));
+    this.supervisor.on("restart", () => void this.initialize().catch((error) => {
+      this.emit("error", error);
+      this.supervisor.retryCurrent();
+    }));
   }
 
   get connected(): boolean { return this.ready; }
@@ -86,7 +150,10 @@ export class CodexAdapter extends EventEmitter {
 
   async start(): Promise<void> {
     await this.supervisor.start();
-    await this.initialize();
+    await this.initialize().catch((error) => {
+      this.emit("error", error);
+      this.supervisor.retryCurrent();
+    });
   }
 
   stop(): void { this.supervisor.stop(); }
@@ -99,8 +166,14 @@ export class CodexAdapter extends EventEmitter {
       capabilities: null,
     });
     transport.notify("initialized");
-    const [account, models] = await Promise.all([this.readAccount(), this.listModels()]);
-    this.accountValue = account.account;
+    const [account, models] = await Promise.all([
+      this.accountChecked ? Promise.resolve(null) : this.readAccount(),
+      this.listModels(),
+    ]);
+    if (account) {
+      this.accountValue = account.account;
+      this.accountChecked = true;
+    }
     this.modelsValue = models;
     this.ready = true;
     this.supervisor.markReady();
@@ -128,8 +201,8 @@ export class CodexAdapter extends EventEmitter {
     }));
   }
 
-  async listSessions(input: ListSessionsInput = {}): Promise<ThreadListResponse> {
-    return this.supervisor.transport.request("thread/list", {
+  async listSessions(input: ListSessionsInput = {}): Promise<{ data: ListedSession[]; nextCursor: string | null }> {
+    const response = await this.supervisor.transport.request<ThreadListResponse>("thread/list", {
       cursor: input.cursor ?? null,
       limit: input.limit ?? 100,
       sortKey: "updated_at",
@@ -139,35 +212,39 @@ export class CodexAdapter extends EventEmitter {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.searchTerm ? { searchTerm: input.searchTerm } : {}),
     });
+    return { data: response.data.map((thread) => ({ id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId })), nextCursor: response.nextCursor };
   }
 
-  async readSession(threadId: string): Promise<Thread> {
+  async readSession(threadId: string): Promise<SessionThread> {
     const response = await this.supervisor.transport.request<ThreadReadResponse>("thread/read", { threadId, includeTurns: true });
-    return response.thread;
+    return projectThread(response.thread);
   }
 
-  async resumeSession(threadId: string, settings?: Partial<SessionSettings>): Promise<Thread> {
-    const response = await this.supervisor.transport.request<{ thread: Thread }>("thread/resume", {
+  async resumeSession(threadId: string, settings?: Partial<SessionSettings>): Promise<ResumedSession> {
+    const response = await this.supervisor.transport.request<ThreadResumeResponse>("thread/resume", {
       threadId,
       ...(settings?.model ? { model: settings.model } : {}),
       ...(settings?.accessMode ? { approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request", sandbox: sandboxMode(settings.accessMode) } : {}),
+      ...(settings?.reasoning ? { config: reasoningConfig({ reasoning: settings.reasoning }) } : {}),
     });
-    return response.thread;
+    return { thread: projectThread(response.thread), settings: projectResumeSettings(response) };
   }
 
-  async startSession(cwd: string, settings: SessionSettings, ephemeral = false): Promise<ThreadStartResponse> {
-    return this.supervisor.transport.request("thread/start", {
+  async startSession(cwd: string, settings: SessionSettings, ephemeral = false): Promise<{ thread: SessionThread }> {
+    const response = await this.supervisor.transport.request<ThreadStartResponse>("thread/start", {
       cwd,
       model: settings.model ?? null,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
+      ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
       ephemeral,
       threadSource: "codex-web",
     });
+    return { thread: projectThread(response.thread) };
   }
 
-  async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string): Promise<TurnStartResponse> {
-    return this.supervisor.transport.request("turn/start", {
+  async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string): Promise<{ turn: SessionTurn }> {
+    const response = await this.supervisor.transport.request<TurnStartResponse>("turn/start", {
       threadId,
       clientUserMessageId,
       input: [{ type: "text", text, text_elements: [] }],
@@ -177,6 +254,7 @@ export class CodexAdapter extends EventEmitter {
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandboxPolicy: sandboxPolicy(settings.accessMode, cwd),
     });
+    return { turn: projectTurn(response.turn) };
   }
 
   async steerTurn(threadId: string, expectedTurnId: string, text: string, clientUserMessageId: string): Promise<{ turnId: string }> {
@@ -192,20 +270,7 @@ export class CodexAdapter extends EventEmitter {
     await this.supervisor.transport.request("turn/interrupt", { threadId, turnId });
   }
 
-  async forkSession(threadId: string, lastTurnId: string | null, settings: SessionSettings, ephemeral = false, cwd = this.options.cwd): Promise<ThreadForkResponse> {
-    return this.supervisor.transport.request("thread/fork", {
-      threadId,
-      ...(lastTurnId ? { lastTurnId } : {}),
-      ...(settings.model ? { model: settings.model } : {}),
-      cwd,
-      approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
-      sandbox: sandboxMode(settings.accessMode),
-      ephemeral,
-      threadSource: "codex-web",
-    });
-  }
-
-  async createSideChat(threadId: string, lastTurnId: string | null, settings: SessionSettings, cwd = this.options.cwd): Promise<ThreadForkResponse> {
+  async forkSession(threadId: string, lastTurnId: string | null, settings: SessionSettings, ephemeral = false, cwd = this.options.cwd): Promise<{ thread: SessionThread }> {
     const response = await this.supervisor.transport.request<ThreadForkResponse>("thread/fork", {
       threadId,
       ...(lastTurnId ? { lastTurnId } : {}),
@@ -213,29 +278,62 @@ export class CodexAdapter extends EventEmitter {
       cwd,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
+      ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
+      ephemeral,
+      threadSource: "codex-web",
+    });
+    return { thread: projectThread(response.thread) };
+  }
+
+  async createSideChat(threadId: string, lastTurnId: string | null, settings: SessionSettings, cwd = this.options.cwd): Promise<{ thread: SessionThread }> {
+    const response = await this.supervisor.transport.request<ThreadForkResponse>("thread/fork", {
+      threadId,
+      ...(lastTurnId ? { lastTurnId } : {}),
+      ...(settings.model ? { model: settings.model } : {}),
+      cwd,
+      approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
+      sandbox: sandboxMode(settings.accessMode),
+      ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
       ephemeral: true,
       developerInstructions: SIDE_CHAT_INSTRUCTIONS,
       threadSource: "codex-web-side-chat",
     });
-    await this.supervisor.transport.request("thread/inject_items", {
-      threadId: response.thread.id,
-      items: [{ type: "message", role: "developer", content: [{ type: "input_text", text: "SIDE CHAT BOUNDARY: Only messages after this item are the current task." }] }],
-    }, 5_000).catch((error) => this.emit("warning", { method: "thread/inject_items", error }));
-    await this.clearGoal(response.thread.id).catch(() => undefined);
-    return response;
+    await this.initializeSideChatThread(response.thread.id);
+    return { thread: projectThread(response.thread) };
   }
 
-  async createEmptySideChat(cwd: string, settings: SessionSettings): Promise<ThreadStartResponse> {
+  async createEmptySideChat(cwd: string, settings: SessionSettings): Promise<{ thread: SessionThread }> {
     const response = await this.supervisor.transport.request<ThreadStartResponse>("thread/start", {
       cwd,
       ...(settings.model ? { model: settings.model } : {}),
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
+      ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
       ephemeral: true,
       developerInstructions: SIDE_CHAT_INSTRUCTIONS,
       threadSource: "codex-web-side-chat",
     });
-    return response;
+    await this.initializeSideChatThread(response.thread.id);
+    return { thread: projectThread(response.thread) };
+  }
+
+  private async initializeSideChatThread(threadId: string): Promise<void> {
+    try {
+      await this.supervisor.transport.request("thread/inject_items", {
+        threadId,
+        items: [{ type: "message", role: "user", content: [{ type: "input_text", text: "SIDE CHAT BOUNDARY: Only messages after this item are the current task." }] }],
+      }, 15_000);
+    } catch (error) {
+      await this.unsubscribe(threadId).catch(() => undefined);
+      throw error;
+    }
+    try {
+      await this.clearGoal(threadId);
+    } catch (error) {
+      if (error instanceof JsonRpcError && error.message.includes("ephemeral thread does not support goals")) return;
+      await this.unsubscribe(threadId).catch(() => undefined);
+      throw error;
+    }
   }
 
   async unsubscribe(threadId: string): Promise<void> {
@@ -250,21 +348,35 @@ export class CodexAdapter extends EventEmitter {
     await this.supervisor.transport.request("thread/archive", { threadId });
   }
 
-  async getGoal(threadId: string): Promise<ThreadGoal | null> {
+  async getGoal(threadId: string): Promise<Goal | null> {
     const response = await this.supervisor.transport.request<ThreadGoalGetResponse>("thread/goal/get", { threadId });
-    return response.goal;
+    return response.goal ? projectGoal(response.goal) : null;
   }
 
-  async setGoal(params: ThreadGoalSetParams): Promise<ThreadGoal> {
-    const response = await this.supervisor.transport.request<ThreadGoalSetResponse>("thread/goal/set", params);
-    return response.goal;
+  async setGoal(params: GoalUpdate): Promise<Goal> {
+    const response = await this.supervisor.transport.request<ThreadGoalSetResponse>("thread/goal/set", params as ThreadGoalSetParams);
+    return projectGoal(response.goal);
   }
 
   async clearGoal(threadId: string): Promise<void> {
     await this.supervisor.transport.request("thread/goal/clear", { threadId });
   }
 
-  respondToServerRequest(request: RpcServerRequest, result: unknown): void {
+  respondPendingRequest(requestId: string, allow: boolean, answers: Record<string, string[]> = {}): void {
+    const request = this.pendingRequests.get(requestId);
+    if (!request) throw new Error("Pending request not found");
+    const result = pendingRequestResponse(request, allow, answers);
     this.supervisor.transport.respond(request.id, result);
+    this.pendingRequests.delete(requestId);
   }
+}
+
+function protocolSourceKind(source: unknown): string {
+  if (typeof source === "string") return source;
+  if (source && typeof source === "object" && "custom" in source) return String((source as { custom: unknown }).custom);
+  return "unknown";
+}
+
+function projectGoal(goal: ThreadGoal): Goal {
+  return { ...goal };
 }

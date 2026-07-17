@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { AccessMode, SessionSummary, SideChatRuntime } from "@codex-web/shared-types";
-import { CodexAdapter, JsonRpcError } from "@codex-web/codex-adapter";
+import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
+import { CodexAdapter, JsonRpcError, type AdapterEvent, type AdapterPendingRequest, type SessionSettings } from "@codex-web/codex-adapter";
 import { Repositories, type ProjectSessionRow } from "./database.js";
 import { ProjectIndexer } from "./project-indexer.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
@@ -9,30 +9,173 @@ export class SteerConflictError extends Error {
   constructor() { super("The active turn finished before the steer message could be sent"); }
 }
 
+export class ForkBoundaryError extends Error {
+  constructor(message: string) { super(message); }
+}
+
+export class ActiveTurnConflictError extends Error {
+  constructor(operation: string) { super(`${operation} is unavailable while a Turn is active`); }
+}
+
+export function isUnmaterializedSessionReadError(error: unknown): boolean {
+  return error instanceof JsonRpcError && (error.message.includes("not materialized yet") || /rollout\b.*\bis empty\b/i.test(error.message));
+}
+
 interface TurnSettings { model?: string | null; reasoning?: string | null; accessMode?: AccessMode }
+interface ProjectSettings { defaultModel: string | null; defaultReasoning: string | null; defaultAccessMode: AccessMode }
 type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
 type SnapshotItem = SnapshotTurn["items"][number];
-type AdapterNotification = { method: string; params?: unknown };
+
+export function assertValidForkBoundary(turns: SnapshotTurn[], lastTurnId: string | null): void {
+  if (lastTurnId === null) throw new ForkBoundaryError("A completed Turn boundary is required for a non-empty Fork");
+  const turn = turns.find((candidate) => candidate.id === lastTurnId);
+  if (!turn) throw new ForkBoundaryError("Fork boundary Turn was not found in this Session");
+  if (turn.status !== "completed") throw new ForkBoundaryError("Only a completed Turn can be used as a Fork boundary");
+}
+
+export function resolveSessionSettings(project: ProjectSettings, input: TurnSettings, current?: { model: string | null; reasoning: string | null; accessMode: AccessMode }) {
+  return {
+    model: input.model ?? current?.model ?? project.defaultModel,
+    reasoning: input.reasoning ?? current?.reasoning ?? project.defaultReasoning,
+    accessMode: input.accessMode ?? current?.accessMode ?? project.defaultAccessMode,
+  };
+}
+
+function stableValue(value: unknown, key?: string): unknown {
+  if (key && new Set(["id", "clientId", "processId", "status", "durationMs", "aggregatedOutput", "exitCode", "result", "error", "contentItems", "success", "memoryCitation", "agentsStates"]).has(key)) return undefined;
+  if (Array.isArray(value)) return value.map((item) => stableValue(item)).filter((item) => item !== undefined);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).flatMap(([childKey, childValue]) => {
+      const normalized = stableValue(childValue, childKey);
+      return normalized === undefined ? [] : [[childKey, normalized]];
+    }));
+  }
+  return value;
+}
+
+function snapshotItemKey(item: SnapshotItem): string {
+  if (item.type === "userMessage") return `user:${JSON.stringify(item.content)}`;
+  if (item.type === "agentMessage") return `agent:${item.phase ?? ""}:${item.text}`;
+  if (item.type === "plan") return `plan:${item.text}`;
+  if (item.type === "reasoning") return `reasoning:${JSON.stringify([item.summary, item.content])}`;
+  if (item.type === "commandExecution") return `command:${item.cwd}:${item.command}`;
+  if (item.type === "fileChange") return `files:${JSON.stringify(item.changes.map((change) => stableValue(change)))}`;
+  if (item.type === "mcpToolCall") return `mcp:${item.server}:${item.tool}`;
+  if (item.type === "genericToolCall") return `generic:${item.title}`;
+  return JSON.stringify(stableValue(item));
+}
+
+function occurrenceKeys(items: SnapshotItem[], sharedIdentities: Set<string>): string[] {
+  const counts = new Map<string, number>();
+  return items.map((item) => {
+    const identity = `${item.type}\u0000${item.id}`;
+    if (sharedIdentities.has(identity)) return `id:${identity}`;
+    const key = snapshotItemKey(item);
+    const occurrence = (counts.get(key) ?? 0) + 1;
+    counts.set(key, occurrence);
+    return `${key}\u0000${occurrence}`;
+  });
+}
+
+function commonItemPairs(primary: SnapshotItem[], supplemental: SnapshotItem[]): Array<[number, number]> {
+  const supplementalIdentities = new Set(supplemental.map((item) => `${item.type}\u0000${item.id}`));
+  const sharedIdentities = new Set(primary.map((item) => `${item.type}\u0000${item.id}`).filter((identity) => supplementalIdentities.has(identity)));
+  const left = occurrenceKeys(primary, sharedIdentities); const right = occurrenceKeys(supplemental, sharedIdentities);
+  const lengths = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0));
+  for (let leftIndex = left.length - 1; leftIndex >= 0; leftIndex -= 1) {
+    for (let rightIndex = right.length - 1; rightIndex >= 0; rightIndex -= 1) {
+      lengths[leftIndex]![rightIndex] = left[leftIndex] === right[rightIndex]
+        ? lengths[leftIndex + 1]![rightIndex + 1]! + 1
+        : Math.max(lengths[leftIndex + 1]![rightIndex]!, lengths[leftIndex]![rightIndex + 1]!);
+    }
+  }
+  const pairs: Array<[number, number]> = [];
+  let leftIndex = 0; let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) { pairs.push([leftIndex, rightIndex]); leftIndex += 1; rightIndex += 1; }
+    else if (lengths[leftIndex + 1]![rightIndex]! >= lengths[leftIndex]![rightIndex + 1]!) leftIndex += 1;
+    else rightIndex += 1;
+  }
+  return pairs;
+}
+
+function itemRichness(item: SnapshotItem): number {
+  if (item.type === "commandExecution") return (item.aggregatedOutput?.length ?? 0) + (item.exitCode !== null ? 1_000 : 0) + (item.durationMs !== null ? 100 : 0) + (item.status === "completed" ? 10 : 0);
+  if (item.type === "fileChange") return item.changes.reduce((total, change) => total + (change.diff?.length ?? 0), 0) + (item.status === "completed" ? 10 : 0);
+  if (item.type === "mcpToolCall") return (item.durationMs !== null ? 100 : 0) + (item.status === "completed" ? 10 : 0);
+  if (item.type === "genericToolCall") return item.title.length + (item.status === "completed" ? 10 : 0);
+  return JSON.stringify(item).length;
+}
+
+function richerItem(primary: SnapshotItem, supplemental: SnapshotItem): SnapshotItem {
+  if (primary.type === "commandExecution" && supplemental.type === "commandExecution") {
+    return mergeCommandExecution(supplemental, primary);
+  }
+  return itemRichness(primary) >= itemRichness(supplemental) ? primary : supplemental;
+}
+
+function mergeCommandExecution(
+  previous: Extract<SnapshotItem, { type: "commandExecution" }>,
+  incoming: Extract<SnapshotItem, { type: "commandExecution" }>,
+): Extract<SnapshotItem, { type: "commandExecution" }> {
+  return {
+    ...previous,
+    ...incoming,
+    aggregatedOutput: mergeStreamingText(previous.aggregatedOutput, incoming.aggregatedOutput) || null,
+  };
+}
+
+function mergeSnapshotItems(primary: SnapshotItem[], supplemental: SnapshotItem[]): SnapshotItem[] {
+  const merged: SnapshotItem[] = [];
+  let primaryIndex = 0; let supplementalIndex = 0;
+  for (const [primaryAnchor, supplementalAnchor] of commonItemPairs(primary, supplemental)) {
+    merged.push(...supplemental.slice(supplementalIndex, supplementalAnchor));
+    merged.push(...primary.slice(primaryIndex, primaryAnchor));
+    const primaryItem = primary[primaryAnchor]!;
+    const supplementalItem = supplemental[supplementalAnchor]!;
+    merged.push(primaryItem.type === "plan" && supplementalItem.type === "plan" ? supplementalItem : richerItem(primaryItem, supplementalItem));
+    primaryIndex = primaryAnchor + 1; supplementalIndex = supplementalAnchor + 1;
+  }
+  merged.push(...supplemental.slice(supplementalIndex));
+  merged.push(...primary.slice(primaryIndex));
+  return merged;
+}
+
+export function mergeSessionSnapshot(primary: SessionSnapshot, supplemental: SessionSnapshot): SessionSnapshot {
+  if (primary.id !== supplemental.id) return primary;
+  const primaryTurns = new Map(primary.turns.map((turn) => [turn.id, turn]));
+  const seen = new Set<string>();
+  const turns = supplemental.turns.map((turn) => {
+    seen.add(turn.id);
+    const current = primaryTurns.get(turn.id);
+    return current ? { ...current, items: mergeSnapshotItems(current.items, turn.items) } : turn;
+  });
+  for (const turn of primary.turns) if (!seen.has(turn.id)) turns.push(turn);
+  return { ...primary, turns };
+}
 
 export class SessionService {
   private readonly locks = new Map<string, Promise<unknown>>();
   private readonly idempotentResults = new Map<string, Promise<unknown>>();
-  private readonly settings = new Map<string, { model: string | null; reasoning: string | null; accessMode: AccessMode }>();
+  private readonly userMessageResults = new Map<string, Promise<unknown>>();
+  private readonly settings = new Map<string, SessionSettings>();
   private readonly sessionSnapshots = new Map<string, SessionSnapshot>();
+  private readonly commandOutputDeltas = new Map<string, string>();
+  private readonly goalPresence = new Map<string, boolean>();
+  private readonly goalPresenceLoading = new Set<string>();
 
   constructor(
     private readonly repositories: Repositories,
     private readonly adapter: CodexAdapter,
     private readonly indexer: ProjectIndexer,
     private readonly runtimes: ThreadRuntimeRegistry,
-  ) {
-    this.adapter.on("notification", (notification: AdapterNotification) => this.updateSessionSnapshot(notification));
-  }
+  ) {}
 
   async listSessions(options: { projectId?: string; search?: string; sortDirection?: "asc" | "desc" } = {}): Promise<SessionSummary[]> {
     const mappings = this.repositories.listProjectSessions(options.projectId);
     if (!mappings.length) return [];
+    void this.ensureGoalPresence(mappings.map((mapping) => mapping.thread_id));
     const mapped = new Map(mappings.map((item) => [item.thread_id, item]));
     const threads = [];
     let cursor: string | null = null;
@@ -40,12 +183,19 @@ export class SessionService {
       const page = await this.adapter.listSessions({ cursor, limit: 100, sortDirection: options.sortDirection ?? "desc", searchTerm: options.search });
       threads.push(...page.data);
       cursor = page.nextCursor;
-    } while (cursor && threads.length < 2_000);
+    } while (cursor);
+    await this.ensureForkSnapshots(mappings);
     const seen = new Set<string>();
+    const threadById = new Map(threads.map((thread) => [thread.id, thread]));
     const summaries = threads.flatMap((thread): SessionSummary[] => {
       const mapping = mapped.get(thread.id);
       if (!mapping) return [];
       seen.add(thread.id);
+      const forkSource = mapping.parent_thread_id ? threadById.get(mapping.parent_thread_id) : undefined;
+      const sourceSnapshot = mapping.parent_thread_id ? this.sessionSnapshots.get(mapping.parent_thread_id) : undefined;
+      const childSnapshot = this.sessionSnapshots.get(thread.id);
+      const boundaryTurns = sourceSnapshot?.turns ?? childSnapshot?.turns ?? [];
+      const forkTurnIndex = mapping.fork_turn_id ? boundaryTurns.findIndex((turn) => turn.id === mapping.fork_turn_id) : -1;
       return [{
         threadId: thread.id,
         projectId: mapping.project_id,
@@ -58,14 +208,17 @@ export class SessionService {
         origin: mapping.origin,
         parentThreadId: mapping.parent_thread_id,
         forkTurnId: mapping.fork_turn_id,
+        forkSourceTitle: forkSource?.name || forkSource?.preview || sourceSnapshot?.name || sourceSnapshot?.preview || null,
+        forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
         runtimeState: this.runtimes.get(thread.id).state,
-        hasGoal: false,
+        hasGoal: this.goalPresence.get(thread.id) ?? false,
       }];
     });
     for (const mapping of mappings) {
       if (seen.has(mapping.thread_id)) continue;
       const snapshot = this.sessionSnapshots.get(mapping.thread_id);
       if (!snapshot) continue;
+      const snapshotForkTurnIndex = mapping.fork_turn_id ? snapshot.turns.findIndex((turn) => turn.id === mapping.fork_turn_id) : -1;
       summaries.push({
         threadId: snapshot.id,
         projectId: mapping.project_id,
@@ -78,42 +231,77 @@ export class SessionService {
         origin: mapping.origin,
         parentThreadId: mapping.parent_thread_id,
         forkTurnId: mapping.fork_turn_id,
+        forkSourceTitle: mapping.parent_thread_id
+          ? threadById.get(mapping.parent_thread_id)?.name || threadById.get(mapping.parent_thread_id)?.preview || this.sessionSnapshots.get(mapping.parent_thread_id)?.name || this.sessionSnapshots.get(mapping.parent_thread_id)?.preview || null
+          : null,
+        forkTurnNumber: snapshotForkTurnIndex >= 0 ? snapshotForkTurnIndex + 1 : null,
         runtimeState: this.runtimes.get(snapshot.id).state,
-        hasGoal: false,
+        hasGoal: this.goalPresence.get(snapshot.id) ?? false,
       });
     }
     return summaries.sort((left, right) => (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
   }
 
   async readSession(threadId: string) {
-    this.runtimes.markViewed(threadId);
     const sideChat = this.runtimes.getSideChat(threadId);
     const sideChatSnapshot = sideChat ? this.sessionSnapshots.get(threadId) : undefined;
     if (sideChatSnapshot) {
       return { thread: sideChatSnapshot, goal: null, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
     }
-    await this.adapter.resumeSession(threadId).catch(() => undefined);
-    const [thread, goal] = await Promise.all([
+    const resumed = await this.adapter.resumeSession(threadId).catch(() => null);
+    if (resumed?.settings) this.settings.set(threadId, resumed.settings);
+    const [persistedThread, goalResult] = await Promise.all([
       this.adapter.readSession(threadId).catch((error) => {
         const snapshot = this.sessionSnapshots.get(threadId);
-        if (snapshot && error instanceof JsonRpcError && error.message.includes("not materialized yet")) return snapshot;
+        if (snapshot && isUnmaterializedSessionReadError(error)) return snapshot;
         throw error;
       }),
-      this.adapter.getGoal(threadId).catch(() => null),
+      this.adapter.getGoal(threadId)
+        .then((goal) => ({ loaded: true as const, goal }))
+        .catch(() => ({ loaded: false as const, goal: null })),
     ]);
-    return { thread, goal, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
+    const snapshot = this.sessionSnapshots.get(threadId);
+    const thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : persistedThread;
+    this.sessionSnapshots.set(threadId, thread);
+    if (goalResult.loaded) this.goalPresence.set(threadId, goalResult.goal !== null);
+    return { thread, goal: goalResult.goal, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
+  }
+
+  markViewed(threadId: string): void {
+    this.runtimes.markViewed(threadId);
   }
 
   async rename(threadId: string, name: string): Promise<void> {
+    this.assertPersistentSession(threadId, "rename");
+    this.assertNoActiveTurn(threadId, "Rename");
     await this.adapter.renameSession(threadId, name);
   }
 
   async archive(threadId: string): Promise<void> {
-    await this.adapter.archiveSession(threadId);
+    this.assertPersistentSession(threadId, "archive");
+    this.assertNoActiveTurn(threadId, "Archive");
+    try {
+      await this.adapter.archiveSession(threadId);
+    } catch (error) {
+      if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) throw error;
+      await this.adapter.unsubscribe(threadId).catch(() => undefined);
+      this.repositories.removeProjectSession(threadId);
+      this.settings.delete(threadId);
+      this.sessionSnapshots.delete(threadId);
+      this.runtimes.notifySessionSummaryUpdated(threadId, "archived-unmaterialized");
+    }
+  }
+
+  moveToProject(threadId: string, projectId: string): ProjectSessionRow {
+    this.assertPersistentSession(threadId, "move between Projects");
+    this.assertNoActiveTurn(threadId, "Move to Project");
+    this.requireMapping(threadId);
+    this.requireProject(projectId);
+    return this.repositories.moveProjectSession(threadId, projectId);
   }
 
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
-    return this.idempotent(clientRequestId, async () => {
+    return this.idempotent(`project:${projectId}:create`, clientRequestId, async () => {
       const project = this.requireProject(projectId);
       const settings = this.resolveSettings(projectId, input);
       const response = await this.adapter.startSession(project.canonicalPath, settings);
@@ -130,11 +318,12 @@ export class SessionService {
   }
 
   async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string }, clientRequestId: string) {
-    return this.idempotent(clientRequestId, () => this.withLock(threadId, async () => {
+    return this.idempotentUserMessage(threadId, "turn", input.clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
       const runtime = this.runtimes.get(threadId);
-      if (runtime.activeTurnId) throw new Error("A turn is already active; use steer instead");
+      if (runtime.activeTurnId) throw new ActiveTurnConflictError("Starting another Turn");
       const mapping = this.requireMapping(threadId);
       const project = this.requireProject(mapping.project_id);
+      await this.ensureSessionSettings(threadId);
       const settings = this.resolveSettings(project.id, input, threadId);
       const response = await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, text, settings, input.clientUserMessageId);
       this.settings.set(threadId, settings);
@@ -145,7 +334,7 @@ export class SessionService {
   }
 
   async steer(threadId: string, text: string, expectedTurnId: string, clientUserMessageId: string, clientRequestId: string) {
-    return this.idempotent(clientRequestId, () => this.withLock(threadId, async () => {
+    return this.idempotentUserMessage(threadId, "steer", clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
       const runtime = this.runtimes.get(threadId);
       if (!runtime.activeTurnId || runtime.activeTurnId !== expectedTurnId) throw new SteerConflictError();
       try {
@@ -164,11 +353,21 @@ export class SessionService {
     });
   }
 
-  async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string) {
-    return this.idempotent(clientRequestId, () => this.withLock(threadId, async () => {
+  async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string, empty = false) {
+    this.assertPersistentSession(threadId, "Fork");
+    return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.withLock(threadId, async () => {
       const mapping = this.requireMapping(threadId);
-      const settings = this.getSettings(threadId);
-      const response = await this.adapter.forkSession(threadId, lastTurnId, settings, false, mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath);
+      const settings = await this.ensureSessionSettings(threadId);
+      const cwd = mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath;
+      let response;
+      if (empty) {
+        if (lastTurnId !== null) throw new ForkBoundaryError("An empty Fork cannot include a Turn boundary");
+        response = await this.adapter.startSession(cwd, settings);
+      } else {
+        const source = await this.readSession(threadId);
+        assertValidForkBoundary(source.thread.turns, lastTurnId);
+        response = await this.adapter.forkSession(threadId, lastTurnId, settings, false, cwd);
+      }
       this.settings.set(response.thread.id, settings);
       this.sessionSnapshots.set(response.thread.id, response.thread);
       const now = Date.now();
@@ -187,79 +386,133 @@ export class SessionService {
     }));
   }
 
-  async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
-    const existing = this.runtimes.listSideChats().find((sideChat) => sideChat.parentThreadId === parentThreadId);
-    if (existing) return existing;
-    const settings = this.getSettings(parentThreadId);
-    const mapping = this.requireMapping(parentThreadId);
-    const cwd = mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath;
-    let response;
-    try {
-      response = await this.adapter.createSideChat(parentThreadId, anchorTurnId, settings, cwd);
-    } catch (error) {
-      if (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found")) throw error;
-      response = await this.adapter.createEmptySideChat(cwd, settings);
+  handlePendingRequest(request: AdapterPendingRequest): void {
+    this.runtimes.handlePendingRequest(request);
+  }
+
+  handleEvent(event: AdapterEvent): void {
+    this.updateSessionSnapshot(event);
+  }
+
+  async reconcileAfterReconnect(): Promise<void> {
+    const sideChats = this.runtimes.listSideChats();
+    const sideChatIds = new Set(sideChats.map((sideChat) => sideChat.threadId));
+    for (const sideChat of sideChats) {
+      this.settings.delete(sideChat.threadId);
+      this.sessionSnapshots.delete(sideChat.threadId);
+      this.runtimes.removeSideChat(sideChat.threadId);
     }
-    this.settings.set(response.thread.id, settings);
-    this.sessionSnapshots.set(response.thread.id, response.thread);
-    const runtime: SideChatRuntime = {
-      threadId: response.thread.id,
-      parentThreadId,
-      ...(anchorTurnId ? { anchorTurnId } : {}),
-      state: "idle",
-      activeFlags: [],
-      pendingRequestIds: [],
-      createdAt: Date.now(),
-    };
-    this.runtimes.registerSideChat(runtime);
-    return runtime;
+    const disconnected = this.runtimes.list().filter((runtime) => runtime.state === "disconnected" && !sideChatIds.has(runtime.threadId));
+    await Promise.all(disconnected.map(async (runtime) => {
+      try {
+        const resumed = await this.adapter.resumeSession(runtime.threadId);
+        this.settings.set(runtime.threadId, resumed.settings);
+        const snapshot = await this.adapter.readSession(runtime.threadId);
+        this.sessionSnapshots.set(runtime.threadId, snapshot);
+        this.runtimes.reconcileFromSnapshot(runtime.threadId, snapshot.turns.at(-1));
+      } catch {
+        // The previous Turn's outcome is unknown after an App Server crash.
+        // Keep the explicit disconnected state until a later successful read.
+      }
+    }));
+  }
+
+  async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
+    this.assertPersistentSession(parentThreadId, "nested Side Chat");
+    return this.withLock(`side-chat:${parentThreadId}`, async () => {
+      const existing = this.runtimes.listSideChats().find((sideChat) => sideChat.parentThreadId === parentThreadId);
+      if (existing) return existing;
+      if (anchorTurnId) {
+        const source = await this.readSession(parentThreadId);
+        assertValidForkBoundary(source.thread.turns, anchorTurnId);
+      }
+      const settings = await this.ensureSessionSettings(parentThreadId);
+      const mapping = this.requireMapping(parentThreadId);
+      const cwd = mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath;
+      let response;
+      try {
+        response = await this.adapter.createSideChat(parentThreadId, anchorTurnId, settings, cwd);
+      } catch (error) {
+        if (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found")) throw error;
+        response = await this.adapter.createEmptySideChat(cwd, settings);
+      }
+      this.settings.set(response.thread.id, settings);
+      this.sessionSnapshots.set(response.thread.id, response.thread);
+      const runtime: SideChatRuntime = {
+        threadId: response.thread.id,
+        parentThreadId,
+        ...(anchorTurnId ? { anchorTurnId } : {}),
+        state: "idle",
+        activeFlags: [],
+        pendingRequestIds: [],
+        createdAt: Date.now(),
+      };
+      this.runtimes.registerSideChat(runtime);
+      return runtime;
+    });
   }
 
   async closeSideChat(threadId: string): Promise<void> {
-    const sideChat = this.runtimes.getSideChat(threadId);
-    if (!sideChat) return;
-    if (sideChat.activeTurnId) {
-      await this.adapter.interruptTurn(threadId, sideChat.activeTurnId).catch(() => undefined);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    await this.adapter.unsubscribe(threadId).catch(() => undefined);
-    this.settings.delete(threadId);
-    this.sessionSnapshots.delete(threadId);
-    this.runtimes.removeSideChat(threadId);
+    return this.withLock(threadId, async () => {
+      const sideChat = this.runtimes.getSideChat(threadId);
+      if (!sideChat) return;
+      if (sideChat.activeTurnId) {
+        await this.adapter.interruptTurn(threadId, sideChat.activeTurnId);
+        const stopped = await this.runtimes.waitForTerminal(threadId, 10_000);
+        if (!stopped) throw new Error("Side Chat Turn did not stop before the close timeout");
+      }
+      await this.adapter.unsubscribe(threadId);
+      this.settings.delete(threadId);
+      this.sessionSnapshots.delete(threadId);
+      this.runtimes.removeSideChat(threadId);
+    });
   }
 
-  async respondPendingRequest(requestId: string, allow: boolean): Promise<void> {
-    const request = this.runtimes.getPendingRequest(requestId);
-    if (!request) throw new Error("Pending request not found");
-    let result: unknown;
-    if (request.method.includes("requestApproval") || request.method === "applyPatchApproval" || request.method === "execCommandApproval") {
-      result = { decision: allow ? "accept" : "decline" };
-    } else if (request.method === "mcpServer/elicitation/request") {
-      result = { action: allow ? "accept" : "decline", content: null, _meta: null };
-    } else if (request.method === "item/tool/requestUserInput") {
-      result = { answers: {} };
-    } else {
-      result = { success: false, contentItems: [] };
-    }
-    this.adapter.respondToServerRequest(request, result);
+  getGoal(threadId: string) {
+    this.assertPersistentSession(threadId, "Goal");
+    return this.adapter.getGoal(threadId);
+  }
+
+  setGoal(params: Parameters<CodexAdapter["setGoal"]>[0]) {
+    this.assertPersistentSession(params.threadId, "Goal");
+    this.assertNoActiveTurn(params.threadId, "Goal update");
+    return this.adapter.setGoal(params);
+  }
+
+  async clearGoal(threadId: string): Promise<void> {
+    this.assertPersistentSession(threadId, "Goal");
+    this.assertNoActiveTurn(threadId, "Goal clear");
+    await this.adapter.clearGoal(threadId);
+  }
+
+  private assertNoActiveTurn(threadId: string, operation: string): void {
+    const runtime = this.runtimes.get(threadId);
+    if (runtime.activeTurnId || runtime.state === "running" || runtime.state === "waitingForInput") throw new ActiveTurnConflictError(operation);
+  }
+
+  async respondPendingRequest(requestId: string, allow: boolean, answers: Record<string, string[]> = {}): Promise<void> {
+    this.adapter.respondPendingRequest(requestId, allow, answers);
     this.runtimes.resolveServerRequest(requestId);
   }
 
   private resolveSettings(projectId: string, input: TurnSettings, threadId?: string) {
     const project = this.requireProject(projectId);
     const current = threadId ? this.settings.get(threadId) : undefined;
-    return {
-      model: input.model ?? current?.model ?? project.defaultModel,
-      reasoning: input.reasoning ?? current?.reasoning ?? project.defaultReasoning,
-      accessMode: input.accessMode ?? current?.accessMode ?? project.defaultAccessMode,
-    };
+    return resolveSessionSettings(project, input, current);
   }
 
   private getSettings(threadId: string) {
     const current = this.settings.get(threadId);
     if (current) return current;
-    const mapping = this.requireMapping(threadId);
-    return this.resolveSettings(mapping.project_id, {});
+    return { model: null, reasoning: null, accessMode: "readOnly" as const };
+  }
+
+  private async ensureSessionSettings(threadId: string): Promise<SessionSettings> {
+    const current = this.settings.get(threadId);
+    if (current) return current;
+    const resumed = await this.adapter.resumeSession(threadId);
+    this.settings.set(threadId, resumed.settings);
+    return resumed.settings;
   }
 
   private requireProject(projectId: string) {
@@ -278,16 +531,22 @@ export class SessionService {
     return mapping;
   }
 
+  private assertPersistentSession(threadId: string, capability: string): void {
+    if (this.runtimes.getSideChat(threadId)) throw new Error(`Side Chat does not support ${capability}`);
+  }
+
   private withLock<T>(threadId: string, action: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(threadId) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(action);
-    this.locks.set(threadId, next.finally(() => {
-      if (this.locks.get(threadId) === next) this.locks.delete(threadId);
-    }));
+    const tracked = next.then(() => undefined, () => undefined).finally(() => {
+      if (this.locks.get(threadId) === tracked) this.locks.delete(threadId);
+    });
+    this.locks.set(threadId, tracked);
     return next;
   }
 
-  private idempotent<T>(key: string, action: () => Promise<T>): Promise<T> {
+  private idempotent<T>(scope: string, clientRequestId: string, action: () => Promise<T>): Promise<T> {
+    const key = `${scope}\u0000${clientRequestId}`;
     const existing = this.idempotentResults.get(key);
     if (existing) return existing as Promise<T>;
     const promise = action();
@@ -296,16 +555,36 @@ export class SessionService {
     return promise;
   }
 
-  private updateSessionSnapshot(notification: AdapterNotification): void {
-    const params = (notification.params ?? {}) as Record<string, unknown>;
-    const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
+  private idempotentUserMessage<T>(threadId: string, operation: "turn" | "steer", clientUserMessageId: string, clientRequestId: string, action: () => Promise<T>): Promise<T> {
+    const messageKey = `${threadId}\u0000${operation}\u0000${clientUserMessageId}`;
+    const existing = this.userMessageResults.get(messageKey);
+    if (existing) return existing as Promise<T>;
+    const promise = this.idempotent(messageKey, clientRequestId, action);
+    this.userMessageResults.set(messageKey, promise);
+    setTimeout(() => this.userMessageResults.delete(messageKey), 5 * 60_000).unref();
+    return promise;
+  }
+
+  private updateSessionSnapshot(event: AdapterEvent): void {
+    const threadId = "threadId" in event ? event.threadId : undefined;
+    if (event.type === "settingsUpdated") this.settings.set(event.threadId, event.settings);
+    if (event.type === "goalUpdated") this.goalPresence.set(event.threadId, true);
+    if (event.type === "goalCleared") this.goalPresence.set(event.threadId, false);
     if (!threadId || !this.sessionSnapshots.has(threadId)) return;
-    if ((notification.method === "turn/started" || notification.method === "turn/completed") && this.isSnapshotTurn(params.turn)) {
-      this.upsertSnapshotTurn(threadId, params.turn);
+    if (event.type === "turnStarted" || event.type === "turnCompleted") {
+      this.upsertSnapshotTurn(threadId, event.turn);
       return;
     }
-    if ((notification.method === "item/started" || notification.method === "item/completed") && typeof params.turnId === "string" && this.isSnapshotItem(params.item)) {
-      this.upsertSnapshotItem(threadId, params.turnId, params.item);
+    if (event.type === "itemUpserted") {
+      const item = event.item.type === "commandExecution" ? this.withBufferedCommandOutput(threadId, event.item) : event.item;
+      this.upsertSnapshotItem(threadId, event.turnId, item);
+      if (event.completed && item.type === "commandExecution") {
+        this.commandOutputDeltas.delete(this.commandDeltaKey(threadId, item.id));
+      }
+      return;
+    }
+    if (event.type === "itemDelta" && event.delta.kind === "commandOutput" && event.turnId) {
+      this.appendSnapshotCommandDelta(threadId, event.turnId, event.delta.itemId, event.delta.delta);
     }
   }
 
@@ -315,7 +594,7 @@ export class SessionService {
     const turns = [...snapshot.turns];
     const index = turns.findIndex((candidate) => candidate.id === turn.id);
     if (index < 0) turns.push(turn);
-    else turns[index] = turn;
+    else turns[index] = { ...turn, items: mergeSnapshotItems(turn.items, turns[index]!.items) };
     this.sessionSnapshots.set(threadId, { ...snapshot, turns, updatedAt: Math.floor(Date.now() / 1_000) });
   }
 
@@ -327,15 +606,72 @@ export class SessionService {
     const items = [...turn.items];
     const index = items.findIndex((candidate) => candidate.id === item.id);
     if (index < 0) items.push(item);
-    else items[index] = item;
+    else {
+      const current = items[index]!;
+      items[index] = current.type === "commandExecution" && item.type === "commandExecution"
+        ? mergeCommandExecution(current, item)
+        : item;
+    }
     this.upsertSnapshotTurn(threadId, { ...turn, items });
   }
 
-  private isSnapshotTurn(value: unknown): value is SnapshotTurn {
-    return !!value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string" && Array.isArray((value as { items?: unknown }).items);
+  private appendSnapshotCommandDelta(threadId: string, turnId: string, itemId: string, delta: string): void {
+    const key = this.commandDeltaKey(threadId, itemId);
+    const buffered = (this.commandOutputDeltas.get(key) ?? "") + delta;
+    this.commandOutputDeltas.set(key, buffered);
+    const snapshot = this.sessionSnapshots.get(threadId);
+    const turn = snapshot?.turns.find((candidate) => candidate.id === turnId);
+    const command = turn?.items.find((item) => item.id === itemId && item.type === "commandExecution");
+    if (!turn || !command || command.type !== "commandExecution") return;
+    this.upsertSnapshotItem(threadId, turnId, {
+      ...command,
+      aggregatedOutput: `${command.aggregatedOutput ?? ""}${delta}` || null,
+    });
   }
 
-  private isSnapshotItem(value: unknown): value is SnapshotItem {
-    return !!value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string" && typeof (value as { type?: unknown }).type === "string";
+  private withBufferedCommandOutput(
+    threadId: string,
+    item: Extract<SnapshotItem, { type: "commandExecution" }>,
+  ): Extract<SnapshotItem, { type: "commandExecution" }> {
+    const buffered = this.commandOutputDeltas.get(this.commandDeltaKey(threadId, item.id));
+    return buffered ? { ...item, aggregatedOutput: mergeStreamingText(buffered, item.aggregatedOutput) || null } : item;
+  }
+
+  private commandDeltaKey(threadId: string, itemId: string): string {
+    return `${threadId}\u0000${itemId}`;
+  }
+
+  private async ensureGoalPresence(threadIds: string[]): Promise<void> {
+    const unknown = [...new Set(threadIds)].filter((threadId) => !this.goalPresence.has(threadId) && !this.goalPresenceLoading.has(threadId));
+    for (const threadId of unknown) this.goalPresenceLoading.add(threadId);
+    for (let index = 0; index < unknown.length; index += 8) {
+      await Promise.all(unknown.slice(index, index + 8).map(async (threadId) => {
+        try {
+          const goal = await this.adapter.getGoal(threadId);
+          this.goalPresence.set(threadId, goal !== null);
+          if (goal) this.runtimes.notifySessionSummaryUpdated(threadId, "goal-loaded");
+        } catch {
+          // A transient app-server failure must remain retryable on the next list request.
+        } finally {
+          this.goalPresenceLoading.delete(threadId);
+        }
+      }));
+    }
+  }
+
+  private async ensureForkSnapshots(mappings: ProjectSessionRow[]): Promise<void> {
+    const threadIds = [...new Set(mappings
+      .filter((mapping) => mapping.fork_turn_id && !this.sessionSnapshots.has(mapping.thread_id))
+      .map((mapping) => mapping.thread_id))];
+    for (let index = 0; index < threadIds.length; index += 8) {
+      await Promise.all(threadIds.slice(index, index + 8).map(async (threadId) => {
+        try {
+          this.sessionSnapshots.set(threadId, await this.adapter.readSession(threadId));
+        } catch {
+          // Fork provenance is supplemental metadata. A transient read failure
+          // must not prevent the Session list itself from rendering.
+        }
+      }));
+    }
   }
 }

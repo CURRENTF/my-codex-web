@@ -228,6 +228,7 @@ coverage/
 *.db-shm
 *.db-wal
 .runtime/
+.release/
 playwright-report/
 test-results/
 .playwright-cli/

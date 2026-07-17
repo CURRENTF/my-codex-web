@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+  protocol:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, codex-web]
+    env:
+      CODEX_WEB_TEST_CODEX_HOME: ${{ vars.CODEX_WEB_CI_CODEX_HOME }}
+      RUN_CODEX_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify generated protocol schema
+        run: npm run schema:check
+      - name: Replay sanitized protocol fixtures
+        run: npx vitest run tests/protocol-fixtures
+      - name: Run real isolated App Server integration
+        run: |
+          test -n "$CODEX_WEB_TEST_CODEX_HOME"
+          test "$CODEX_WEB_TEST_CODEX_HOME" != "$HOME/.codex"
+          npm run test:integration
+      - name: Run full stable-protocol harness
+        run: npm run protocol:harness
+      - name: Install and start the packed codex-web command
+        run: npm run test:package
+      - name: Build and run isolated browser acceptance
+        env:
+          CODEX_WEB_E2E_CODEX_HOME: ${{ vars.CODEX_WEB_CI_CODEX_HOME }}
+        run: |
+          npm run build
+          npm run test:e2e

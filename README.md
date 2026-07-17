@@ -1,6 +1,6 @@
 # Codex Web
 
-本地、单用户、面向 Project 的 Codex Web 客户端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并在一个独立的 `CODEX_HOME` 中管理 Session。
+本地、单用户、面向 Project 的 Codex Web 客户端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并通过当前 Codex Home 访问 Session。
 
 ## 环境要求
 
@@ -20,25 +20,17 @@ codex-web
 
 默认地址为 `http://127.0.0.1:7373`。`codex-web` 会自动打开浏览器；设置 `CODEX_WEB_OPEN_BROWSER=0` 可关闭此行为。
 
-## 独立 CODEX_HOME
+## 数据目录与 CODEX_HOME
 
 默认数据布局：
 
 ```text
 ~/.codex-web/
   app.db
-  codex-home/
   logs/
 ```
 
-`~/.codex-web/codex-home` 与正常使用的 `~/.codex` 完全分离，因此 Web UI 创建、Fork 或测试产生的 Session 不会出现在正常 Codex Session 列表中。
-
-首次使用时，在隔离目录中完成一次 CLI 登录：
-
-```bash
-mkdir -p ~/.codex-web/codex-home
-CODEX_HOME="$HOME/.codex-web/codex-home" codex login
-```
+产品默认使用启动环境中的 `CODEX_HOME`，未设置时使用 `~/.codex`，因此可以发现现有 CLI、VS Code 和 App Server Session。本产品自己的 Project 与 UI 元数据仍只写入 `~/.codex-web/app.db`。
 
 Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也不保存凭证。
 
@@ -47,7 +39,7 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `CODEX_WEB_DATA_DIR` | `~/.codex-web` | 本产品的 SQLite 和日志目录 |
-| `CODEX_WEB_CODEX_HOME` | `$CODEX_WEB_DATA_DIR/codex-home` | App Server 使用的隔离 Codex Home |
+| `CODEX_WEB_CODEX_HOME` | `$CODEX_HOME` 或 `~/.codex` | 覆盖 App Server 使用的 Codex Home；测试时应设为隔离目录 |
 | `CODEX_WEB_PORT` | `7373` | 本地端口 |
 | `CODEX_WEB_CODEX_BIN` | `codex` | Codex CLI 路径 |
 | `CODEX_WEB_OPEN_BROWSER` | `0`（`codex-web` 命令中为 `1`） | 启动后是否打开浏览器 |
@@ -63,7 +55,7 @@ npm run build
 
 前端使用 React、Vite、TanStack Query、Zustand、Radix、React Virtuoso 和 Tailwind CSS。后端使用 Fastify、WebSocket、SQLite、Zod 和 pino。
 
-布局基于可用容器宽度自动变化：桌面 Sidebar 使用流体宽度；工作区不足 880px 时 Side Chat 切换为顶部标签；窗口不超过 720px 时 Sidebar 变为抽屉。Composer 在窄窗口仍保留权限、模型和 Reasoning 控件。
+布局根据可用空间自动变化：桌面 Sidebar 使用流体宽度；Session 工作区不足 1100px 时 Side Chat 切换为顶部标签；viewport 不超过 720px 时 Sidebar 变为抽屉。Composer 在窄窗口仍保留权限、模型和 Reasoning 控件。
 
 ## macOS 隔离集成测试
 
@@ -91,10 +83,22 @@ CODEX_WEB_CODEX_HOME="$HOME/.codex-web/test-codex-home" \
 CODEX_WEB_OPEN_BROWSER=0 \
 npm start
 
-CODEX_WEB_E2E_EXTERNAL=1 npm run test:e2e
+CODEX_WEB_E2E_EXTERNAL=1 \
+CODEX_WEB_E2E_CODEX_HOME="$HOME/.codex-web/test-codex-home" \
+npm run test:e2e
 ```
 
 响应式 E2E 覆盖 1440x960、1024x768、720x900 和 390x844，并检查 Sidebar 抽屉、Side Chat 标签/分屏切换、Composer 控件及横向溢出。
+
+测试入口会解析真实路径并拒绝 `~/.codex`、当前 `$CODEX_HOME` 及其符号链接；外部 E2E 还会先核验 `/api/health` 返回的 `codexHome`。
+
+## 安装包验证
+
+`npm pack` 会先构建前端和独立的服务端 release bundle。下面的命令会把 tarball 安装到全新临时目录，运行安装后的 `codex-web` 并检查健康状态，全程不会打开浏览器：
+
+```bash
+npm run test:package
+```
 
 ## Codex Schema
 
@@ -110,10 +114,11 @@ npm run schema:check
 ## 协议说明
 
 - 连接建立后严格执行 `initialize`、`initialized`。
+- App Server 原始 Notification 和 Server Request 只在 `packages/codex-adapter` 内解析；服务层只消费规范化事件和待确认请求。
 - 核心路径只使用稳定的 Thread、Turn、Fork 和 Goal 接口。
 - 空 Thread 在首条用户消息前不会落盘，服务端用内存快照维持其可见性。
 - ephemeral Side Chat 不支持 `thread/read(includeTurns: true)`，服务端使用内存快照和实时通知维护时间线。
-- Side Chat 边界注入为 5 秒 best-effort；等价的 developer instructions 始终随 Thread 创建请求发送。
+- Side Chat 必须在 15 秒内确认隐藏边界注入；失败时清理临时 Thread 并向 UI 返回错误。developer instructions 同时随 Thread 创建请求发送。
 - 不读取或修改 `~/.codex` 的内部 JSONL 或 SQLite。
 
 ## 本地安全

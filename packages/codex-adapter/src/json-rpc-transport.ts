@@ -34,6 +34,24 @@ export class JsonRpcError extends Error {
   }
 }
 
+const retryableReadMethods = new Set([
+  "account/read",
+  "model/list",
+  "thread/list",
+  "thread/read",
+  "thread/goal/get",
+]);
+
+export function isRetryableRequestError(method: string, error: unknown): boolean {
+  if (!retryableReadMethods.has(method)) return false;
+  if (error instanceof JsonRpcError) return error.code === -32_603 || (typeof error.code === "number" && error.code >= -32_099 && error.code <= -32_000);
+  return error instanceof Error && error.message.startsWith("JSON-RPC timeout for ");
+}
+
+export function retryDelayMs(attempt: number, random = Math.random()): number {
+  return Math.min(1_500, 80 * 2 ** attempt) + Math.round(random * 80);
+}
+
 export class JsonRpcTransport extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
@@ -70,6 +88,17 @@ export class JsonRpcTransport extends EventEmitter {
   }
 
   async request<TResult>(method: string, params?: unknown, timeoutMs?: number): Promise<TResult> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.requestOnce<TResult>(method, params, timeoutMs);
+      } catch (error) {
+        if (attempt >= 2 || !this.connected || !isRetryableRequestError(method, error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt)));
+      }
+    }
+  }
+
+  private requestOnce<TResult>(method: string, params?: unknown, timeoutMs?: number): Promise<TResult> {
     if (!this.child || this.closed) throw new Error("codex app-server is not connected");
     const id = this.nextId++;
     const payload = params === undefined ? { method, id } : { method, id, params };

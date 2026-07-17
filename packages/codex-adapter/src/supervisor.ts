@@ -35,6 +35,12 @@ export class CodexProcessSupervisor extends EventEmitter {
     this.restartAttempt = 0;
   }
 
+  retryCurrent(): void {
+    if (this.stopping) return;
+    if (this.transportValue) this.transportValue.stop();
+    else this.scheduleRestart();
+  }
+
   private spawn(): JsonRpcTransport {
     const transport = new JsonRpcTransport(this.options);
     this.transportValue = transport;
@@ -43,6 +49,7 @@ export class CodexProcessSupervisor extends EventEmitter {
     transport.on("stderr", (value) => this.emit("stderr", value));
     transport.on("protocolError", (error, line) => this.emit("protocolError", error, line));
     transport.once("exit", (details) => {
+      if (this.transportValue === transport) this.transportValue = null;
       this.emit("disconnected", details);
       if (!this.stopping) this.scheduleRestart();
     });
@@ -51,6 +58,7 @@ export class CodexProcessSupervisor extends EventEmitter {
   }
 
   private scheduleRestart(): void {
+    if (this.restartTimer || this.stopping) return;
     const delay = Math.min(30_000, 500 * 2 ** this.restartAttempt) + Math.round(Math.random() * 250);
     this.restartAttempt += 1;
     this.restartTimer = setTimeout(() => {

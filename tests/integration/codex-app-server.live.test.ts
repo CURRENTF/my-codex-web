@@ -1,13 +1,13 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CodexAdapter } from "@codex-web/codex-adapter";
+import { CodexAdapter, type AdapterEvent } from "@codex-web/codex-adapter";
+import { requireIsolatedCodexHome } from "../../scripts/isolated-codex-home";
 
 const run = process.env.RUN_CODEX_INTEGRATION === "1" ? describe : describe.skip;
 
 run("real codex app-server with isolated CODEX_HOME", () => {
   it("creates an ephemeral side chat for an empty parent context", async () => {
-    const codexHome = process.env.CODEX_WEB_TEST_CODEX_HOME;
-    if (!codexHome) throw new Error("CODEX_WEB_TEST_CODEX_HOME is required");
+    const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
     adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
     await adapter.start();
@@ -25,9 +25,46 @@ run("real codex app-server with isolated CODEX_HOME", () => {
     }
   }, 60_000);
 
+  it("creates a top-level Side Chat while the parent Turn is still active", async () => {
+    const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
+    const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
+    adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
+    await adapter.start();
+    const created: string[] = [];
+    try {
+      const session = await adapter.startSession(path.resolve(process.cwd()), { accessMode: "fullAccess", model: null, reasoning: null });
+      created.push(session.thread.id);
+      const terminal = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Active parent Turn did not reach a terminal state")), 120_000);
+        adapter.on("event", (event: AdapterEvent) => {
+          if (event.type === "turnCompleted" && event.threadId === session.thread.id) {
+            clearTimeout(timeout); resolve();
+          }
+        });
+      });
+      const turn = await adapter.startTurn(
+        session.thread.id,
+        process.cwd(),
+        "Use the shell tool to run sleep 15, then reply exactly ACTIVE_PARENT_DONE.",
+        { accessMode: "fullAccess", model: null, reasoning: "low" },
+        crypto.randomUUID(),
+      );
+      expect((await adapter.readSession(session.thread.id)).turns.at(-1)?.status).toBe("inProgress");
+
+      const sideChat = await adapter.createSideChat(session.thread.id, null, { accessMode: "fullAccess", model: null, reasoning: "low" }, process.cwd());
+      created.push(sideChat.thread.id);
+      expect(sideChat.thread).toMatchObject({ ephemeral: true, forkedFromId: session.thread.id });
+
+      await adapter.interruptTurn(session.thread.id, turn.turn.id);
+      await terminal;
+    } finally {
+      for (const threadId of created) await adapter.archiveSession(threadId).catch(() => undefined);
+      adapter.stop();
+    }
+  }, 150_000);
+
   it("initializes, lists models, runs a turn, persists a goal, and forks", async () => {
-    const codexHome = process.env.CODEX_WEB_TEST_CODEX_HOME;
-    if (!codexHome) throw new Error("CODEX_WEB_TEST_CODEX_HOME is required");
+    const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
     adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
     await adapter.start();
@@ -39,9 +76,9 @@ run("real codex app-server with isolated CODEX_HOME", () => {
       created.push(session.thread.id);
       const completion = new Promise<{ status: string }>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("Turn did not complete")), 120_000);
-        adapter.on("notification", (notification: { method: string; params?: { threadId?: string; turn?: { status?: string } } }) => {
-          if (notification.method === "turn/completed" && notification.params?.threadId === session.thread.id) {
-            clearTimeout(timeout); resolve({ status: notification.params.turn?.status ?? "unknown" });
+        adapter.on("event", (event: AdapterEvent) => {
+          if (event.type === "turnCompleted" && event.threadId === session.thread.id) {
+            clearTimeout(timeout); resolve({ status: event.turn.status });
           }
         });
       });

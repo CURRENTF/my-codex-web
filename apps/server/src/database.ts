@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { AccessMode, Preferences, Project } from "@codex-web/shared-types";
 
@@ -9,7 +9,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   sideChatWidth: 42,
   lastProjectId: null,
   lastThreadId: null,
-  fullAccessNoticeSeen: false,
+  fullAccessNoticeSeenProjects: [],
 };
 
 interface ProjectRow {
@@ -103,7 +103,7 @@ export class Repositories {
     ) VALUES (@thread_id, @project_id, @cwd_snapshot, @source_kind, @origin,
       @parent_thread_id, @fork_turn_id, @added_at, @last_seen_at, @hidden)
     ON CONFLICT(thread_id) DO UPDATE SET
-      project_id=excluded.project_id,
+      project_id=CASE WHEN project_sessions.origin = 'manual' THEN project_sessions.project_id ELSE excluded.project_id END,
       cwd_snapshot=excluded.cwd_snapshot,
       source_kind=excluded.source_kind,
       last_seen_at=excluded.last_seen_at,
@@ -126,6 +126,14 @@ export class Repositories {
 
   removeProjectSession(threadId: string): void {
     this.db.prepare("DELETE FROM project_sessions WHERE thread_id = ?").run(threadId);
+  }
+
+  moveProjectSession(threadId: string, projectId: string): ProjectSessionRow {
+    const result = this.db.prepare("UPDATE project_sessions SET project_id = ?, origin = 'manual' WHERE thread_id = ?").run(projectId, threadId);
+    if (!result.changes) throw new Error("Session mapping not found");
+    const mapping = this.getProjectSession(threadId);
+    if (!mapping) throw new Error("Session mapping not found");
+    return mapping;
   }
 
   getPreferences(): Preferences {
@@ -169,7 +177,7 @@ export class Repositories {
       defaultAccessMode: row.default_access_mode,
       createdAt: row.created_at,
       lastOpenedAt: row.last_opened_at,
-      available: true,
+      available: (() => { try { return statSync(row.canonical_path).isDirectory(); } catch { return false; } })(),
     };
   }
 
