@@ -21,11 +21,36 @@ export function isUnmaterializedSessionReadError(error: unknown): boolean {
   return error instanceof JsonRpcError && (error.message.includes("not materialized yet") || /rollout\b.*\bis empty\b/i.test(error.message));
 }
 
+export function isSteerTurnConflictError(error: unknown): boolean {
+  if (!(error instanceof JsonRpcError)) return false;
+  return /no active turn|active turn.*(?:not found|finished|completed)|expected.?turn.?id.*(?:mismatch|does not match)|turn\b.*\bis not active/i.test(error.message);
+}
+
+function sessionSummaryMatchesSearch(summary: Pick<SessionSummary, "title" | "preview">, search: string | undefined): boolean {
+  const term = search?.trim().toLocaleLowerCase();
+  if (!term) return true;
+  return `${summary.title}\n${summary.preview}`.toLocaleLowerCase().includes(term);
+}
+
 interface TurnSettings { model?: string | null; reasoning?: string | null; accessMode?: AccessMode }
 interface ProjectSettings { defaultModel: string | null; defaultReasoning: string | null; defaultAccessMode: AccessMode }
 type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
 type SnapshotItem = SnapshotTurn["items"][number];
+
+function terminalizeSnapshotItem(item: SnapshotItem, turnStatus: SnapshotTurn["status"]): SnapshotItem {
+  if (turnStatus === "inProgress" || !("status" in item) || item.status !== "inProgress") return item;
+  return { ...item, status: turnStatus === "completed" ? "completed" : turnStatus };
+}
+
+function terminalizeSnapshotTurn(turn: SnapshotTurn): SnapshotTurn {
+  if (turn.status === "inProgress") return turn;
+  return { ...turn, items: turn.items.map((item) => terminalizeSnapshotItem(item, turn.status)) };
+}
+
+function terminalizeSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
+  return { ...snapshot, turns: snapshot.turns.map(terminalizeSnapshotTurn) };
+}
 
 export function assertValidForkBoundary(turns: SnapshotTurn[], lastTurnId: string | null): void {
   if (lastTurnId === null) throw new ForkBoundaryError("A completed Turn boundary is required for a non-empty Fork");
@@ -143,7 +168,7 @@ function mergeSnapshotItems(primary: SnapshotItem[], supplemental: SnapshotItem[
 }
 
 export function mergeSessionSnapshot(primary: SessionSnapshot, supplemental: SessionSnapshot): SessionSnapshot {
-  if (primary.id !== supplemental.id) return primary;
+  if (primary.id !== supplemental.id) return terminalizeSessionSnapshot(primary);
   const primaryTurns = new Map(primary.turns.map((turn) => [turn.id, turn]));
   const seen = new Set<string>();
   const turns = supplemental.turns.map((turn) => {
@@ -152,7 +177,7 @@ export function mergeSessionSnapshot(primary: SessionSnapshot, supplemental: Ses
     return current ? { ...current, items: mergeSnapshotItems(current.items, turn.items) } : turn;
   });
   for (const turn of primary.turns) if (!seen.has(turn.id)) turns.push(turn);
-  return { ...primary, turns };
+  return terminalizeSessionSnapshot({ ...primary, turns });
 }
 
 export class SessionService {
@@ -239,7 +264,9 @@ export class SessionService {
         hasGoal: this.goalPresence.get(snapshot.id) ?? false,
       });
     }
-    return summaries.sort((left, right) => (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
+    return summaries
+      .filter((summary) => sessionSummaryMatchesSearch(summary, options.search))
+      .sort((left, right) => (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
   }
 
   async readSession(threadId: string) {
@@ -248,23 +275,20 @@ export class SessionService {
     if (sideChatSnapshot) {
       return { thread: sideChatSnapshot, goal: null, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
     }
-    const resumed = await this.adapter.resumeSession(threadId).catch(() => null);
-    if (resumed?.settings) this.settings.set(threadId, resumed.settings);
-    const [persistedThread, goalResult] = await Promise.all([
+    await this.resumeWithPreferredSettings(threadId);
+    const [persistedThread, goal] = await Promise.all([
       this.adapter.readSession(threadId).catch((error) => {
         const snapshot = this.sessionSnapshots.get(threadId);
         if (snapshot && isUnmaterializedSessionReadError(error)) return snapshot;
         throw error;
       }),
-      this.adapter.getGoal(threadId)
-        .then((goal) => ({ loaded: true as const, goal }))
-        .catch(() => ({ loaded: false as const, goal: null })),
+      this.adapter.getGoal(threadId),
     ]);
     const snapshot = this.sessionSnapshots.get(threadId);
-    const thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : persistedThread;
+    const thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : terminalizeSessionSnapshot(persistedThread);
     this.sessionSnapshots.set(threadId, thread);
-    if (goalResult.loaded) this.goalPresence.set(threadId, goalResult.goal !== null);
-    return { thread, goal: goalResult.goal, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
+    this.goalPresence.set(threadId, goal !== null);
+    return { thread, goal, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
   }
 
   markViewed(threadId: string): void {
@@ -273,31 +297,69 @@ export class SessionService {
 
   async rename(threadId: string, name: string): Promise<void> {
     this.assertPersistentSession(threadId, "rename");
-    this.assertNoActiveTurn(threadId, "Rename");
-    await this.adapter.renameSession(threadId, name);
+    return this.withLock(threadId, async () => {
+      this.assertNoActiveTurn(threadId, "Rename");
+      await this.adapter.renameSession(threadId, name);
+    });
   }
 
   async archive(threadId: string): Promise<void> {
     this.assertPersistentSession(threadId, "archive");
-    this.assertNoActiveTurn(threadId, "Archive");
-    try {
-      await this.adapter.archiveSession(threadId);
-    } catch (error) {
-      if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) throw error;
-      await this.adapter.unsubscribe(threadId).catch(() => undefined);
+    return this.withLock(threadId, async () => {
+      this.assertNoActiveTurn(threadId, "Archive");
+      const sideChat = this.runtimes.listSideChats().find((candidate) => candidate.parentThreadId === threadId);
+      if (sideChat) {
+        await this.withLock(sideChat.threadId, async () => {
+          this.assertNoActiveTurn(sideChat.threadId, "Archive");
+          await this.closeSideChatUnlocked(sideChat.threadId);
+        });
+      }
+      let reason = "archived";
+      try {
+        await this.adapter.archiveSession(threadId);
+      } catch (error) {
+        if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) throw error;
+        reason = "archived-unmaterialized";
+        await this.adapter.unsubscribe(threadId).catch(() => undefined);
+      }
       this.repositories.removeProjectSession(threadId);
       this.settings.delete(threadId);
       this.sessionSnapshots.delete(threadId);
-      this.runtimes.notifySessionSummaryUpdated(threadId, "archived-unmaterialized");
-    }
+      this.runtimes.notifySessionSummaryUpdated(threadId, reason);
+    });
   }
 
-  moveToProject(threadId: string, projectId: string): ProjectSessionRow {
+  moveToProject(threadId: string, projectId: string): Promise<ProjectSessionRow> {
     this.assertPersistentSession(threadId, "move between Projects");
-    this.assertNoActiveTurn(threadId, "Move to Project");
-    this.requireMapping(threadId);
-    this.requireProject(projectId);
-    return this.repositories.moveProjectSession(threadId, projectId);
+    return this.withLock(threadId, async () => {
+      this.assertNoActiveTurn(threadId, "Move to Project");
+      this.requireMapping(threadId);
+      this.requireProject(projectId);
+      return this.repositories.moveProjectSession(threadId, projectId);
+    });
+  }
+
+  async removeProject(projectId: string): Promise<void> {
+    const mappings = this.repositories.listProjectSessions(projectId);
+    const mappedThreadIds = new Set(mappings.map((mapping) => mapping.thread_id));
+    return this.withLocks([...mappedThreadIds].sort(), async () => {
+      const relatedSideChats = this.runtimes.listSideChats().filter((sideChat) => mappedThreadIds.has(sideChat.parentThreadId));
+      return this.withLocks(relatedSideChats.map((sideChat) => sideChat.threadId).sort(), async () => {
+        for (const mapping of mappings) this.assertNoActiveTurn(mapping.thread_id, "Remove Project");
+        for (const sideChat of relatedSideChats) this.assertNoActiveTurn(sideChat.threadId, "Remove Project");
+        for (const sideChat of relatedSideChats) await this.closeSideChatUnlocked(sideChat.threadId);
+
+        const preferences = this.repositories.getPreferences();
+        this.repositories.deleteProject(projectId);
+        const changes: Partial<typeof preferences> = {};
+        if (preferences.lastProjectId === projectId) changes.lastProjectId = null;
+        if (preferences.lastThreadId && mappedThreadIds.has(preferences.lastThreadId)) changes.lastThreadId = null;
+        if (preferences.fullAccessNoticeSeenProjects.includes(projectId)) {
+          changes.fullAccessNoticeSeenProjects = preferences.fullAccessNoticeSeenProjects.filter((id) => id !== projectId);
+        }
+        if (Object.keys(changes).length) this.repositories.setPreferences(changes);
+      });
+    });
   }
 
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
@@ -340,7 +402,7 @@ export class SessionService {
       try {
         return await this.adapter.steerTurn(threadId, expectedTurnId, text, clientUserMessageId);
       } catch (error) {
-        if (error instanceof JsonRpcError) throw new SteerConflictError();
+        if (isSteerTurnConflictError(error)) throw new SteerConflictError();
         throw error;
       }
     }));
@@ -370,18 +432,25 @@ export class SessionService {
       }
       this.settings.set(response.thread.id, settings);
       this.sessionSnapshots.set(response.thread.id, response.thread);
+      try {
+        if (inheritGoal) {
+          const goal = await this.adapter.getGoal(threadId);
+          if (goal) await this.adapter.setGoal({ threadId: response.thread.id, objective: goal.objective, status: goal.status, tokenBudget: goal.tokenBudget });
+        } else {
+          await this.adapter.clearGoal(response.thread.id);
+        }
+      } catch (error) {
+        this.settings.delete(response.thread.id);
+        this.sessionSnapshots.delete(response.thread.id);
+        await this.adapter.archiveSession(response.thread.id).catch(() => undefined);
+        throw error;
+      }
       const now = Date.now();
       this.repositories.upsertProjectSession({
         thread_id: response.thread.id, project_id: mapping.project_id,
         cwd_snapshot: response.thread.cwd, source_kind: "appServer", origin: "forked",
         parent_thread_id: threadId, fork_turn_id: lastTurnId, added_at: now, last_seen_at: now,
       });
-      if (inheritGoal) {
-        const goal = await this.adapter.getGoal(threadId);
-        if (goal) await this.adapter.setGoal({ threadId: response.thread.id, objective: goal.objective, status: goal.status, tokenBudget: goal.tokenBudget });
-      } else {
-        await this.adapter.clearGoal(response.thread.id).catch(() => undefined);
-      }
       return { thread: response.thread, settings };
     }));
   }
@@ -405,8 +474,7 @@ export class SessionService {
     const disconnected = this.runtimes.list().filter((runtime) => runtime.state === "disconnected" && !sideChatIds.has(runtime.threadId));
     await Promise.all(disconnected.map(async (runtime) => {
       try {
-        const resumed = await this.adapter.resumeSession(runtime.threadId);
-        this.settings.set(runtime.threadId, resumed.settings);
+        await this.resumeWithPreferredSettings(runtime.threadId);
         const snapshot = await this.adapter.readSession(runtime.threadId);
         this.sessionSnapshots.set(runtime.threadId, snapshot);
         this.runtimes.reconcileFromSnapshot(runtime.threadId, snapshot.turns.at(-1));
@@ -419,7 +487,7 @@ export class SessionService {
 
   async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
     this.assertPersistentSession(parentThreadId, "nested Side Chat");
-    return this.withLock(`side-chat:${parentThreadId}`, async () => {
+    return this.withLocks([parentThreadId, `side-chat:${parentThreadId}`], async () => {
       const existing = this.runtimes.listSideChats().find((sideChat) => sideChat.parentThreadId === parentThreadId);
       if (existing) return existing;
       if (anchorTurnId) {
@@ -453,19 +521,21 @@ export class SessionService {
   }
 
   async closeSideChat(threadId: string): Promise<void> {
-    return this.withLock(threadId, async () => {
-      const sideChat = this.runtimes.getSideChat(threadId);
-      if (!sideChat) return;
-      if (sideChat.activeTurnId) {
-        await this.adapter.interruptTurn(threadId, sideChat.activeTurnId);
-        const stopped = await this.runtimes.waitForTerminal(threadId, 10_000);
-        if (!stopped) throw new Error("Side Chat Turn did not stop before the close timeout");
-      }
-      await this.adapter.unsubscribe(threadId);
-      this.settings.delete(threadId);
-      this.sessionSnapshots.delete(threadId);
-      this.runtimes.removeSideChat(threadId);
-    });
+    return this.withLock(threadId, () => this.closeSideChatUnlocked(threadId));
+  }
+
+  private async closeSideChatUnlocked(threadId: string): Promise<void> {
+    const sideChat = this.runtimes.getSideChat(threadId);
+    if (!sideChat) return;
+    if (sideChat.activeTurnId) {
+      await this.adapter.interruptTurn(threadId, sideChat.activeTurnId);
+      const stopped = await this.runtimes.waitForTerminal(threadId, 10_000);
+      if (!stopped) throw new Error("Side Chat Turn did not stop before the close timeout");
+    }
+    await this.adapter.unsubscribe(threadId);
+    this.settings.delete(threadId);
+    this.sessionSnapshots.delete(threadId);
+    this.runtimes.removeSideChat(threadId);
   }
 
   getGoal(threadId: string) {
@@ -473,16 +543,20 @@ export class SessionService {
     return this.adapter.getGoal(threadId);
   }
 
-  setGoal(params: Parameters<CodexAdapter["setGoal"]>[0]) {
+  async setGoal(params: Parameters<CodexAdapter["setGoal"]>[0]) {
     this.assertPersistentSession(params.threadId, "Goal");
-    this.assertNoActiveTurn(params.threadId, "Goal update");
-    return this.adapter.setGoal(params);
+    return this.withLock(params.threadId, async () => {
+      this.assertNoActiveTurn(params.threadId, "Goal update");
+      return this.adapter.setGoal(params);
+    });
   }
 
   async clearGoal(threadId: string): Promise<void> {
     this.assertPersistentSession(threadId, "Goal");
-    this.assertNoActiveTurn(threadId, "Goal clear");
-    await this.adapter.clearGoal(threadId);
+    return this.withLock(threadId, async () => {
+      this.assertNoActiveTurn(threadId, "Goal clear");
+      await this.adapter.clearGoal(threadId);
+    });
   }
 
   private assertNoActiveTurn(threadId: string, operation: string): void {
@@ -504,15 +578,29 @@ export class SessionService {
   private getSettings(threadId: string) {
     const current = this.settings.get(threadId);
     if (current) return current;
-    return { model: null, reasoning: null, accessMode: "readOnly" as const };
+    return this.projectDefaults(threadId);
   }
 
   private async ensureSessionSettings(threadId: string): Promise<SessionSettings> {
     const current = this.settings.get(threadId);
     if (current) return current;
-    const resumed = await this.adapter.resumeSession(threadId);
-    this.settings.set(threadId, resumed.settings);
-    return resumed.settings;
+    return (await this.resumeWithPreferredSettings(threadId)).settings;
+  }
+
+  private projectDefaults(threadId: string): SessionSettings {
+    const mapping = this.requireMapping(threadId);
+    return resolveSessionSettings(this.requireProject(mapping.project_id), {});
+  }
+
+  private async resumeWithPreferredSettings(threadId: string) {
+    const current = this.settings.get(threadId);
+    const resumed = current
+      ? await this.adapter.resumeSession(threadId, current)
+      : await this.adapter.resumeSession(threadId);
+    const mapping = this.requireMapping(threadId);
+    const settings = resolveSessionSettings(this.requireProject(mapping.project_id), {}, current ?? resumed.settings);
+    this.settings.set(threadId, settings);
+    return { ...resumed, settings };
   }
 
   private requireProject(projectId: string) {
@@ -543,6 +631,11 @@ export class SessionService {
     });
     this.locks.set(threadId, tracked);
     return next;
+  }
+
+  private withLocks<T>(threadIds: string[], action: () => Promise<T>): Promise<T> {
+    const [threadId, ...rest] = [...new Set(threadIds)];
+    return threadId ? this.withLock(threadId, () => this.withLocks(rest, action)) : action();
   }
 
   private idempotent<T>(scope: string, clientRequestId: string, action: () => Promise<T>): Promise<T> {
@@ -593,8 +686,8 @@ export class SessionService {
     if (!snapshot) return;
     const turns = [...snapshot.turns];
     const index = turns.findIndex((candidate) => candidate.id === turn.id);
-    if (index < 0) turns.push(turn);
-    else turns[index] = { ...turn, items: mergeSnapshotItems(turn.items, turns[index]!.items) };
+    if (index < 0) turns.push(terminalizeSnapshotTurn(turn));
+    else turns[index] = terminalizeSnapshotTurn({ ...turn, items: mergeSnapshotItems(turn.items, turns[index]!.items) });
     this.sessionSnapshots.set(threadId, { ...snapshot, turns, updatedAt: Math.floor(Date.now() / 1_000) });
   }
 

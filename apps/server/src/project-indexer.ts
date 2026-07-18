@@ -44,8 +44,13 @@ export class ProjectIndexer extends EventEmitter {
       available: true,
     };
     this.repositories.insertProject(project);
-    await this.scanRoot(project);
-    void this.scanAll();
+    try {
+      await this.scanRoot(project);
+    } catch (error) {
+      this.repositories.deleteProject(project.id);
+      throw error;
+    }
+    this.scanAllInBackground();
     return project;
   }
 
@@ -89,6 +94,10 @@ export class ProjectIndexer extends EventEmitter {
       } while (this.scanAgain);
     })().finally(() => { this.scanning = null; });
     return this.scanning;
+  }
+
+  scanAllInBackground(): void {
+    void this.scanAll().catch((error: unknown) => this.emit("scanError", error));
   }
 
   private async performScanAll(): Promise<void> {

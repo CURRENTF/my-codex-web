@@ -82,12 +82,19 @@ export async function createServer() {
   const once = <T>(request: { method: string; url: string }, clientRequestId: string, action: () => Promise<T> | T) =>
     mutations.run(`${request.method}\u0000${request.url}\u0000${clientRequestId}`, action);
 
+  let startupPhase = true;
   adapter.on("connection", (event: { state: "connected" | "connecting" | "disconnected" }) => {
     if (event.state !== "connected") {
       runtimes.handleConnection(event.state);
       return;
     }
+    const scanAfterRecovery = !startupPhase;
     void sessions.reconcileAfterReconnect()
+      .then(async () => {
+        if (!scanAfterRecovery || !adapter.account) return;
+        await indexer.scanStartupRoots();
+        indexer.scanAllInBackground();
+      })
       .catch((error) => app.log.warn({ error }, "Failed to reconcile Runtime after App Server reconnect"))
       .finally(() => { if (adapter.connected) runtimes.handleConnection("connected"); });
   });
@@ -100,6 +107,7 @@ export async function createServer() {
   adapter.on("warning", (warning) => app.log.warn(warning));
   adapter.on("error", (error) => app.log.error(error));
   indexer.on("scanComplete", () => events.publish("sessions.rescanned", { completedAt: Date.now() }));
+  indexer.on("scanError", (error) => app.log.warn({ error }, "Background Project scan failed"));
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;
@@ -187,14 +195,14 @@ export async function createServer() {
   });
   app.delete("/api/projects/:projectId", async (request, reply) => {
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
-    await once(request, clientRequestId, () => repositories.deleteProject(idSchema.parse((request.params as { projectId: string }).projectId)));
+    await once(request, clientRequestId, () => sessions.removeProject(idSchema.parse((request.params as { projectId: string }).projectId)));
     return reply.code(204).send();
   });
   app.post("/api/projects/:projectId/rescan", async (request) => {
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
     const project = repositories.getProject(idSchema.parse((request.params as { projectId: string }).projectId));
     if (!project) throw new Error("Project not found");
-    await once(request, clientRequestId, async () => { await indexer.scanRoot(project); void indexer.scanAll(); });
+    await once(request, clientRequestId, async () => { await indexer.scanRoot(project); indexer.scanAllInBackground(); });
     return { ok: true };
   });
   app.post("/api/projects/:projectId/reveal", async (request) => {
@@ -306,9 +314,10 @@ export async function createServer() {
   });
 
   await adapter.start();
+  startupPhase = false;
   if (adapter.account) {
     await indexer.scanStartupRoots();
-    void indexer.scanAll();
+    indexer.scanAllInBackground();
   }
 
   return {

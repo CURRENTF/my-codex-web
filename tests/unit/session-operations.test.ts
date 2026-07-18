@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { Thread } from "@codex-web/codex-schema/v2/Thread";
 import { JsonRpcError, pendingRequestResponse, projectAdapterEvent, projectPendingRequest } from "@codex-web/codex-adapter";
-import { ActiveTurnConflictError, assertValidForkBoundary, ForkBoundaryError, isUnmaterializedSessionReadError, resolveSessionSettings, SessionService } from "../../apps/server/src/session-service.js";
+import { ActiveTurnConflictError, assertValidForkBoundary, ForkBoundaryError, isSteerTurnConflictError, isUnmaterializedSessionReadError, resolveSessionSettings, SessionService } from "../../apps/server/src/session-service.js";
 
 function turn(id: string, status: Thread["turns"][number]["status"]): Thread["turns"][number] {
   return { id, status, itemsView: "full", error: null, startedAt: 1, completedAt: status === "inProgress" ? null : 2, durationMs: status === "inProgress" ? null : 1_000, items: [] };
@@ -13,6 +13,11 @@ describe("session operation rules", () => {
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not materialized yet"))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("failed to read rollout /tmp/test.jsonl: rollout at /tmp/test.jsonl is empty"))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not found"))).toBe(false);
+  });
+  it("distinguishes a finished-Turn Steer conflict from unrelated protocol failures", () => {
+    expect(isSteerTurnConflictError(new JsonRpcError("no active turn found for thread", -32600))).toBe(true);
+    expect(isSteerTurnConflictError(new JsonRpcError("expectedTurnId does not match the active turn", -32600))).toBe(true);
+    expect(isSteerTurnConflictError(new JsonRpcError("internal app-server failure", -32603))).toBe(false);
   });
   it("accepts only existing terminal Turn boundaries", () => {
     const turns = [turn("done", "completed"), turn("active", "inProgress"), turn("failed", "failed"), turn("interrupted", "interrupted")];
@@ -27,7 +32,7 @@ describe("session operation rules", () => {
   it("does not clear a failed Runtime during background Session reads", async () => {
     const snapshot = { id: "thread-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("failed", "failed")] };
     const adapter = Object.assign(new EventEmitter(), {
-      resumeSession: vi.fn(async () => undefined),
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })),
       readSession: vi.fn(async () => snapshot),
       getGoal: vi.fn(async () => null),
     });
@@ -47,11 +52,11 @@ describe("session operation rules", () => {
     expect(runtimes.markViewed).not.toHaveBeenCalled();
   });
 
-  it("keeps Goal presence unknown after a transient read failure so list probing can retry", async () => {
+  it("surfaces a transient Goal read failure instead of presenting a false empty Goal", async () => {
     const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
     const goal = { threadId: "thread-1", objective: "ship", status: "active", tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0, createdAt: 1, updatedAt: 1 };
     const adapter = Object.assign(new EventEmitter(), {
-      resumeSession: vi.fn(async () => undefined),
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })),
       readSession: vi.fn(async () => snapshot),
       getGoal: vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue(goal),
       listSessions: vi.fn(async () => ({ data: [{ id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1 }], nextCursor: null })),
@@ -68,8 +73,7 @@ describe("session operation rules", () => {
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
 
-    const read = await service.readSession("thread-1");
-    expect(read.goal).toBeNull();
+    await expect(service.readSession("thread-1")).rejects.toThrow("temporary");
     await service.listSessions();
     await vi.waitFor(() => expect(adapter.getGoal).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(runtimes.notifySessionSummaryUpdated).toHaveBeenCalledWith("thread-1", "goal-loaded"));
@@ -103,6 +107,29 @@ describe("session operation rules", () => {
     expect(sessions).toHaveLength(count);
     expect(adapter.listSessions).toHaveBeenCalledTimes(21);
     expect(sessions.at(-1)?.threadId).toBe("thread-2000");
+  });
+
+  it("filters cached Session snapshots instead of reintroducing unrelated search results", async () => {
+    const mappings = ["matching", "unrelated"].map((threadId) => ({
+      thread_id: threadId, project_id: "project-1", cwd_snapshot: "/tmp/project",
+      source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+    }));
+    const adapter = Object.assign(new EventEmitter(), {
+      listSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
+    });
+    const repositories = { listProjectSessions: vi.fn(() => mappings) };
+    const runtimes = { get: vi.fn((threadId: string) => ({ threadId, state: "idle", activeFlags: [], pendingRequestIds: [] })), getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    const snapshots = (service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots;
+    snapshots.set("matching", { id: "matching", preview: "Run SAFARI_TOOL_START now", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 2, ephemeral: false, forkedFromId: null, turns: [] });
+    snapshots.set("unrelated", { id: "unrelated", preview: "Different task", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] });
+    const goalPresence = (service as unknown as { goalPresence: Map<string, boolean> }).goalPresence;
+    goalPresence.set("matching", false); goalPresence.set("unrelated", false);
+
+    const sessions = await service.listSessions({ search: "safari_tool_start" });
+
+    expect(adapter.listSessions).toHaveBeenCalledWith(expect.objectContaining({ searchTerm: "safari_tool_start" }));
+    expect(sessions.map((session) => session.threadId)).toEqual(["matching"]);
   });
 
   it("deduplicates Turn submissions by clientUserMessageId even when request IDs differ", async () => {
@@ -165,10 +192,53 @@ describe("session operation rules", () => {
     expect(resolveSessionSettings(project, {})).toEqual({ model: "project-model", reasoning: "medium", accessMode: "fullAccess" });
   });
 
+  it("preserves a cold Session's current settings before Project defaults", async () => {
+    const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const projectSettings = { model: "project-model", reasoning: "high", accessMode: "fullAccess" as const };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "app-default", reasoning: "low", accessMode: "workspaceWrite" as const } })),
+      readSession: vi.fn(async () => snapshot),
+      getGoal: vi.fn(async () => null),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: projectSettings.model, defaultReasoning: projectSettings.reasoning, defaultAccessMode: projectSettings.accessMode })),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const result = await service.readSession("thread-1");
+
+    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1");
+    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "workspaceWrite" });
+  });
+
+  it("fails a cold Session read when resume fails instead of substituting Project Full Access", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => { throw new JsonRpcError("resume failed", -32603); }),
+      readSession: vi.fn(),
+      getGoal: vi.fn(),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await expect(service.readSession("thread-1")).rejects.toThrow("resume failed");
+
+    expect(adapter.readSession).not.toHaveBeenCalled();
+    expect(adapter.getGoal).not.toHaveBeenCalled();
+  });
+
   it("keeps repeated identical commands as separate live Items when IDs differ", async () => {
     const base = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [{ id: "turn-1", status: "inProgress" as const, items: [], startedAt: 1, completedAt: null, durationMs: null }] };
     const adapter = Object.assign(new EventEmitter(), {
-      resumeSession: vi.fn(async () => base), readSession: vi.fn(async () => base), getGoal: vi.fn(async () => null),
+      resumeSession: vi.fn(async () => ({ thread: base, settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })), readSession: vi.fn(async () => base), getGoal: vi.fn(async () => null),
     });
     const repositories = { markThreadViewed: vi.fn(), getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })), getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })) };
     const runtimes = { markViewed: vi.fn(), get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeFlags: [], pendingRequestIds: [] })), getSideChat: vi.fn(() => undefined) };
@@ -194,6 +264,18 @@ describe("session operation rules", () => {
     await expect(service.steer("thread-1", "late", "turn-old", "message-1", "request-1")).rejects.toThrow("finished");
     await expect(service.interrupt("thread-1")).resolves.toBeUndefined();
     expect(adapter.interruptTurn).toHaveBeenCalledWith("thread-1", "turn-next");
+  });
+
+  it("preserves unrelated turn/steer protocol errors", async () => {
+    const failure = new JsonRpcError("internal app-server failure", -32603);
+    const adapter = Object.assign(new EventEmitter(), { steerTurn: vi.fn(async () => { throw failure; }) });
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const service = new SessionService({} as never, adapter as never, {} as never, runtimes as never);
+
+    await expect(service.steer("thread-1", "more", "turn-1", "message-1", "request-1")).rejects.toBe(failure);
   });
 
   it("uses the response shape required by each approval protocol generation", () => {
@@ -324,6 +406,27 @@ describe("session operation rules", () => {
     }));
   });
 
+  it("fails a default Fork when the inherited Goal cannot be cleared", async () => {
+    const child = { id: "child", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: "parent", turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      startSession: vi.fn(async () => ({ thread: child })),
+      clearGoal: vi.fn(async () => { throw new Error("goal clear failed"); }),
+      archiveSession: vi.fn(async () => undefined),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "parent", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+      upsertProjectSession: vi.fn(),
+    };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("parent", { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" });
+
+    await expect(service.fork("parent", null, false, "request-1", true)).rejects.toThrow("goal clear failed");
+    expect(adapter.archiveSession).toHaveBeenCalledWith("child");
+    expect(repositories.upsertProjectSession).not.toHaveBeenCalled();
+  });
+
   it("re-reads disconnected Sessions after App Server reconnect", async () => {
     const snapshot = { id: "thread-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-1", "completed")] };
     const adapter = Object.assign(new EventEmitter(), {
@@ -336,11 +439,17 @@ describe("session operation rules", () => {
       getSideChat: vi.fn(() => undefined),
       reconcileFromSnapshot: vi.fn(),
     };
-    const service = new SessionService({} as never, adapter as never, {} as never, runtimes as never);
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "project-model", defaultReasoning: "medium", defaultAccessMode: "fullAccess" })),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    const current = { model: "session-model", reasoning: "high", accessMode: "readOnly" as const };
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("thread-1", current);
 
     await service.reconcileAfterReconnect();
 
-    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1");
+    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", current);
     expect(adapter.readSession).toHaveBeenCalledWith("thread-1");
     expect(runtimes.reconcileFromSnapshot).toHaveBeenCalledWith("thread-1", snapshot.turns[0]);
   });
@@ -348,7 +457,7 @@ describe("session operation rules", () => {
   it("rejects a Side Chat anchor unless it is a completed Turn", async () => {
     const snapshot = { id: "parent", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("failed-turn", "failed")] };
     const adapter = Object.assign(new EventEmitter(), {
-      resumeSession: vi.fn(async () => undefined),
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })),
       readSession: vi.fn(async () => snapshot),
       getGoal: vi.fn(async () => null),
       createSideChat: vi.fn(),
@@ -456,7 +565,38 @@ describe("session operation rules", () => {
     expect(adapter.createSideChat).toHaveBeenCalledTimes(1);
   });
 
-  it("inherits protocol Session settings for Side Chat instead of permissive Project defaults", async () => {
+  it("serializes Side Chat creation behind other parent Thread mutations", async () => {
+    const child = { id: "side-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: true, forkedFromId: "parent", turns: [] };
+    let releaseRename!: () => void;
+    const renamePending = new Promise<void>((resolve) => { releaseRename = resolve; });
+    const adapter = Object.assign(new EventEmitter(), {
+      renameSession: vi.fn(() => renamePending),
+      createSideChat: vi.fn(async () => ({ thread: child })),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "parent", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "parent", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined), listSideChats: vi.fn(() => []), registerSideChat: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("parent", { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" });
+
+    const rename = service.rename("parent", "renamed");
+    await vi.waitFor(() => expect(adapter.renameSession).toHaveBeenCalled());
+    const sideChat = service.createSideChat("parent", null);
+    await Promise.resolve();
+    expect(adapter.createSideChat).not.toHaveBeenCalled();
+
+    releaseRename();
+    await rename;
+    await sideChat;
+    expect(adapter.createSideChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("inherits a cold parent's current settings when creating Side Chat", async () => {
     const parent = { id: "parent", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
     const child = { ...parent, id: "side-1", ephemeral: true, forkedFromId: "parent" };
     const protocolSettings = { model: "parent-model", reasoning: "low", accessMode: "readOnly" as const };
@@ -477,6 +617,7 @@ describe("session operation rules", () => {
 
     await service.createSideChat("parent", null);
 
+    expect(adapter.resumeSession).toHaveBeenCalledWith("parent");
     expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, protocolSettings, "/tmp/project");
   });
 
@@ -522,7 +663,7 @@ describe("session operation rules", () => {
     await expect(service.archive("side-1")).rejects.toThrow("does not support archive");
     await expect(service.fork("side-1", null, false, "request-1", true)).rejects.toThrow("does not support Fork");
     expect(() => service.getGoal("side-1")).toThrow("does not support Goal");
-    expect(() => service.setGoal({ threadId: "side-1", objective: "nope" })).toThrow("does not support Goal");
+    await expect(service.setGoal({ threadId: "side-1", objective: "nope" })).rejects.toThrow("does not support Goal");
     await expect(service.clearGoal("side-1")).rejects.toThrow("does not support Goal");
     await expect(service.createSideChat("side-1", null)).rejects.toThrow("does not support nested Side Chat");
     expect(adapter.renameSession).not.toHaveBeenCalled();
@@ -537,6 +678,7 @@ describe("session operation rules", () => {
     });
     const repositories = { removeProjectSession: vi.fn() };
     const runtimes = {
+      listSideChats: vi.fn(() => []),
       getSideChat: vi.fn(() => undefined),
       get: vi.fn(() => ({ threadId: "empty-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
       notifySessionSummaryUpdated: vi.fn(),
@@ -548,6 +690,80 @@ describe("session operation rules", () => {
     expect(adapter.unsubscribe).toHaveBeenCalledWith("empty-1");
     expect(repositories.removeProjectSession).toHaveBeenCalledWith("empty-1");
     expect(runtimes.notifySessionSummaryUpdated).toHaveBeenCalledWith("empty-1", "archived-unmaterialized");
+  });
+
+  it("does not reintroduce a successfully archived materialized Session from cache", async () => {
+    const mappings = [{
+      thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project",
+      source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+    }];
+    const snapshot = { id: "thread-1", preview: "cached", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 2, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      archiveSession: vi.fn(async () => undefined),
+      listSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
+    });
+    const repositories = {
+      listProjectSessions: vi.fn(() => mappings),
+      removeProjectSession: vi.fn((threadId: string) => {
+        const index = mappings.findIndex((mapping) => mapping.thread_id === threadId);
+        if (index >= 0) mappings.splice(index, 1);
+      }),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []),
+      getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots.set("thread-1", snapshot);
+
+    await service.archive("thread-1");
+
+    await expect(service.listSessions({})).resolves.toEqual([]);
+    expect(repositories.removeProjectSession).toHaveBeenCalledWith("thread-1");
+    expect(runtimes.notifySessionSummaryUpdated).toHaveBeenCalledWith("thread-1", "archived");
+  });
+
+  it("rejects parent Session archival while its Side Chat Turn is active", async () => {
+    const sideChat = { threadId: "side-1", parentThreadId: "parent", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [], createdAt: 1 };
+    const adapter = Object.assign(new EventEmitter(), { archiveSession: vi.fn(), unsubscribe: vi.fn() });
+    const repositories = { removeProjectSession: vi.fn() };
+    const runtimes = {
+      listSideChats: vi.fn(() => [sideChat]),
+      getSideChat: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : undefined),
+      get: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
+      notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await expect(service.archive("parent")).rejects.toThrow(ActiveTurnConflictError);
+
+    expect(adapter.unsubscribe).not.toHaveBeenCalled();
+    expect(adapter.archiveSession).not.toHaveBeenCalled();
+    expect(repositories.removeProjectSession).not.toHaveBeenCalled();
+  });
+
+  it("closes an idle Side Chat before archiving its parent Session", async () => {
+    const calls: string[] = [];
+    const sideChat = { threadId: "side-1", parentThreadId: "parent", state: "idle", activeFlags: [], pendingRequestIds: [], createdAt: 1 };
+    const adapter = Object.assign(new EventEmitter(), {
+      unsubscribe: vi.fn(async () => { calls.push("unsubscribe-side"); }),
+      archiveSession: vi.fn(async () => { calls.push("archive-parent"); }),
+    });
+    const repositories = { removeProjectSession: vi.fn(() => { calls.push("remove-parent-mapping"); }) };
+    const runtimes = {
+      listSideChats: vi.fn(() => [sideChat]),
+      getSideChat: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : undefined),
+      get: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
+      removeSideChat: vi.fn(() => { calls.push("remove-side-runtime"); }),
+      notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await service.archive("parent");
+
+    expect(calls).toEqual(["unsubscribe-side", "remove-side-runtime", "archive-parent", "remove-parent-mapping"]);
   });
 
   it("rejects non-whitelisted mutations while a Turn is active", async () => {
@@ -563,13 +779,143 @@ describe("session operation rules", () => {
 
     await expect(service.rename("thread-1", "new name")).rejects.toThrow(ActiveTurnConflictError);
     await expect(service.archive("thread-1")).rejects.toThrow(ActiveTurnConflictError);
-    expect(() => service.moveToProject("thread-1", "project-2")).toThrow(ActiveTurnConflictError);
-    expect(() => service.setGoal({ threadId: "thread-1", status: "paused" })).toThrow(ActiveTurnConflictError);
+    await expect(service.moveToProject("thread-1", "project-2")).rejects.toThrow(ActiveTurnConflictError);
+    await expect(service.setGoal({ threadId: "thread-1", status: "paused" })).rejects.toThrow(ActiveTurnConflictError);
     await expect(service.clearGoal("thread-1")).rejects.toThrow(ActiveTurnConflictError);
     expect(adapter.renameSession).not.toHaveBeenCalled();
     expect(adapter.archiveSession).not.toHaveBeenCalled();
     expect(repositories.moveProjectSession).not.toHaveBeenCalled();
     expect(adapter.setGoal).not.toHaveBeenCalled();
     expect(adapter.clearGoal).not.toHaveBeenCalled();
+  });
+
+  it("rejects Project removal while a mapped Session is active", async () => {
+    const repositories = {
+      listProjectSessions: vi.fn(() => [{ thread_id: "thread-1", project_id: "project-1" }]),
+      deleteProject: vi.fn(), getPreferences: vi.fn(), setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [] })),
+    };
+    const service = new SessionService(repositories as never, {} as never, {} as never, runtimes as never);
+
+    await expect(service.removeProject("project-1")).rejects.toThrow(ActiveTurnConflictError);
+    expect(repositories.deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("clears stale Project and Thread preferences when removing an idle Project", async () => {
+    const repositories = {
+      listProjectSessions: vi.fn(() => [{ thread_id: "thread-1", project_id: "project-1" }]),
+      deleteProject: vi.fn(),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: "project-1", lastThreadId: "thread-1", fullAccessNoticeSeenProjects: ["project-1", "project-2"] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+    };
+    const service = new SessionService(repositories as never, {} as never, {} as never, runtimes as never);
+
+    await service.removeProject("project-1");
+
+    expect(repositories.deleteProject).toHaveBeenCalledWith("project-1");
+    expect(repositories.setPreferences).toHaveBeenCalledWith({ lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: ["project-2"] });
+  });
+
+  it("closes an idle Side Chat before removing its Project", async () => {
+    const calls: string[] = [];
+    const sideChat = { threadId: "side-1", parentThreadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [], createdAt: 1 };
+    const adapter = Object.assign(new EventEmitter(), { unsubscribe: vi.fn(async () => { calls.push("unsubscribe-side"); }) });
+    const repositories = {
+      listProjectSessions: vi.fn(() => [{ thread_id: "thread-1", project_id: "project-1" }]),
+      deleteProject: vi.fn(() => { calls.push("delete-project"); }),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => [sideChat]),
+      getSideChat: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : undefined),
+      get: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
+      removeSideChat: vi.fn(() => { calls.push("remove-side-runtime"); }),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await service.removeProject("project-1");
+
+    expect(calls).toEqual(["unsubscribe-side", "remove-side-runtime", "delete-project"]);
+  });
+
+  it("waits for concurrent Side Chat creation and closes the new chat before removing its Project", async () => {
+    const child = { id: "side-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: true, forkedFromId: "thread-1", turns: [] };
+    let releaseCreation!: () => void;
+    const creationPending = new Promise<void>((resolve) => { releaseCreation = resolve; });
+    const sideChats: Array<{ threadId: string; parentThreadId: string; state: "idle"; activeFlags: string[]; pendingRequestIds: string[]; createdAt: number }> = [];
+    const adapter = Object.assign(new EventEmitter(), {
+      createSideChat: vi.fn(async () => { await creationPending; return { thread: child }; }),
+      unsubscribe: vi.fn(async () => undefined),
+    });
+    const repositories = {
+      listProjectSessions: vi.fn(() => [{ thread_id: "thread-1", project_id: "project-1" }]),
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+      deleteProject: vi.fn(),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => [...sideChats]),
+      getSideChat: vi.fn((threadId: string) => sideChats.find((sideChat) => sideChat.threadId === threadId)),
+      get: vi.fn((threadId: string) => sideChats.find((sideChat) => sideChat.threadId === threadId) ?? { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
+      registerSideChat: vi.fn((sideChat: typeof sideChats[number]) => { sideChats.push(sideChat); }),
+      removeSideChat: vi.fn((threadId: string) => { sideChats.splice(sideChats.findIndex((sideChat) => sideChat.threadId === threadId), 1); }),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("thread-1", { model: null, reasoning: null, accessMode: "fullAccess" });
+
+    const creating = service.createSideChat("thread-1", null);
+    await vi.waitFor(() => expect(adapter.createSideChat).toHaveBeenCalled());
+    const removing = service.removeProject("project-1");
+    await Promise.resolve();
+    expect(repositories.deleteProject).not.toHaveBeenCalled();
+
+    releaseCreation();
+    await creating;
+    await removing;
+
+    expect(adapter.unsubscribe).toHaveBeenCalledWith("side-1");
+    expect(runtimes.removeSideChat).toHaveBeenCalledWith("side-1");
+    expect(repositories.deleteProject).toHaveBeenCalledWith("project-1");
+  });
+
+  it("serializes a cross-tab Turn start behind an in-flight Session mutation", async () => {
+    let releaseRename!: () => void;
+    const renamePending = new Promise<void>((resolve) => { releaseRename = resolve; });
+    const adapter = Object.assign(new EventEmitter(), {
+      renameSession: vi.fn(() => renamePending),
+      startTurn: vi.fn(async () => ({ turn: { id: "turn-1", status: "inProgress", items: [], startedAt: 1, completedAt: null, durationMs: null } })),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = {
+      getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      setActiveTurn: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("thread-1", { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" });
+
+    const rename = service.rename("thread-1", "renamed");
+    await vi.waitFor(() => expect(adapter.renameSession).toHaveBeenCalled());
+    const start = service.startTurn("thread-1", "hello", { clientUserMessageId: "message-1" }, "request-1");
+    await Promise.resolve();
+    expect(adapter.startTurn).not.toHaveBeenCalled();
+
+    releaseRename();
+    await rename;
+    await start;
+    expect(adapter.startTurn).toHaveBeenCalledTimes(1);
   });
 });

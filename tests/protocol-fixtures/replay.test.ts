@@ -30,5 +30,10 @@ describe("sanitized real-protocol fixture replay", () => {
     expect(publish).toHaveBeenCalledWith("item.upserted", expect.objectContaining({ item: expect.objectContaining({ type: "commandExecution", status: "completed", exitCode: 0 }) }), { threadId: "thread-fixture" });
     expect(publish).toHaveBeenCalledWith("item.delta", expect.objectContaining({ kind: "commandOutput" }), { threadId: "thread-fixture" });
     expect(publish).toHaveBeenCalledWith("item.delta", expect.objectContaining({ kind: "agentMessage" }), { threadId: "thread-fixture" });
+    const projectedOrder = publish.mock.calls.map(([type, payload]) => `${type}:${(payload as { kind?: string }).kind ?? ""}`);
+    expect(projectedOrder.indexOf("turn.started:")).toBeLessThan(projectedOrder.indexOf("item.delta:reasoningSummary"));
+    expect(projectedOrder.indexOf("item.delta:reasoningSummary")).toBeLessThan(projectedOrder.indexOf("item.delta:commandOutput"));
+    expect(projectedOrder.indexOf("item.delta:commandOutput")).toBeLessThan(projectedOrder.indexOf("item.delta:agentMessage"));
+    expect(projectedOrder.indexOf("item.delta:agentMessage")).toBeLessThan(projectedOrder.indexOf("turn.completed:"));
   });
 });

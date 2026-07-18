@@ -1,11 +1,28 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CodexAdapter, type AdapterEvent } from "@codex-web/codex-adapter";
+import { CodexAdapter, JsonRpcError, type AdapterEvent } from "@codex-web/codex-adapter";
 import { requireIsolatedCodexHome } from "../../scripts/isolated-codex-home";
 
 const run = process.env.RUN_CODEX_INTEGRATION === "1" ? describe : describe.skip;
 
 run("real codex app-server with isolated CODEX_HOME", () => {
+  it("returns the verified invalid-request code when steering without an active Turn", async () => {
+    const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
+    const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
+    await adapter.start();
+    let threadId: string | undefined;
+    try {
+      const session = await adapter.startSession(path.resolve(process.cwd()), { accessMode: "readOnly", model: null, reasoning: null });
+      threadId = session.thread.id;
+      const failure = await adapter.steerTurn(threadId, "missing-turn-id", "probe", crypto.randomUUID()).then(() => null, (error: unknown) => error);
+      expect(failure).toBeInstanceOf(JsonRpcError);
+      expect(failure).toMatchObject({ code: -32600, message: "no active turn to steer" });
+    } finally {
+      if (threadId) await adapter.archiveSession(threadId).catch(() => undefined);
+      adapter.stop();
+    }
+  }, 60_000);
+
   it("creates an ephemeral side chat for an empty parent context", async () => {
     const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
@@ -34,11 +51,11 @@ run("real codex app-server with isolated CODEX_HOME", () => {
     try {
       const session = await adapter.startSession(path.resolve(process.cwd()), { accessMode: "fullAccess", model: null, reasoning: null });
       created.push(session.thread.id);
-      const terminal = new Promise<void>((resolve, reject) => {
+      const terminal = new Promise<{ status: string }>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("Active parent Turn did not reach a terminal state")), 120_000);
         adapter.on("event", (event: AdapterEvent) => {
           if (event.type === "turnCompleted" && event.threadId === session.thread.id) {
-            clearTimeout(timeout); resolve();
+            clearTimeout(timeout); resolve({ status: event.turn.status });
           }
         });
       });
@@ -49,14 +66,14 @@ run("real codex app-server with isolated CODEX_HOME", () => {
         { accessMode: "fullAccess", model: null, reasoning: "low" },
         crypto.randomUUID(),
       );
-      expect((await adapter.readSession(session.thread.id)).turns.at(-1)?.status).toBe("inProgress");
+      expect(turn.turn.status).toBe("inProgress");
 
       const sideChat = await adapter.createSideChat(session.thread.id, null, { accessMode: "fullAccess", model: null, reasoning: "low" }, process.cwd());
       created.push(sideChat.thread.id);
       expect(sideChat.thread).toMatchObject({ ephemeral: true, forkedFromId: session.thread.id });
 
       await adapter.interruptTurn(session.thread.id, turn.turn.id);
-      await terminal;
+      await expect(terminal).resolves.toEqual({ status: "interrupted" });
     } finally {
       for (const threadId of created) await adapter.archiveSession(threadId).catch(() => undefined);
       adapter.stop();

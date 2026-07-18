@@ -79,6 +79,27 @@ function reasoningConfig(settings: Pick<SessionSettings, "reasoning">): { model_
   return settings.reasoning ? { model_reasoning_effort: settings.reasoning } : undefined;
 }
 
+export function isThreadMaterializationRace(error: unknown): boolean {
+  return error instanceof JsonRpcError
+    && /no rollout found|not materialized yet|rollout\b.*\bis empty\b/i.test(error.message);
+}
+
+export async function retryThreadMaterialization<T>(
+  operation: () => Promise<T>,
+  wait: (milliseconds: number) => Promise<void> = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+): Promise<T> {
+  const delays = [50, 100, 200, 400, 800];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const delay = delays[attempt];
+      if (delay === undefined || !isThreadMaterializationRace(error)) throw error;
+      await wait(delay);
+    }
+  }
+}
+
 type ProtocolSessionSettings = Pick<ThreadSettings, "model" | "effort" | "approvalPolicy" | "sandboxPolicy">;
 
 export function projectSessionSettings(settings: ProtocolSessionSettings): SessionSettings {
@@ -108,6 +129,7 @@ export class CodexAdapter extends EventEmitter {
   private ready = false;
   private accountValue: Account | null = null;
   private accountChecked = false;
+  private accountCheckPromise: Promise<void> | null = null;
   private modelsValue: ModelOption[] = [];
   private readonly pendingRequests = new Map<string, RpcServerRequest>();
 
@@ -166,14 +188,10 @@ export class CodexAdapter extends EventEmitter {
       capabilities: null,
     });
     transport.notify("initialized");
-    const [account, models] = await Promise.all([
-      this.accountChecked ? Promise.resolve(null) : this.readAccount(),
+    const [, models] = await Promise.all([
+      this.ensureAccountChecked(),
       this.listModels(),
     ]);
-    if (account) {
-      this.accountValue = account.account;
-      this.accountChecked = true;
-    }
     this.modelsValue = models;
     this.ready = true;
     this.supervisor.markReady();
@@ -182,6 +200,15 @@ export class CodexAdapter extends EventEmitter {
 
   async readAccount(): Promise<GetAccountResponse> {
     return this.supervisor.transport.request<GetAccountResponse>("account/read", { refreshToken: false });
+  }
+
+  private ensureAccountChecked(): Promise<void> {
+    if (this.accountChecked) return Promise.resolve();
+    this.accountCheckPromise ??= this.readAccount().then((account) => {
+      this.accountValue = account.account;
+      this.accountChecked = true;
+    });
+    return this.accountCheckPromise;
   }
 
   async listModels(): Promise<ModelOption[]> {
@@ -286,7 +313,7 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async createSideChat(threadId: string, lastTurnId: string | null, settings: SessionSettings, cwd = this.options.cwd): Promise<{ thread: SessionThread }> {
-    const response = await this.supervisor.transport.request<ThreadForkResponse>("thread/fork", {
+    const response = await retryThreadMaterialization(() => this.supervisor.transport.request<ThreadForkResponse>("thread/fork", {
       threadId,
       ...(lastTurnId ? { lastTurnId } : {}),
       ...(settings.model ? { model: settings.model } : {}),
@@ -297,7 +324,7 @@ export class CodexAdapter extends EventEmitter {
       ephemeral: true,
       developerInstructions: SIDE_CHAT_INSTRUCTIONS,
       threadSource: "codex-web-side-chat",
-    });
+    }));
     await this.initializeSideChatThread(response.thread.id);
     return { thread: projectThread(response.thread) };
   }

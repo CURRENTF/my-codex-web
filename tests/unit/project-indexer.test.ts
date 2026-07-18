@@ -48,6 +48,35 @@ describe("ProjectIndexer path matching", () => {
     expect(listSessions).not.toHaveBeenCalled();
   });
 
+  it("rolls back a newly inserted Project when its required exact-root scan fails", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    const listSessions = vi.fn()
+      .mockRejectedValueOnce(new Error("app-server disconnected"))
+      .mockResolvedValue({ data: [], nextCursor: null });
+    const indexer = new ProjectIndexer(repositories, { listSessions } as unknown as CodexAdapter);
+
+    await expect(indexer.addProject(root)).rejects.toThrow("app-server disconnected");
+    expect(repositories.listProjects()).toEqual([]);
+
+    const backgroundComplete = new Promise<void>((resolve) => indexer.once("scanComplete", () => resolve()));
+    await expect(indexer.addProject(root)).resolves.toMatchObject({ rootPath: root });
+    await backgroundComplete;
+    expect(listSessions).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports background scan failures without leaving an unhandled rejection", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject(project("root", root));
+    const indexer = new ProjectIndexer(repositories, { listSessions: vi.fn(async () => { throw new Error("temporary scan failure"); }) } as unknown as CodexAdapter);
+    const failure = vi.fn(); indexer.on("scanError", failure);
+
+    indexer.scanAllInBackground();
+
+    await vi.waitFor(() => expect(failure).toHaveBeenCalledWith(expect.objectContaining({ message: "temporary scan failure" })));
+  });
+
   it("paginates the immediate exact-root scan", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
     const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);

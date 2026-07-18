@@ -142,4 +142,41 @@ describe("session snapshot merge", () => {
 
     expect(mergeSessionSnapshot(stable, live).turns[0]?.items.map((item) => item.id)).toEqual(["command-1", "command-2"]);
   });
+
+  it("terminalizes cached tool items when interrupted history omits them", () => {
+    const interrupted = thread([{
+      id: "turn-1",
+      status: "interrupted",
+      itemsView: "full",
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1_000,
+      items: [],
+    }]);
+    const live = thread([{
+      ...interrupted.turns[0]!,
+      status: "inProgress",
+      completedAt: null,
+      durationMs: null,
+      items: [{
+        type: "commandExecution",
+        id: "command-1",
+        command: "sleep 30",
+        cwd: "/tmp/project",
+        processId: null,
+        status: "inProgress",
+        commandActions: [],
+        aggregatedOutput: "started\n",
+        exitCode: null,
+        durationMs: null,
+      }],
+    }]);
+
+    expect(mergeSessionSnapshot(interrupted, live).turns[0]?.items[0]).toMatchObject({
+      type: "commandExecution",
+      status: "interrupted",
+      aggregatedOutput: "started\n",
+    });
+  });
 });

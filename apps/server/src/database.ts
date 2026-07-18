@@ -38,6 +38,13 @@ export interface ProjectSessionRow {
   hidden: number;
 }
 
+export interface ThreadUiStateRow {
+  thread_id: string;
+  last_completed_at: number | null;
+  last_terminal_status: string | null;
+  last_viewed_at: number | null;
+}
+
 export class Repositories {
   readonly db: Database.Database;
 
@@ -163,6 +170,16 @@ export class Repositories {
   markThreadViewed(threadId: string): void {
     this.db.prepare(`INSERT INTO thread_ui_state (thread_id, last_viewed_at) VALUES (?, ?)
       ON CONFLICT(thread_id) DO UPDATE SET last_viewed_at=excluded.last_viewed_at`).run(threadId, Date.now());
+  }
+
+  clearThreadTerminal(threadId: string): void {
+    this.db.prepare("DELETE FROM thread_ui_state WHERE thread_id = ?").run(threadId);
+  }
+
+  listThreadUiStates(): ThreadUiStateRow[] {
+    return this.db.prepare(`SELECT state.* FROM thread_ui_state state
+      INNER JOIN project_sessions sessions ON sessions.thread_id = state.thread_id
+      WHERE sessions.hidden = 0`).all() as ThreadUiStateRow[];
   }
 
   private projectFromRow(row: ProjectRow): Project {

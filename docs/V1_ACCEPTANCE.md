@@ -1,6 +1,6 @@
 # Codex Web V1 Acceptance
 
-验收日期：2026-07-17
+验收日期：2026-07-18
 验证平台：macOS，Codex CLI `0.144.3`
 测试 Codex Home：`~/.codex-web/test-codex-home`（仅复用 `auth.json`，不复用正常 Session 存储）
 
@@ -9,10 +9,10 @@
 | 检查 | 结果 |
 | --- | --- |
 | `npm run check` | 通过 |
-| `npm test` | 105 passed，3 个真实集成测试默认 skipped |
+| `npm test` | 138 passed，4 个真实集成测试默认 skipped |
 | `npm run build` | 通过；仅有 Vite 500 kB chunk warning |
 | `npm run schema:check` | 通过；Schema 与 Codex CLI `0.144.3` 一致 |
-| `RUN_CODEX_INTEGRATION=1 ... npm run test:integration` | 3 passed；包含父 Turn 执行中从顶部创建 Side Chat |
+| `RUN_CODEX_INTEGRATION=1 ... npm run test:integration` | 4 passed；包含无活动 Turn 的 Steer 错误码、父 Turn 执行中从顶部创建 Side Chat |
 | `npm run test:live-smoke` | 通过 |
 | `npm run protocol:harness` | 通过 |
 | `git diff --check` | 通过 |
@@ -20,13 +20,13 @@
 | `npm pack --dry-run --json --ignore-scripts` | 通过；发布包 7 个 release bundle 文件 |
 | `npm run test:package` | tarball 全新安装、安装后的 `codex-web` 启动和 health 通过 |
 
-真实 App Server 验证使用隔离 `CODEX_HOME`，覆盖初始化、账户读取、动态模型列表、工具执行与输出 Delta、Turn 完成、中断、Fork、Goal 和 ephemeral Side Chat。Harness 中中断命令后的清理可能记录 `UnknownProcessId`，但 Turn 的协议终态正确为 `interrupted`。
+真实 App Server 验证使用隔离 `CODEX_HOME`，覆盖初始化、账户读取、动态模型列表、工具执行与输出 Delta、Turn 完成、中断、Fork、Goal 和 ephemeral Side Chat。无活动 Turn 的 `turn/steer` 已确认返回 `JsonRpcError` code `-32600`；父 Turn 刚启动时的 rollout materialization 竞态通过 Adapter 内的有限退避处理。Harness 中中断命令后的清理可能记录 `UnknownProcessId`，但 Turn 的协议终态正确为 `interrupted`。
 
 ## V1 产品闭环
 
 | 能力 | 验收证据 |
 | --- | --- |
-| Project 与 Session 发现 | 冷启动先精确扫描每个 Project 根目录、再全量后台分页扫描；canonical cwd、三种来源、嵌套 Project 最长路径规则均有回归测试；Playwright 场景先创建并解除映射一个真实 Session，再通过添加文件夹重新发现 |
+| Project 与 Session 发现 | 冷启动先精确扫描每个 Project 根目录、再全量后台分页扫描；canonical cwd、三种来源、嵌套 Project 最长路径规则均有回归测试；E2E 场景覆盖先创建并解除映射一个真实 Session，再通过添加文件夹重新发现 |
 | 最近 / 项目 Sidebar | 双模式、排序、搜索、Project 折叠和重新扫描可用 |
 | 实时 Timeline | 用户消息乐观显示；Agent Delta、命令/工具中间状态、输出和最终回复通过 WebSocket 自动更新，无需刷新 |
 | Composer | 模型与 Reasoning 来自 `model/list`；首次切换到 Full Access 会在发送前显示 Project 级提示；空闲发送、运行中 Steer 和 Interrupt 状态正确 |
@@ -41,15 +41,21 @@
 | 测试隔离 | 真实路径规范化会拒绝正常 Home 及其符号链接；E2E 启动前核验 health 中的 canonical home |
 | App Server 重启 | Runtime 断开投影、snapshot 重同步和 ephemeral Side Chat 清理已验证 |
 
-## 手动 macOS 验证
+## 手动 macOS Safari 验证
 
-- 新 Session 正常显示 Timeline 与 Composer。
-- 真实 shell 工具调用会显示 `inProgress`、cwd、耗时、退出码和输出，最终回复自动出现。
+- 新 Session 正常显示 Timeline 与固定可见的 Composer；Timeline 和 Sidebar 可以独立上下滚动。
+- AI 文本 Delta、最终回复和真实 shell 工具中间动作无需刷新即可出现；命令卡会显示 `inProgress`、cwd、耗时、退出码和输出。
 - Steer 进入当前 Turn；Interrupt 后显示“已中断”。
+- Interrupt 后主标题和 Sidebar 的运行状态同步更新。
 - Goal 创建、状态修改和持久显示正常。
 - Fork after、首轮 before 与原问题预填正常。
 - Side Chat 分栏、独立发送和实时回复正常，且不进入 Sidebar。
 - App Server 重启后 ephemeral Side Chat 被清理。
 - 最近列表排序方向可以切换。
+- 桌面分栏、紧凑宽度顶部标签和移动窄宽 Sidebar 抽屉均在 Safari 中检查，布局随窗口宽度自动切换。
 
-手动验收完成后已释放浏览器控制会话；最终回归不启动 Playwright、Chrome 调试进程或 WebDriver。
+手动验收只使用 Safari；最终回归不启动 Playwright、Chrome 调试进程或 WebDriver，也不操作用户正在使用的 Chrome。
+
+## 已知稳定协议限制
+
+V1 按计划只使用稳定的 `thread/read({ includeTurns: true })` 读取历史。该响应不会持久恢复所有历史 command execution 细节，因此 App Server 重启后，未被稳定协议返回的旧命令卡和完整输出无法重建。在不启用实验接口、不读取 Codex 内部存储且不复制 Session 数据的约束下，这是当前协议边界，而不是 Web UI 可以无损补齐的数据。

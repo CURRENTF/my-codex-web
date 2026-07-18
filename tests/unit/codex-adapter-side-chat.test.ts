@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CodexAdapter } from "../../packages/codex-adapter/src/codex-adapter.js";
+import { CodexAdapter, isThreadMaterializationRace, retryThreadMaterialization } from "../../packages/codex-adapter/src/codex-adapter.js";
 import { JsonRpcError } from "../../packages/codex-adapter/src/json-rpc-transport.js";
 
 const emptyThread = {
@@ -24,6 +24,20 @@ const emptyThread = {
 } as const;
 
 describe("Side Chat adapter initialization", () => {
+  it("retries only explicit parent Thread materialization races before Fork", async () => {
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new JsonRpcError("no rollout found for thread id redacted", -32600))
+      .mockRejectedValueOnce(new JsonRpcError("thread redacted is not materialized yet", -32600))
+      .mockResolvedValue("forked");
+    const wait = vi.fn(async () => undefined);
+
+    await expect(retryThreadMaterialization(operation, wait)).resolves.toBe("forked");
+
+    expect(wait.mock.calls).toEqual([[50], [100]]);
+    expect(isThreadMaterializationRace(new JsonRpcError("rollout at redacted is empty", -32600))).toBe(true);
+    expect(isThreadMaterializationRace(new JsonRpcError("internal failure", -32603))).toBe(false);
+  });
+
   it("injects the hidden boundary and clears Goal for an empty ephemeral Side Chat", async () => {
     const request = vi.fn(async (method: string) => {
       if (method === "thread/start") return { thread: emptyThread };

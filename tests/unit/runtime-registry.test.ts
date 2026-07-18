@@ -28,12 +28,49 @@ describe("runtime projection", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
     const registry = new ThreadRuntimeRegistry(events, repositories);
+    const clearTerminal = vi.spyOn(repositories, "clearThreadTerminal");
     notify(registry, { method: "turn/started", params: { threadId: "t1", turn: { id: "turn-1" } } });
     expect(registry.get("t1")).toMatchObject({ state: "running", activeTurnId: "turn-1" });
+    expect(clearTerminal).toHaveBeenCalledWith("t1");
     notify(registry, { method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1", status: "completed" } } });
     expect(registry.get("t1").state).toBe("justFinished");
     vi.advanceTimersByTime(20_001);
     expect(registry.get("t1").state).toBe("idle");
+  });
+
+  it("hydrates unread terminal state from SQLite after a backend restart", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T10:00:00.000Z"));
+    const databasePath = path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db");
+    const repositories = new Repositories(databasePath);
+    repositories.insertProject({ id: "project-1", name: "Project", rootPath: "/tmp/project", canonicalPath: "/tmp/project", orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: Date.now(), lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({ thread_id: "failed-thread", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: Date.now(), last_seen_at: Date.now() });
+    repositories.markThreadTerminal("failed-thread", "failed", Date.now() - 1_000);
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+
+    const restored = new ThreadRuntimeRegistry(events, repositories);
+
+    expect(restored.get("failed-thread")).toMatchObject({ state: "failed", lastTerminalStatus: "failed" });
+    restored.markViewed("failed-thread");
+    const afterView = new ThreadRuntimeRegistry(events, repositories);
+    expect(afterView.get("failed-thread").state).toBe("idle");
+  });
+
+  it("hydrates only the remaining portion of the just-finished window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T10:00:00.000Z"));
+    const databasePath = path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db");
+    const repositories = new Repositories(databasePath);
+    repositories.insertProject({ id: "project-1", name: "Project", rootPath: "/tmp/project", canonicalPath: "/tmp/project", orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: Date.now(), lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({ thread_id: "done-thread", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: Date.now(), last_seen_at: Date.now() });
+    repositories.markThreadTerminal("done-thread", "completed", Date.now() - 15_000);
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+
+    const restored = new ThreadRuntimeRegistry(events, repositories);
+
+    expect(restored.get("done-thread").state).toBe("justFinished");
+    vi.advanceTimersByTime(5_001);
+    expect(restored.get("done-thread").state).toBe("idle");
   });
 
   it("marks active sessions disconnected when app-server exits", () => {
@@ -94,6 +131,7 @@ describe("runtime projection", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
     const registry = new ThreadRuntimeRegistry(events, repositories);
+    const terminal = vi.spyOn(repositories, "markThreadTerminal");
     registry.setActiveTurn("t1", "turn-1");
     pending(registry, { id: 21, method: "item/commandExecution/requestApproval", params: { threadId: "t1" } } as never);
 
@@ -108,6 +146,7 @@ describe("runtime projection", () => {
     expect(registry.get("t1")).toMatchObject({ state: "failed", pendingRequestIds: [], lastTerminalStatus: "failed" });
     expect(registry.get("t1").activeTurnId).toBeUndefined();
     expect(registry.listPendingRequests()).toEqual([]);
+    expect(terminal).toHaveBeenCalledWith("t1", "failed", expect.any(Number));
 
     registry.markViewed("t1");
     expect(registry.get("t1")).toMatchObject({ state: "idle" });
@@ -159,6 +198,17 @@ describe("runtime projection", () => {
 
     expect(registry.listPendingRequests()).toEqual([{ id: "7", method: "item/commandExecution/requestApproval", params: null }]);
     expect(registry.listItemDeltas()).toEqual({ "agent-1": "hello" });
+  });
+
+  it("clears unfinished item deltas when their Turn reaches a terminal state", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    notify(registry, { method: "item/agentMessage/delta", params: { threadId: "t1", turnId: "turn-1", itemId: "agent-1", delta: "partial" } });
+
+    notify(registry, { method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1", status: "interrupted" } } });
+
+    expect(registry.listItemDeltas()).toEqual({});
   });
 
   it("exposes only the user-input question schema needed by the browser", () => {
@@ -249,6 +299,18 @@ describe("runtime projection", () => {
     } });
 
     expect(registry.list().some((runtime) => runtime.threadId === "side-closed")).toBe(false);
+  });
+
+  it("clears Side Chat deltas when the ephemeral Thread is removed", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.registerSideChat({ threadId: "side-1", parentThreadId: "parent", state: "idle", activeFlags: [], pendingRequestIds: [], createdAt: 1 });
+    notify(registry, { method: "item/agentMessage/delta", params: { threadId: "side-1", turnId: "turn-1", itemId: "agent-side", delta: "partial" } });
+
+    registry.removeSideChat("side-1");
+
+    expect(registry.listItemDeltas()).toEqual({});
   });
 
   it("keeps ephemeral Side Chat terminal and viewed state out of SQLite", () => {

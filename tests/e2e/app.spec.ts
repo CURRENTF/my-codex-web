@@ -77,6 +77,27 @@ test("streams model tool activity into the timeline without a refresh", async ({
   await expect(page.locator(".turn-block")).toHaveCount(2);
 });
 
+test("renders and resolves a model request_user_input server request", async ({ page }) => {
+  test.setTimeout(150_000);
+  await ensureProject(page);
+  const sidebar = page.locator(".sidebar");
+  test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
+  await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  const previousSessionUrl = page.url();
+  await Promise.all([
+    page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 30_000 }),
+    page.getByRole("button", { name: "新建 Session", exact: true }).click(),
+  ]);
+
+  await page.getByRole("textbox", { name: "要求后续变更" }).fill("必须调用 request_user_input 工具，询问一个 header 为 Mode、id 为 mode、问题为 Continue? 的单选题，选项标签为 Continue。收到答案后只回复 PENDING_REQUEST_RESOLVED。");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("Codex 正在等待你的输入", { exact: true })).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("button", { name: /^Continue/ }).click();
+  await page.getByRole("button", { name: "发送答案", exact: true }).click();
+  await expect(page.getByText("Codex 正在等待你的输入", { exact: true })).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator(".agent-message").filter({ hasText: "PENDING_REQUEST_RESOLVED" })).toBeVisible({ timeout: 90_000 });
+});
+
 test("serializes writes from multiple tabs for the same Session", async ({ page }) => {
   test.setTimeout(90_000);
   await ensureProject(page);
@@ -98,13 +119,16 @@ test("serializes writes from multiple tabs for the same Session", async ({ page 
       body: JSON.stringify({ text, accessMode: "fullAccess", clientRequestId: crypto.randomUUID(), clientUserMessageId: crypto.randomUUID() }),
     });
     return response.status;
-  }, { id: threadId, text: `请调用 shell 执行 sleep 5，然后只回复 ${marker}。不要修改文件。` });
+  }, { id: threadId, text: `请调用 shell 执行 sleep 120，然后只回复 ${marker}。不要修改文件。` });
   const statuses = await Promise.all([start(page, "TAB_ONE_DONE"), start(secondPage, "TAB_TWO_DONE")]);
   expect(statuses.sort((left, right) => left - right)).toEqual([200, 409]);
   await expect(page.locator(".turn-block")).toHaveCount(1, { timeout: 30_000 });
   const stop = page.getByRole("button", { name: "停止" });
-  if (await stop.isVisible()) await stop.click();
+  await expect(stop).toBeVisible({ timeout: 30_000 });
+  await stop.click();
   await expect(stop).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator(".main-pane .header-status")).toContainText("已中断");
+  await expect(page.locator(".sidebar .session-row-shell.active .status-icon")).toHaveAttribute("aria-label", "已中断");
   await secondPage.close();
 });
 
@@ -186,8 +210,20 @@ test("adapts the workspace controls and navigation to the available width", asyn
   await page.getByRole("button", { name: "最近", exact: true }).click();
   const sort = page.locator(".sort-button");
   const sortBefore = await sort.textContent();
+  const directionBefore = sortBefore?.includes("↓") ? "desc" : "asc";
+  const expectedBefore = await page.evaluate(async (direction) => {
+    const response = await fetch(`/api/sessions?sortDirection=${direction}&search=`);
+    return (await response.json() as Array<{ threadId: string }>).map((session) => session.threadId);
+  }, directionBefore);
+  await expect.poll(() => page.locator(".sidebar-list > .session-row-shell").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-thread-id")))).toEqual(expectedBefore);
   await sort.click();
   await expect(sort).not.toHaveText(sortBefore ?? "");
+  const directionAfter = directionBefore === "desc" ? "asc" : "desc";
+  const expectedAfter = await page.evaluate(async (direction) => {
+    const response = await fetch(`/api/sessions?sortDirection=${direction}&search=`);
+    return (await response.json() as Array<{ threadId: string }>).map((session) => session.threadId);
+  }, directionAfter);
+  await expect.poll(() => page.locator(".sidebar-list > .session-row-shell").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-thread-id")))).toEqual(expectedAfter);
 
   await page.getByRole("button", { name: "从此轮之后 Fork" }).first().click();
   await expect(page.getByRole("dialog", { name: "创建 Fork" })).toBeVisible();
@@ -310,11 +346,20 @@ test("adapts the workspace controls and navigation to the available width", asyn
 });
 
 test("shows disconnection and recovers after the managed App Server crashes", async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(150_000);
   await ensureProject(page);
   const sidebar = page.locator(".sidebar");
   test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
   await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  const previousSessionUrl = page.url();
+  await Promise.all([
+    page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 30_000 }),
+    page.getByRole("button", { name: "新建 Session", exact: true }).click(),
+  ]);
+  const threadId = page.url().split("/sessions/")[1]!;
+  await page.getByRole("textbox", { name: "要求后续变更" }).fill("请调用 shell 执行 sleep 120，然后只回复 CRASH_RECOVERY_SHOULD_NOT_COMPLETE。不要修改文件。");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByRole("button", { name: "停止" })).toBeVisible({ timeout: 30_000 });
 
   const port = new URL(page.url()).port || "80";
   const serverPid = Number(execFileSync("lsof", [`-tiTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).trim().split("\n")[0]);
@@ -332,7 +377,11 @@ test("shows disconnection and recovers after the managed App Server crashes", as
     const health = await fetch("/api/health", { cache: "no-store" }).then((response) => response.json()) as { connection: string };
     return health.connection;
   }), { timeout: 30_000 }).toBe("connected");
-  await expect(page.locator(".main-pane .header-status")).not.toContainText("连接中断", { timeout: 30_000 });
+  await expect.poll(async () => page.evaluate(async (id) => {
+    const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" }).then((response) => response.json()) as { runtimeStates: Array<{ threadId: string; state: string }> };
+    return bootstrap.runtimeStates.find((runtime) => runtime.threadId === id)?.state ?? "idle";
+  }, threadId), { timeout: 30_000 }).not.toBe("running");
+  await expect(page.locator(".main-pane .header-status")).not.toContainText("正在执行", { timeout: 30_000 });
 });
 
 test("discovers an existing App Server Session, applies Project defaults, and removes only the local mapping", async ({ page }) => {

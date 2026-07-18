@@ -125,4 +125,42 @@ describe("applySessionEvent", () => {
     }))!;
     expect(lateInProgress.thread.turns[0]?.items[0]).toMatchObject({ status: "interrupted" });
   });
+
+  it("terminalizes streamed tool items when an interrupted Turn completion omits items", () => {
+    const started = applySessionEvent(session, event("turn.started", { turn: {
+      id: "turn-1",
+      status: "inProgress",
+      items: [],
+      startedAt: 10,
+      completedAt: null,
+      durationMs: null,
+    } }))!;
+    const withCommand = applySessionEvent(started, event("item.upserted", {
+      turnId: "turn-1",
+      item: {
+        type: "commandExecution",
+        id: "command-1",
+        command: "sleep 30",
+        cwd: "/tmp",
+        status: "inProgress",
+        aggregatedOutput: "started\n",
+        exitCode: null,
+        durationMs: null,
+      },
+    }))!;
+    const interrupted = applySessionEvent(withCommand, event("turn.completed", { turn: {
+      id: "turn-1",
+      status: "interrupted",
+      items: [],
+      startedAt: 10,
+      completedAt: 11,
+      durationMs: 1_000,
+    } }))!;
+
+    expect(interrupted.thread.turns[0]?.items[0]).toMatchObject({
+      type: "commandExecution",
+      status: "interrupted",
+      aggregatedOutput: "started\n",
+    });
+  });
 });

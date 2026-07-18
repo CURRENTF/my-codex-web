@@ -51,7 +51,7 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 400));
   await adapter.interruptTurn(parent.thread.id, interruptTurn.turn.id);
   const interrupted = await interruptedCompletion;
-  if (!new Set(["interrupted", "completed"]).has(String((interrupted.params?.turn as { status?: string } | undefined)?.status))) throw new Error("turn/interrupt did not produce a terminal notification");
+  if ((interrupted.params?.turn as { status?: string } | undefined)?.status !== "interrupted") throw new Error("turn/interrupt did not produce an interrupted terminal notification");
   await adapter.readSession(parent.thread.id);
   const resumed = await adapter.resumeSession(parent.thread.id);
   if (resumed.settings.model !== settings.model || resumed.settings.reasoning !== settings.reasoning || resumed.settings.accessMode !== settings.accessMode) throw new Error("thread/resume did not preserve Session settings");

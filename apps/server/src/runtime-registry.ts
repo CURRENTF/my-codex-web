@@ -10,11 +10,14 @@ export class ThreadRuntimeRegistry {
   private readonly sideChats = new Map<string, SideChatRuntime>();
   private readonly pendingRequests = new Map<string, AdapterPendingRequest>();
   private readonly liveDeltas = new Map<string, string>();
+  private readonly liveDeltaThreads = new Map<string, string>();
   private readonly finishTimers = new Map<string, NodeJS.Timeout>();
   private readonly terminalWaiters = new Map<string, Set<TerminalWaiter>>();
   private readonly closedSideChats = new Set<string>();
 
-  constructor(private readonly events: EventGateway, private readonly repositories: Repositories) {}
+  constructor(private readonly events: EventGateway, private readonly repositories: Repositories) {
+    this.hydratePersistedStates();
+  }
 
   list(): ThreadRuntime[] { return [...this.runtimes.values()].map((item) => ({ ...item })); }
   listSideChats(): SideChatRuntime[] { return [...this.sideChats.values()].map((item) => ({ ...item })); }
@@ -39,6 +42,7 @@ export class ThreadRuntimeRegistry {
     if (!sideChat) return;
     this.sideChats.delete(threadId);
     this.runtimes.delete(threadId);
+    this.clearLiveDeltas(threadId);
     this.closedSideChats.add(threadId);
     this.resolveTerminalWaiters(threadId, false);
     this.events.publish("sideChat.closed", { threadId }, { threadId: sideChat.parentThreadId, sideChatId: threadId });
@@ -66,6 +70,7 @@ export class ThreadRuntimeRegistry {
   handleConnection(state: "connected" | "connecting" | "disconnected"): void {
     if (state === "disconnected") {
       this.liveDeltas.clear();
+      this.liveDeltaThreads.clear();
       this.pendingRequests.clear();
       for (const [threadId, runtime] of this.runtimes) {
         if (runtime.state === "running" || runtime.state === "waitingForInput") {
@@ -148,6 +153,7 @@ export class ThreadRuntimeRegistry {
         if (event.status === "systemError") {
           this.clearFinishTimer(threadId);
           this.clearPendingRequests(threadId, current.pendingRequestIds);
+          this.clearLiveDeltas(threadId);
           this.setRuntime(threadId, {
             state,
             activeFlags,
@@ -156,6 +162,7 @@ export class ThreadRuntimeRegistry {
             lastCompletedAt: Date.now(),
             lastTerminalStatus: "failed",
           });
+          if (!this.sideChats.has(threadId)) this.repositories.markThreadTerminal(threadId, "failed", Date.now());
         } else {
           this.setRuntime(threadId, { state, activeFlags });
         }
@@ -164,6 +171,7 @@ export class ThreadRuntimeRegistry {
       case "turnStarted": {
         const turn = event.turn;
         this.clearFinishTimer(threadId);
+        if (!this.sideChats.has(threadId)) this.repositories.clearThreadTerminal(threadId);
         this.setRuntime(threadId, { state: "running", activeTurnId: turn.id, lastTerminalStatus: undefined });
         this.events.publish("turn.started", { turn }, this.ids(threadId));
         this.events.publish("session.summary.updated", { reason: "turn-started" }, { threadId });
@@ -175,6 +183,7 @@ export class ThreadRuntimeRegistry {
         const state: RuntimeState = status === "completed" ? "justFinished" : status;
         const pendingRequestIds = this.get(threadId).pendingRequestIds;
         this.clearPendingRequests(threadId, pendingRequestIds);
+        this.clearLiveDeltas(threadId);
         this.setRuntime(threadId, {
           state,
           activeTurnId: undefined,
@@ -190,11 +199,15 @@ export class ThreadRuntimeRegistry {
       }
       case "itemUpserted": {
         this.events.publish("item.upserted", { turnId: event.turnId, item: event.item, completed: event.completed, ...("startedAtMs" in event ? { startedAtMs: event.startedAtMs } : {}), ...("completedAtMs" in event ? { completedAtMs: event.completedAtMs } : {}) }, this.ids(threadId));
-        if (event.completed) this.liveDeltas.delete(event.item.id);
+        if (event.completed) {
+          this.liveDeltas.delete(event.item.id);
+          this.liveDeltaThreads.delete(event.item.id);
+        }
         break;
       }
       case "itemDelta":
         this.liveDeltas.set(event.delta.itemId, (this.liveDeltas.get(event.delta.itemId) ?? "") + event.delta.delta);
+        this.liveDeltaThreads.set(event.delta.itemId, threadId);
         this.events.publish("item.delta", event.delta, this.ids(threadId));
         break;
       case "goalUpdated":
@@ -217,6 +230,7 @@ export class ThreadRuntimeRegistry {
   }
 
   setActiveTurn(threadId: string, turnId: string): void {
+    if (!this.sideChats.has(threadId)) this.repositories.clearThreadTerminal(threadId);
     this.setRuntime(threadId, { state: "running", activeTurnId: turnId });
   }
 
@@ -258,6 +272,37 @@ export class ThreadRuntimeRegistry {
     for (const requestId of requestIds) {
       this.pendingRequests.delete(requestId);
       this.events.publish("pendingRequest.resolved", { id: requestId }, this.ids(threadId));
+    }
+  }
+
+  private clearLiveDeltas(threadId: string): void {
+    for (const [itemId, ownerThreadId] of this.liveDeltaThreads) {
+      if (ownerThreadId !== threadId) continue;
+      this.liveDeltaThreads.delete(itemId);
+      this.liveDeltas.delete(itemId);
+    }
+  }
+
+  private hydratePersistedStates(): void {
+    const now = Date.now();
+    for (const row of this.repositories.listThreadUiStates()) {
+      const status = row.last_terminal_status;
+      const lastCompletedAt = row.last_completed_at;
+      if (!lastCompletedAt || (status !== "completed" && status !== "interrupted" && status !== "failed")) continue;
+      if ((status === "failed" || status === "interrupted") && (row.last_viewed_at ?? 0) >= lastCompletedAt) continue;
+      const state: RuntimeState = status === "completed"
+        ? now - lastCompletedAt < 20_000 ? "justFinished" : "idle"
+        : status;
+      if (state === "idle") continue;
+      this.runtimes.set(row.thread_id, {
+        threadId: row.thread_id,
+        state,
+        activeFlags: [],
+        pendingRequestIds: [],
+        lastCompletedAt,
+        lastTerminalStatus: status,
+      });
+      if (state === "justFinished") this.scheduleIdle(row.thread_id, Math.max(0, 20_000 - (now - lastCompletedAt)));
     }
   }
 

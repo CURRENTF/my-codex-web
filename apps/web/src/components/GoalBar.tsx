@@ -3,6 +3,7 @@ import { Check, Flag, Pause, Plus, Trash } from "@phosphor-icons/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, newClientRequestId, type Goal } from "../api";
+import { goalUpdateInput } from "../goal-update";
 
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2)}k` : String(value); }
 
@@ -10,7 +11,7 @@ export function GoalBar({ threadId, goal, disabled = false }: { threadId: string
   const queryClient = useQueryClient(); const [open, setOpen] = useState(false);
   const [objective, setObjective] = useState(goal?.objective ?? ""); const [budget, setBudget] = useState(goal?.tokenBudget?.toString() ?? ""); const [status, setStatus] = useState(goal?.status ?? "active");
   useEffect(() => { setObjective(goal?.objective ?? ""); setBudget(goal?.tokenBudget?.toString() ?? ""); setStatus(goal?.status ?? "active"); }, [goal]);
-  const save = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/goal`, { method: "PUT", body: JSON.stringify({ objective: objective.trim(), tokenBudget: budget ? Number(budget) : null, status, clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); setOpen(false); } });
+  const save = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/goal`, { method: "PUT", body: JSON.stringify({ ...goalUpdateInput(goal, objective.trim(), budget ? Number(budget) : null, status), clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); setOpen(false); } });
   const clear = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/goal`, { method: "DELETE", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); setOpen(false); } });
   return <Popover.Root open={open} onOpenChange={setOpen}><Popover.Trigger asChild><button className={`goal-bar ${goal ? "has-goal" : ""}`} disabled={disabled}>
     {goal ? <><Flag size={15} weight="fill" /><span className="goal-objective"><strong>Goal</strong><span>{goal.objective}</span></span><span className="goal-stats">{formatTokens(goal.tokensUsed)} / {goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens<span aria-hidden>·</span>{goal.status}</span></> : <><Plus size={15} weight="bold" />设置 Goal</>}

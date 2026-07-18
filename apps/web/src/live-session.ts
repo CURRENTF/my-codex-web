@@ -28,7 +28,7 @@ function upsertTurn(turns: CodexTurn[], incoming: CodexTurn): CodexTurn[] {
         : item;
     }
   }
-  next[index] = { ...current, ...incoming, items };
+  next[index] = terminalizeTurn({ ...current, ...incoming, items });
   return next;
 }
 
