@@ -15,14 +15,14 @@ import { PendingBanner } from "./PendingBanner";
 import { StatusIcon, statusText } from "./StatusIcon";
 import { Timeline } from "./Timeline";
 
-export function SessionPane({ threadId, project, projects, models, sideChat = false, parallelWriteWarning = false, linkedSideChatActive = false, fullAccessNoticeSeen = true, onAcknowledgeFullAccess, onComposerReady, onOpenThread, onOpenSideChat, onCloseSideChat }: {
+export function SessionPane({ threadId, project, projects, models, sideChat = false, parallelWriteWarning = false, linkedSideChatActive = false, fullAccessNoticeSeen = true, onAcknowledgeFullAccess, onComposerReady, onOpenThread, onOpenSideChat, onCloseSideChat, onArchived }: {
   threadId: string; project: Project; projects: Project[]; models: ModelOption[]; sideChat?: boolean;
   parallelWriteWarning?: boolean; linkedSideChatActive?: boolean; fullAccessNoticeSeen?: boolean; onAcknowledgeFullAccess?(): void;
   onComposerReady?(element: HTMLTextAreaElement | null): void;
-  onOpenThread(threadId: string): void; onOpenSideChat(threadId: string): void; onCloseSideChat?(): void;
+  onOpenThread(threadId: string): void; onOpenSideChat(threadId: string): void; onCloseSideChat?(): void; onArchived?(threadId: string): void;
 }) {
   const queryClient = useQueryClient(); const setDraft = useAppStore((state) => state.setDraft);
-  const query = useQuery({ queryKey: ["session", threadId], queryFn: () => endpoints.session(threadId), refetchInterval: false, retry: sideChat ? false : 2 });
+  const query = useQuery({ queryKey: ["session", threadId], queryFn: ({ signal }) => endpoints.session(threadId, signal), refetchInterval: false, retry: sideChat ? false : 2 });
   const liveRuntime = useAppStore((state) => state.runtimes[threadId]); const connectionState = useAppStore((state) => state.connectionState); const payload = query.data;
   const runtime = liveRuntime ?? payload?.runtime; const state: RuntimeState = connectionState === "connected" ? (runtime?.state ?? "idle") : "disconnected";
   const title = sideChat ? "Side Chat" : payload?.thread.name || payload?.thread.preview || "Session";
@@ -49,7 +49,7 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   const side = useMutation({ mutationFn: (anchorTurnId: string | null) => api<{ threadId: string }>(`/api/sessions/${threadId}/side-chat`, { method: "POST", body: JSON.stringify({ anchorTurnId, clientRequestId: newClientRequestId() }) }), onSuccess: (result) => onOpenSideChat(result.threadId) });
   const rename = useMutation({ mutationFn: async () => { const name = window.prompt("Session 名称", title); if (!name?.trim()) return; return api(`/api/sessions/${threadId}/name`, { method: "PATCH", body: JSON.stringify({ name: name.trim(), clientRequestId: newClientRequestId() }) }); }, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); } });
   const move = useMutation({ mutationFn: (projectId: string) => api(`/api/sessions/${threadId}/project`, { method: "PATCH", body: JSON.stringify({ projectId, clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["sessions"] }); } });
-  const archive = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/archive`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["sessions"] }); } });
+  const archive = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/archive`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }), onSuccess: () => { if (onArchived) onArchived(threadId); else void queryClient.invalidateQueries({ queryKey: ["sessions"] }); } });
   const projectLabel = sideChat ? project.name : project.name;
   const turns = useMemo(() => payload?.thread.turns ?? [], [payload?.thread.turns]);
   const latestCompletedTurnId = useMemo(() => [...turns].reverse().find((turn) => turn.status === "completed")?.id ?? null, [turns]);

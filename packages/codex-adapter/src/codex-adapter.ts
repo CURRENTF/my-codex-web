@@ -204,10 +204,15 @@ export class CodexAdapter extends EventEmitter {
 
   private ensureAccountChecked(): Promise<void> {
     if (this.accountChecked) return Promise.resolve();
-    this.accountCheckPromise ??= this.readAccount().then((account) => {
-      this.accountValue = account.account;
-      this.accountChecked = true;
-    });
+    this.accountCheckPromise ??= this.readAccount()
+      .then((account) => {
+        this.accountValue = account.account;
+        this.accountChecked = true;
+      })
+      .catch((error: unknown) => {
+        this.accountCheckPromise = null;
+        throw error;
+      });
     return this.accountCheckPromise;
   }
 

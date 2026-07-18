@@ -6,6 +6,7 @@ import type { Project } from "@codex-web/shared-types";
 import type { CodexAdapter } from "@codex-web/codex-adapter";
 import { Repositories } from "../../apps/server/src/database";
 import { isPathInside, longestProjectMatch, ProjectIndexer } from "../../apps/server/src/project-indexer";
+import { KeyedOperationLock } from "../../apps/server/src/keyed-operation-lock";
 
 const databases: Repositories[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
@@ -154,5 +155,33 @@ describe("ProjectIndexer path matching", () => {
     expect(repositories.getProjectSession("cli")).toMatchObject({ project_id: "root", source_kind: "cli" });
     expect(repositories.getProjectSession("vscode")).toMatchObject({ project_id: "root", source_kind: "vscode" });
     expect(repositories.getProjectSession("web")).toMatchObject({ project_id: "api", source_kind: "appServer" });
+  });
+
+  it("does not restore an archived Session from a scan page fetched before archival", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject(project("root", root));
+    repositories.upsertProjectSession({
+      thread_id: "thread-1", project_id: "root", cwd_snapshot: root, source_kind: "appServer", origin: "created",
+      parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1,
+    });
+    const locks = new KeyedOperationLock();
+    let releaseProject!: () => void;
+    const projectHeld = locks.withKey("root", () => new Promise<void>((resolve) => { releaseProject = resolve; }));
+    await Promise.resolve();
+    const listSessions = vi.fn(async () => ({
+      data: [{ id: "thread-1", cwd: root, sourceKind: "appServer", forkedFromId: null }],
+      nextCursor: null,
+    }));
+    const indexer = new ProjectIndexer(repositories, { listSessions } as unknown as CodexAdapter, locks);
+
+    const scanning = indexer.scanAll();
+    await vi.waitFor(() => expect(listSessions).toHaveBeenCalled());
+    repositories.removeProjectSession("thread-1");
+    indexer.markSessionArchived("thread-1");
+    releaseProject();
+    await Promise.all([projectHeld, scanning]);
+
+    expect(repositories.getProjectSession("thread-1")).toBeNull();
   });
 });

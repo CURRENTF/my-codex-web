@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
-import { CodexAdapter, JsonRpcError, type AdapterEvent, type AdapterPendingRequest, type SessionSettings } from "@codex-web/codex-adapter";
+import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, type AdapterEvent, type AdapterPendingRequest, type SessionSettings } from "@codex-web/codex-adapter";
 import { Repositories, type ProjectSessionRow } from "./database.js";
 import { ProjectIndexer } from "./project-indexer.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
+import { KeyedOperationLock } from "./keyed-operation-lock.js";
 
 export class SteerConflictError extends Error {
   constructor() { super("The active turn finished before the steer message could be sent"); }
@@ -18,7 +19,7 @@ export class ActiveTurnConflictError extends Error {
 }
 
 export function isUnmaterializedSessionReadError(error: unknown): boolean {
-  return error instanceof JsonRpcError && (error.message.includes("not materialized yet") || /rollout\b.*\bis empty\b/i.test(error.message));
+  return isThreadMaterializationRace(error);
 }
 
 export function isSteerTurnConflictError(error: unknown): boolean {
@@ -189,17 +190,21 @@ export class SessionService {
   private readonly commandOutputDeltas = new Map<string, string>();
   private readonly goalPresence = new Map<string, boolean>();
   private readonly goalPresenceLoading = new Set<string>();
+  private readonly removedThreads = new Set<string>();
+  private readonly sessionGenerations = new Map<string, number>();
 
   constructor(
     private readonly repositories: Repositories,
     private readonly adapter: CodexAdapter,
     private readonly indexer: ProjectIndexer,
     private readonly runtimes: ThreadRuntimeRegistry,
+    private readonly projectLocks = new KeyedOperationLock(),
   ) {}
 
   async listSessions(options: { projectId?: string; search?: string; sortDirection?: "asc" | "desc" } = {}): Promise<SessionSummary[]> {
     const mappings = this.repositories.listProjectSessions(options.projectId);
     if (!mappings.length) return [];
+    for (const mapping of mappings) this.restoreSession(mapping.thread_id);
     void this.ensureGoalPresence(mappings.map((mapping) => mapping.thread_id));
     const mapped = new Map(mappings.map((item) => [item.thread_id, item]));
     const threads = [];
@@ -269,12 +274,18 @@ export class SessionService {
       .sort((left, right) => (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
   }
 
-  async readSession(threadId: string) {
+  readSession(threadId: string) {
+    return this.withLock(threadId, () => this.readSessionUnlocked(threadId));
+  }
+
+  private async readSessionUnlocked(threadId: string) {
     const sideChat = this.runtimes.getSideChat(threadId);
     const sideChatSnapshot = sideChat ? this.sessionSnapshots.get(threadId) : undefined;
     if (sideChatSnapshot) {
       return { thread: sideChatSnapshot, goal: null, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
     }
+    this.requireMapping(threadId);
+    this.restoreSession(threadId);
     await this.resumeWithPreferredSettings(threadId);
     const [persistedThread, goal] = await Promise.all([
       this.adapter.readSession(threadId).catch((error) => {
@@ -288,16 +299,21 @@ export class SessionService {
     const thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : terminalizeSessionSnapshot(persistedThread);
     this.sessionSnapshots.set(threadId, thread);
     this.goalPresence.set(threadId, goal !== null);
+    if (this.runtimes.get(threadId).state === "disconnected") this.runtimes.reconcileFromSnapshot(threadId, thread.turns);
     return { thread, goal, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
   }
 
-  markViewed(threadId: string): void {
-    this.runtimes.markViewed(threadId);
+  async markViewed(threadId: string): Promise<void> {
+    return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
+      this.runtimes.markViewed(threadId);
+    });
   }
 
   async rename(threadId: string, name: string): Promise<void> {
     this.assertPersistentSession(threadId, "rename");
     return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
       this.assertNoActiveTurn(threadId, "Rename");
       await this.adapter.renameSession(threadId, name);
     });
@@ -306,6 +322,7 @@ export class SessionService {
   async archive(threadId: string): Promise<void> {
     this.assertPersistentSession(threadId, "archive");
     return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
       this.assertNoActiveTurn(threadId, "Archive");
       const sideChat = this.runtimes.listSideChats().find((candidate) => candidate.parentThreadId === threadId);
       if (sideChat) {
@@ -315,68 +332,84 @@ export class SessionService {
         });
       }
       let reason = "archived";
+      this.indexer.markSessionArchived?.(threadId);
       try {
         await this.adapter.archiveSession(threadId);
       } catch (error) {
-        if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) throw error;
+        if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) {
+          this.indexer.restoreSessionDiscovery?.(threadId);
+          throw error;
+        }
         reason = "archived-unmaterialized";
         await this.adapter.unsubscribe(threadId).catch(() => undefined);
       }
       this.repositories.removeProjectSession(threadId);
-      this.settings.delete(threadId);
-      this.sessionSnapshots.delete(threadId);
+      this.clearSessionCaches(threadId);
       this.runtimes.notifySessionSummaryUpdated(threadId, reason);
     });
   }
 
-  moveToProject(threadId: string, projectId: string): Promise<ProjectSessionRow> {
+  async moveToProject(threadId: string, projectId: string): Promise<ProjectSessionRow> {
     this.assertPersistentSession(threadId, "move between Projects");
-    return this.withLock(threadId, async () => {
+    const sourceProjectId = this.requireMapping(threadId).project_id;
+    return this.projectLocks.withKeys([sourceProjectId, projectId], () => this.withLock(threadId, async () => {
       this.assertNoActiveTurn(threadId, "Move to Project");
-      this.requireMapping(threadId);
+      const current = this.requireMapping(threadId);
+      if (current.project_id !== sourceProjectId) throw new Error("Session Project changed while moving; retry the operation");
       this.requireProject(projectId);
       return this.repositories.moveProjectSession(threadId, projectId);
-    });
+    }));
   }
 
   async removeProject(projectId: string): Promise<void> {
-    const mappings = this.repositories.listProjectSessions(projectId);
-    const mappedThreadIds = new Set(mappings.map((mapping) => mapping.thread_id));
-    return this.withLocks([...mappedThreadIds].sort(), async () => {
-      const relatedSideChats = this.runtimes.listSideChats().filter((sideChat) => mappedThreadIds.has(sideChat.parentThreadId));
-      return this.withLocks(relatedSideChats.map((sideChat) => sideChat.threadId).sort(), async () => {
-        for (const mapping of mappings) this.assertNoActiveTurn(mapping.thread_id, "Remove Project");
-        for (const sideChat of relatedSideChats) this.assertNoActiveTurn(sideChat.threadId, "Remove Project");
-        for (const sideChat of relatedSideChats) await this.closeSideChatUnlocked(sideChat.threadId);
+    return this.projectLocks.withKey(projectId, async () => {
+      const mappings = this.repositories.listProjectSessions(projectId);
+      const mappedThreadIds = new Set(mappings.map((mapping) => mapping.thread_id));
+      return this.withLocks([...mappedThreadIds].sort(), async () => {
+        const relatedSideChats = this.runtimes.listSideChats().filter((sideChat) => mappedThreadIds.has(sideChat.parentThreadId));
+        return this.withLocks(relatedSideChats.map((sideChat) => sideChat.threadId).sort(), async () => {
+          for (const mapping of mappings) this.assertNoActiveTurn(mapping.thread_id, "Remove Project");
+          for (const sideChat of relatedSideChats) this.assertNoActiveTurn(sideChat.threadId, "Remove Project");
+          for (const sideChat of relatedSideChats) await this.closeSideChatUnlocked(sideChat.threadId);
+          await Promise.all(mappings.map((mapping) => this.adapter.unsubscribe?.(mapping.thread_id).catch(() => undefined)));
 
-        const preferences = this.repositories.getPreferences();
-        this.repositories.deleteProject(projectId);
-        const changes: Partial<typeof preferences> = {};
-        if (preferences.lastProjectId === projectId) changes.lastProjectId = null;
-        if (preferences.lastThreadId && mappedThreadIds.has(preferences.lastThreadId)) changes.lastThreadId = null;
-        if (preferences.fullAccessNoticeSeenProjects.includes(projectId)) {
-          changes.fullAccessNoticeSeenProjects = preferences.fullAccessNoticeSeenProjects.filter((id) => id !== projectId);
-        }
-        if (Object.keys(changes).length) this.repositories.setPreferences(changes);
+          const preferences = this.repositories.getPreferences();
+          this.repositories.deleteProject(projectId);
+          for (const mapping of mappings) this.clearSessionCaches(mapping.thread_id);
+          const changes: Partial<typeof preferences> = {};
+          if (preferences.lastProjectId === projectId) changes.lastProjectId = null;
+          if (preferences.lastThreadId && mappedThreadIds.has(preferences.lastThreadId)) changes.lastThreadId = null;
+          if (preferences.fullAccessNoticeSeenProjects.includes(projectId)) {
+            changes.fullAccessNoticeSeenProjects = preferences.fullAccessNoticeSeenProjects.filter((id) => id !== projectId);
+          }
+          if (Object.keys(changes).length) this.repositories.setPreferences(changes);
+        });
       });
     });
   }
 
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
-    return this.idempotent(`project:${projectId}:create`, clientRequestId, async () => {
+    return this.idempotent(`project:${projectId}:create`, clientRequestId, () => this.projectLocks.withKey(projectId, async () => {
       const project = this.requireProject(projectId);
       const settings = this.resolveSettings(projectId, input);
       const response = await this.adapter.startSession(project.canonicalPath, settings);
       this.settings.set(response.thread.id, settings);
       this.sessionSnapshots.set(response.thread.id, response.thread);
-      const now = Date.now();
-      this.repositories.upsertProjectSession({
-        thread_id: response.thread.id, project_id: projectId, cwd_snapshot: project.canonicalPath,
-        source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
-        added_at: now, last_seen_at: now,
-      });
+      try {
+        const now = Date.now();
+        this.repositories.upsertProjectSession({
+          thread_id: response.thread.id, project_id: projectId, cwd_snapshot: project.canonicalPath,
+          source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+          added_at: now, last_seen_at: now,
+        });
+      } catch (error) {
+        this.clearSessionCaches(response.thread.id);
+        await this.adapter.archiveSession(response.thread.id).catch(() => undefined);
+        throw error;
+      }
+      this.restoreSession(response.thread.id);
       return { thread: response.thread, settings };
-    });
+    }));
   }
 
   async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string }, clientRequestId: string) {
@@ -417,8 +450,10 @@ export class SessionService {
 
   async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string, empty = false) {
     this.assertPersistentSession(threadId, "Fork");
-    return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.withLock(threadId, async () => {
+    const sourceProjectId = this.requireMapping(threadId).project_id;
+    return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.projectLocks.withKey(sourceProjectId, () => this.withLock(threadId, async () => {
       const mapping = this.requireMapping(threadId);
+      if (mapping.project_id !== sourceProjectId) throw new Error("Session Project changed while forking; retry the operation");
       const settings = await this.ensureSessionSettings(threadId);
       const cwd = mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath;
       let response;
@@ -426,7 +461,7 @@ export class SessionService {
         if (lastTurnId !== null) throw new ForkBoundaryError("An empty Fork cannot include a Turn boundary");
         response = await this.adapter.startSession(cwd, settings);
       } else {
-        const source = await this.readSession(threadId);
+        const source = await this.readSessionUnlocked(threadId);
         assertValidForkBoundary(source.thread.turns, lastTurnId);
         response = await this.adapter.forkSession(threadId, lastTurnId, settings, false, cwd);
       }
@@ -451,8 +486,9 @@ export class SessionService {
         cwd_snapshot: response.thread.cwd, source_kind: "appServer", origin: "forked",
         parent_thread_id: threadId, fork_turn_id: lastTurnId, added_at: now, last_seen_at: now,
       });
+      this.restoreSession(response.thread.id);
       return { thread: response.thread, settings };
-    }));
+    })));
   }
 
   handlePendingRequest(request: AdapterPendingRequest): void {
@@ -466,23 +502,24 @@ export class SessionService {
   async reconcileAfterReconnect(): Promise<void> {
     const sideChats = this.runtimes.listSideChats();
     const sideChatIds = new Set(sideChats.map((sideChat) => sideChat.threadId));
-    for (const sideChat of sideChats) {
+    await Promise.all(sideChats.map((sideChat) => this.withLock(sideChat.threadId, async () => {
       this.settings.delete(sideChat.threadId);
       this.sessionSnapshots.delete(sideChat.threadId);
+      this.markSessionRemoved(sideChat.threadId);
       this.runtimes.removeSideChat(sideChat.threadId);
-    }
+    })));
     const disconnected = this.runtimes.list().filter((runtime) => runtime.state === "disconnected" && !sideChatIds.has(runtime.threadId));
-    await Promise.all(disconnected.map(async (runtime) => {
+    await Promise.all(disconnected.map((runtime) => this.withLock(runtime.threadId, async () => {
       try {
         await this.resumeWithPreferredSettings(runtime.threadId);
         const snapshot = await this.adapter.readSession(runtime.threadId);
         this.sessionSnapshots.set(runtime.threadId, snapshot);
-        this.runtimes.reconcileFromSnapshot(runtime.threadId, snapshot.turns.at(-1));
+        this.runtimes.reconcileFromSnapshot(runtime.threadId, snapshot.turns);
       } catch {
         // The previous Turn's outcome is unknown after an App Server crash.
         // Keep the explicit disconnected state until a later successful read.
       }
-    }));
+    })));
   }
 
   async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
@@ -491,7 +528,7 @@ export class SessionService {
       const existing = this.runtimes.listSideChats().find((sideChat) => sideChat.parentThreadId === parentThreadId);
       if (existing) return existing;
       if (anchorTurnId) {
-        const source = await this.readSession(parentThreadId);
+        const source = await this.readSessionUnlocked(parentThreadId);
         assertValidForkBoundary(source.thread.turns, anchorTurnId);
       }
       const settings = await this.ensureSessionSettings(parentThreadId);
@@ -515,6 +552,7 @@ export class SessionService {
         pendingRequestIds: [],
         createdAt: Date.now(),
       };
+      this.restoreSession(response.thread.id);
       this.runtimes.registerSideChat(runtime);
       return runtime;
     });
@@ -535,17 +573,22 @@ export class SessionService {
     await this.adapter.unsubscribe(threadId);
     this.settings.delete(threadId);
     this.sessionSnapshots.delete(threadId);
+    this.markSessionRemoved(threadId);
     this.runtimes.removeSideChat(threadId);
   }
 
   getGoal(threadId: string) {
     this.assertPersistentSession(threadId, "Goal");
-    return this.adapter.getGoal(threadId);
+    return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
+      return this.adapter.getGoal(threadId);
+    });
   }
 
   async setGoal(params: Parameters<CodexAdapter["setGoal"]>[0]) {
     this.assertPersistentSession(params.threadId, "Goal");
     return this.withLock(params.threadId, async () => {
+      this.requireMapping(params.threadId);
       this.assertNoActiveTurn(params.threadId, "Goal update");
       return this.adapter.setGoal(params);
     });
@@ -554,6 +597,7 @@ export class SessionService {
   async clearGoal(threadId: string): Promise<void> {
     this.assertPersistentSession(threadId, "Goal");
     return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
       this.assertNoActiveTurn(threadId, "Goal clear");
       await this.adapter.clearGoal(threadId);
     });
@@ -594,9 +638,16 @@ export class SessionService {
 
   private async resumeWithPreferredSettings(threadId: string) {
     const current = this.settings.get(threadId);
-    const resumed = current
-      ? await this.adapter.resumeSession(threadId, current)
-      : await this.adapter.resumeSession(threadId);
+    let resumed;
+    try {
+      resumed = current
+        ? await this.adapter.resumeSession(threadId, current)
+        : await this.adapter.resumeSession(threadId);
+    } catch (error) {
+      const snapshot = this.sessionSnapshots.get(threadId);
+      if (!current || !snapshot || !isUnmaterializedSessionReadError(error)) throw error;
+      return { thread: snapshot, settings: current };
+    }
     const mapping = this.requireMapping(threadId);
     const settings = resolveSessionSettings(this.requireProject(mapping.project_id), {}, current ?? resumed.settings);
     this.settings.set(threadId, settings);
@@ -621,6 +672,28 @@ export class SessionService {
 
   private assertPersistentSession(threadId: string, capability: string): void {
     if (this.runtimes.getSideChat(threadId)) throw new Error(`Side Chat does not support ${capability}`);
+  }
+
+  private clearSessionCaches(threadId: string): void {
+    this.settings.delete(threadId);
+    this.sessionSnapshots.delete(threadId);
+    this.goalPresence.delete(threadId);
+    this.goalPresenceLoading.delete(threadId);
+    for (const key of this.commandOutputDeltas.keys()) {
+      if (key.startsWith(`${threadId}\u0000`)) this.commandOutputDeltas.delete(key);
+    }
+    this.markSessionRemoved(threadId);
+    this.runtimes.removeThread(threadId);
+  }
+
+  private restoreSession(threadId: string): void {
+    this.removedThreads.delete(threadId);
+    this.runtimes.restoreThread?.(threadId);
+  }
+
+  private markSessionRemoved(threadId: string): void {
+    this.removedThreads.add(threadId);
+    this.sessionGenerations.set(threadId, (this.sessionGenerations.get(threadId) ?? 0) + 1);
   }
 
   private withLock<T>(threadId: string, action: () => Promise<T>): Promise<T> {
@@ -660,6 +733,7 @@ export class SessionService {
 
   private updateSessionSnapshot(event: AdapterEvent): void {
     const threadId = "threadId" in event ? event.threadId : undefined;
+    if (threadId && this.removedThreads.has(threadId)) return;
     if (event.type === "settingsUpdated") this.settings.set(event.threadId, event.settings);
     if (event.type === "goalUpdated") this.goalPresence.set(event.threadId, true);
     if (event.type === "goalCleared") this.goalPresence.set(event.threadId, false);
@@ -736,11 +810,15 @@ export class SessionService {
 
   private async ensureGoalPresence(threadIds: string[]): Promise<void> {
     const unknown = [...new Set(threadIds)].filter((threadId) => !this.goalPresence.has(threadId) && !this.goalPresenceLoading.has(threadId));
+    const generations = new Map(unknown.map((threadId) => [threadId, this.sessionGenerations.get(threadId) ?? 0]));
     for (const threadId of unknown) this.goalPresenceLoading.add(threadId);
     for (let index = 0; index < unknown.length; index += 8) {
       await Promise.all(unknown.slice(index, index + 8).map(async (threadId) => {
+        const generation = generations.get(threadId)!;
         try {
+          if (this.removedThreads.has(threadId)) return;
           const goal = await this.adapter.getGoal(threadId);
+          if (this.removedThreads.has(threadId) || (this.sessionGenerations.get(threadId) ?? 0) !== generation) return;
           this.goalPresence.set(threadId, goal !== null);
           if (goal) this.runtimes.notifySessionSummaryUpdated(threadId, "goal-loaded");
         } catch {
@@ -756,10 +834,15 @@ export class SessionService {
     const threadIds = [...new Set(mappings
       .filter((mapping) => mapping.fork_turn_id && !this.sessionSnapshots.has(mapping.thread_id))
       .map((mapping) => mapping.thread_id))];
+    const generations = new Map(threadIds.map((threadId) => [threadId, this.sessionGenerations.get(threadId) ?? 0]));
     for (let index = 0; index < threadIds.length; index += 8) {
       await Promise.all(threadIds.slice(index, index + 8).map(async (threadId) => {
+        const generation = generations.get(threadId)!;
         try {
-          this.sessionSnapshots.set(threadId, await this.adapter.readSession(threadId));
+          if (this.removedThreads.has(threadId)) return;
+          const snapshot = await this.adapter.readSession(threadId);
+          if (this.removedThreads.has(threadId) || (this.sessionGenerations.get(threadId) ?? 0) !== generation) return;
+          this.sessionSnapshots.set(threadId, snapshot);
         } catch {
           // Fork provenance is supplemental metadata. A transient read failure
           // must not prevent the Session list itself from rendering.

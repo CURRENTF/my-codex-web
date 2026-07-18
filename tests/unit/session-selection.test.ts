@@ -20,6 +20,10 @@ function session(threadId: string, projectId: string): SessionSummary {
 }
 
 describe("Session selection", () => {
+  it("does not reopen a stale Session while its selected Project is being removed", () => {
+    expect(recentSessionToAutoOpen(null, [session("stale-thread", "removed-project")], [project("removed-project")], "removed-project", true)).toBeNull();
+  });
+
   it("keeps a newly selected empty Project on the empty state instead of reopening an old Session", () => {
     expect(recentSessionToAutoOpen(null, [session("old-thread", "old-project")], [project("old-project"), project("new-project")], "new-project")).toBeNull();
   });

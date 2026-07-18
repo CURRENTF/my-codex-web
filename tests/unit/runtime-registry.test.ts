@@ -82,6 +82,21 @@ describe("runtime projection", () => {
     expect(registry.get("t1").activeTurnId).toBeUndefined();
   });
 
+  it("ignores late notifications after a persistent Session is removed", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("t1", "turn-1");
+    registry.removeThread("t1");
+
+    notify(registry, { method: "turn/started", params: { threadId: "t1", turn: { id: "late-turn" } } });
+    expect(registry.list().some((runtime) => runtime.threadId === "t1")).toBe(false);
+
+    registry.restoreThread("t1");
+    notify(registry, { method: "turn/started", params: { threadId: "t1", turn: { id: "new-turn" } } });
+    expect(registry.get("t1")).toMatchObject({ state: "running", activeTurnId: "new-turn" });
+  });
+
   it("reconciles a disconnected runtime from a terminal App Server snapshot", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-17T10:00:10.000Z"));
@@ -91,16 +106,52 @@ describe("runtime projection", () => {
     registry.setActiveTurn("t1", "turn-1");
     registry.handleConnection("disconnected");
 
-    registry.reconcileFromSnapshot("t1", {
+    registry.reconcileFromSnapshot("t1", [{
       id: "turn-1",
       status: "completed",
       items: [],
       startedAt: 1,
       completedAt: Math.floor(Date.now() / 1_000),
       durationMs: 1_000,
-    });
+    }]);
 
     expect(registry.get("t1")).toMatchObject({ state: "justFinished", lastTerminalStatus: "completed" });
+  });
+
+  it("keeps a connection-interrupted Turn disconnected when only an older terminal snapshot is available", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("t1", "active-turn");
+    registry.handleConnection("disconnected");
+
+    registry.reconcileFromSnapshot("t1", [{
+      id: "older-turn",
+      status: "completed",
+      items: [],
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1_000,
+    }]);
+
+    expect(registry.get("t1")).toMatchObject({ state: "disconnected" });
+    expect(registry.get("t1").activeTurnId).toBeUndefined();
+  });
+
+  it("accepts a newer terminal snapshot after the interrupted Turn is proven terminal", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("t1", "interrupted-turn");
+    registry.handleConnection("disconnected");
+
+    registry.reconcileFromSnapshot("t1", [
+      { id: "interrupted-turn", status: "interrupted", items: [], startedAt: 1, completedAt: 2, durationMs: 1_000 },
+      { id: "newer-turn", status: "completed", items: [], startedAt: 3, completedAt: 4, durationMs: 1_000 },
+    ]);
+
+    expect(registry.get("t1")).toMatchObject({ lastTerminalStatus: "completed" });
+    expect(registry.get("t1").state).not.toBe("disconnected");
   });
 
   it("keeps terminal visual states when a trailing idle status arrives", () => {

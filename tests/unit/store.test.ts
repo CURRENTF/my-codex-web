@@ -13,6 +13,15 @@ describe("live delta lifecycle", () => {
     expect(useAppStore.getState().deltas["agent-1"]).toBeUndefined();
   });
 
+  it("ignores an event sequence that was already applied", () => {
+    const event = { seq: 7, type: "item.delta", threadId: "thread-1", emittedAt: 1, payload: { itemId: "agent-1", delta: "hello" } } as const;
+    useAppStore.getState().consume(event);
+    useAppStore.getState().consume(event);
+
+    expect(useAppStore.getState().deltas["agent-1"]).toBe("hello");
+    expect(useAppStore.getState().lastEventSeq).toBe(7);
+  });
+
   it("marks visible Runtime snapshots disconnected when the browser event socket closes", () => {
     useAppStore.getState().initialize([{
       threadId: "thread-1", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [],

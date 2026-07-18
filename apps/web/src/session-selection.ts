@@ -5,8 +5,9 @@ export function recentSessionToAutoOpen(
   sessions: SessionSummary[],
   projects: Project[],
   preferredProjectId: string | null | undefined,
+  suppressed = false,
 ): string | null {
-  if (selectedThreadId || sessions.length === 0) return null;
+  if (suppressed || selectedThreadId || sessions.length === 0) return null;
   const preferredProjectIsEmpty = !!preferredProjectId
     && projects.some((project) => project.id === preferredProjectId)
     && !sessions.some((session) => session.projectId === preferredProjectId);

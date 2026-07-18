@@ -17,7 +17,7 @@ function SessionRow({ session, active, projectName, onOpen }: { session: Session
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
   const connectionState = useAppStore((state) => state.connectionState);
   const runtimeState = connectionState === "connected" ? (liveRuntime?.state ?? session.runtimeState) : "disconnected";
-  return <div className={`session-row-shell ${active ? "active" : ""}`} data-thread-id={session.threadId}>
+  return <div className={`session-row-shell ${active ? "active" : ""}`} data-thread-id={session.threadId} data-updated-at={session.updatedAt}>
     <button className="session-row" onClick={() => onOpen(session.threadId)}>
       <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt)}</span></span>
       <span className="session-signals">{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}<StatusIcon state={runtimeState} /></span>

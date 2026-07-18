@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import type { Project } from "@codex-web/shared-types";
 import type { CodexAdapter } from "@codex-web/codex-adapter";
 import { Repositories } from "./database.js";
+import { KeyedOperationLock } from "./keyed-operation-lock.js";
 
 export function isPathInside(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
@@ -20,8 +21,13 @@ export function longestProjectMatch(cwd: string, projects: Project[]): Project |
 export class ProjectIndexer extends EventEmitter {
   private scanning: Promise<void> | null = null;
   private scanAgain = false;
+  private readonly archivedSessions = new Set<string>();
 
-  constructor(private readonly repositories: Repositories, private readonly adapter: CodexAdapter) { super(); }
+  constructor(
+    private readonly repositories: Repositories,
+    private readonly adapter: CodexAdapter,
+    private readonly projectLocks = new KeyedOperationLock(),
+  ) { super(); }
 
   async addProject(rootPath: string, displayName?: string): Promise<Project> {
     if (!path.isAbsolute(rootPath)) throw new Error("Project path must be absolute");
@@ -55,25 +61,29 @@ export class ProjectIndexer extends EventEmitter {
   }
 
   async scanRoot(project: Project): Promise<void> {
-    const now = Date.now();
-    let cursor: string | null = null;
-    do {
-      const response = await this.adapter.listSessions({ cwd: project.canonicalPath, cursor, limit: 100 });
-      for (const thread of response.data) {
-        this.repositories.upsertProjectSession({
-          thread_id: thread.id,
-          project_id: project.id,
-          cwd_snapshot: thread.cwd,
-          source_kind: thread.sourceKind,
-          origin: "discovered",
-          parent_thread_id: thread.forkedFromId,
-          fork_turn_id: null,
-          added_at: now,
-          last_seen_at: now,
-        });
-      }
-      cursor = response.nextCursor;
-    } while (cursor);
+    return this.projectLocks.withKey(project.id, async () => {
+      if (!this.repositories.getProject(project.id)) throw new Error("Project not found");
+      const now = Date.now();
+      let cursor: string | null = null;
+      do {
+        const response = await this.adapter.listSessions({ cwd: project.canonicalPath, cursor, limit: 100 });
+        for (const thread of response.data) {
+          if (this.archivedSessions.has(thread.id)) continue;
+          this.repositories.upsertProjectSession({
+            thread_id: thread.id,
+            project_id: project.id,
+            cwd_snapshot: thread.cwd,
+            source_kind: thread.sourceKind,
+            origin: "discovered",
+            parent_thread_id: thread.forkedFromId,
+            fork_turn_id: null,
+            added_at: now,
+            last_seen_at: now,
+          });
+        }
+        cursor = response.nextCursor;
+      } while (cursor);
+    });
   }
 
   async scanStartupRoots(): Promise<void> {
@@ -110,23 +120,49 @@ export class ProjectIndexer extends EventEmitter {
     do {
       const response = await this.adapter.listSessions({ cursor, limit: 100 });
       for (const thread of response.data) {
+        if (this.archivedSessions.has(thread.id)) continue;
         const canonicalCwd = await realpath(thread.cwd).catch(() => thread.cwd);
         const project = longestProjectMatch(canonicalCwd, projects);
         if (!project) continue;
-        const existing = this.repositories.getProjectSession(thread.id);
-        this.repositories.upsertProjectSession({
-          thread_id: thread.id,
-          project_id: existing?.origin === "manual" ? existing.project_id : project.id,
-          cwd_snapshot: canonicalCwd,
-          source_kind: thread.sourceKind,
-          origin: existing?.origin ?? "discovered",
-          parent_thread_id: existing?.parent_thread_id ?? thread.forkedFromId,
-          fork_turn_id: existing?.fork_turn_id ?? null,
-          added_at: existing?.added_at ?? now,
-          last_seen_at: now,
+        const observedMapping = this.repositories.getProjectSession(thread.id);
+        const observedTargetProjectId = observedMapping?.origin === "manual" ? observedMapping.project_id : project.id;
+        await this.projectLocks.withKeys([project.id, observedTargetProjectId], async () => {
+          if (this.archivedSessions.has(thread.id)) return;
+          if (!this.repositories.getProject(project.id)) return;
+          const existing = this.repositories.getProjectSession(thread.id);
+          const targetProjectId = existing?.origin === "manual" ? existing.project_id : project.id;
+          if (targetProjectId !== project.id && targetProjectId !== observedTargetProjectId) return;
+          if (!this.repositories.getProject(targetProjectId)) return;
+          this.repositories.upsertProjectSession({
+            thread_id: thread.id,
+            project_id: targetProjectId,
+            cwd_snapshot: canonicalCwd,
+            source_kind: thread.sourceKind,
+            origin: existing?.origin ?? "discovered",
+            parent_thread_id: existing?.parent_thread_id ?? thread.forkedFromId,
+            fork_turn_id: existing?.fork_turn_id ?? null,
+            added_at: existing?.added_at ?? now,
+            last_seen_at: now,
+          });
         });
       }
       cursor = response.nextCursor;
     } while (cursor);
+  }
+
+  withProjectLock<T>(projectId: string, action: () => Promise<T>): Promise<T> {
+    return this.projectLocks.withKey(projectId, action);
+  }
+
+  withProjectLocks<T>(projectIds: string[], action: () => Promise<T>): Promise<T> {
+    return this.projectLocks.withKeys(projectIds, action);
+  }
+
+  markSessionArchived(threadId: string): void {
+    this.archivedSessions.add(threadId);
+  }
+
+  restoreSessionDiscovery(threadId: string): void {
+    this.archivedSessions.delete(threadId);
   }
 }

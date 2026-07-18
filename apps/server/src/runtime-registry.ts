@@ -14,6 +14,8 @@ export class ThreadRuntimeRegistry {
   private readonly finishTimers = new Map<string, NodeJS.Timeout>();
   private readonly terminalWaiters = new Map<string, Set<TerminalWaiter>>();
   private readonly closedSideChats = new Set<string>();
+  private readonly removedThreads = new Set<string>();
+  private readonly connectionInterruptedTurns = new Map<string, string | null>();
 
   constructor(private readonly events: EventGateway, private readonly repositories: Repositories) {
     this.hydratePersistedStates();
@@ -32,6 +34,7 @@ export class ThreadRuntimeRegistry {
 
   registerSideChat(runtime: SideChatRuntime): void {
     this.closedSideChats.delete(runtime.threadId);
+    this.removedThreads.delete(runtime.threadId);
     this.sideChats.set(runtime.threadId, runtime);
     this.runtimes.set(runtime.threadId, runtime);
     this.events.publish("sideChat.created", runtime, { threadId: runtime.parentThreadId, sideChatId: runtime.threadId });
@@ -43,9 +46,29 @@ export class ThreadRuntimeRegistry {
     this.sideChats.delete(threadId);
     this.runtimes.delete(threadId);
     this.clearLiveDeltas(threadId);
+    this.connectionInterruptedTurns.delete(threadId);
     this.closedSideChats.add(threadId);
     this.resolveTerminalWaiters(threadId, false);
     this.events.publish("sideChat.closed", { threadId }, { threadId: sideChat.parentThreadId, sideChatId: threadId });
+  }
+
+  removeThread(threadId: string): void {
+    if (this.sideChats.has(threadId)) {
+      this.removeSideChat(threadId);
+      return;
+    }
+    const runtime = this.runtimes.get(threadId);
+    if (runtime) this.clearPendingRequests(threadId, runtime.pendingRequestIds);
+    this.clearFinishTimer(threadId);
+    this.clearLiveDeltas(threadId);
+    this.connectionInterruptedTurns.delete(threadId);
+    this.runtimes.delete(threadId);
+    this.removedThreads.add(threadId);
+    this.resolveTerminalWaiters(threadId, false);
+  }
+
+  restoreThread(threadId: string): void {
+    this.removedThreads.delete(threadId);
   }
 
   waitForTerminal(threadId: string, timeoutMs = 10_000): Promise<boolean> {
@@ -74,6 +97,7 @@ export class ThreadRuntimeRegistry {
       this.pendingRequests.clear();
       for (const [threadId, runtime] of this.runtimes) {
         if (runtime.state === "running" || runtime.state === "waitingForInput") {
+          this.connectionInterruptedTurns.set(threadId, runtime.activeTurnId ?? null);
           this.setRuntime(threadId, { state: "disconnected", activeTurnId: undefined, pendingRequestIds: [] });
         }
       }
@@ -81,12 +105,22 @@ export class ThreadRuntimeRegistry {
     this.events.publish("connection.changed", { state });
   }
 
-  reconcileFromSnapshot(threadId: string, lastTurn: SessionTurn | undefined): void {
+  reconcileFromSnapshot(threadId: string, turns: SessionTurn[]): void {
     this.clearFinishTimer(threadId);
-    if (!lastTurn || lastTurn.status === "inProgress") {
+    const lastTurn = turns.at(-1);
+    const interruptedTurn = this.connectionInterruptedTurns.get(threadId);
+    const interruptedSnapshot = interruptedTurn === undefined || interruptedTurn === null
+      ? undefined
+      : turns.find((turn) => turn.id === interruptedTurn);
+    const interruptedTurnIsTerminal = interruptedTurn !== undefined
+      && interruptedTurn !== null
+      && interruptedSnapshot !== undefined
+      && interruptedSnapshot.status !== "inProgress";
+    if (!lastTurn || lastTurn.status === "inProgress" || (this.connectionInterruptedTurns.has(threadId) && !interruptedTurnIsTerminal)) {
       this.setRuntime(threadId, { state: "disconnected", activeTurnId: undefined, pendingRequestIds: [] });
       return;
     }
+    this.connectionInterruptedTurns.delete(threadId);
     const lastCompletedAt = (lastTurn.completedAt ?? Math.floor(Date.now() / 1_000)) * 1_000;
     const state: RuntimeState = lastTurn.status === "completed"
       ? Date.now() - lastCompletedAt < 20_000 ? "justFinished" : "idle"
@@ -139,7 +173,7 @@ export class ThreadRuntimeRegistry {
       return;
     }
     const threadId = event.threadId;
-    if (this.closedSideChats.has(threadId)) return;
+    if (this.closedSideChats.has(threadId) || this.removedThreads.has(threadId)) return;
     switch (event.type) {
       case "threadStatusChanged": {
         const activeFlags = event.activeFlags;
@@ -170,6 +204,7 @@ export class ThreadRuntimeRegistry {
       }
       case "turnStarted": {
         const turn = event.turn;
+        this.connectionInterruptedTurns.delete(threadId);
         this.clearFinishTimer(threadId);
         if (!this.sideChats.has(threadId)) this.repositories.clearThreadTerminal(threadId);
         this.setRuntime(threadId, { state: "running", activeTurnId: turn.id, lastTerminalStatus: undefined });
@@ -179,6 +214,7 @@ export class ThreadRuntimeRegistry {
       }
       case "turnCompleted": {
         const turn = event.turn;
+        this.connectionInterruptedTurns.delete(threadId);
         const status = turn.status === "inProgress" ? "failed" : turn.status;
         const state: RuntimeState = status === "completed" ? "justFinished" : status;
         const pendingRequestIds = this.get(threadId).pendingRequestIds;
@@ -230,6 +266,7 @@ export class ThreadRuntimeRegistry {
   }
 
   setActiveTurn(threadId: string, turnId: string): void {
+    this.connectionInterruptedTurns.delete(threadId);
     if (!this.sideChats.has(threadId)) this.repositories.clearThreadTerminal(threadId);
     this.setRuntime(threadId, { state: "running", activeTurnId: turnId });
   }

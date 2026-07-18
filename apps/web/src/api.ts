@@ -38,8 +38,8 @@ export async function bootstrap(): Promise<BootstrapPayload> {
 
 export const endpoints = {
   projects: () => api<Project[]>("/api/projects"),
-  sessions: (search = "", sortDirection: "asc" | "desc" = "desc") => api<SessionSummary[]>(`/api/sessions?sortDirection=${sortDirection}&search=${encodeURIComponent(search)}`),
-  session: (threadId: string) => api<SessionPayload>(`/api/sessions/${threadId}`),
+  sessions: (search = "", sortDirection: "asc" | "desc" = "desc", signal?: AbortSignal) => api<SessionSummary[]>(`/api/sessions?sortDirection=${sortDirection}&search=${encodeURIComponent(search)}`, { signal }),
+  session: (threadId: string, signal?: AbortSignal) => api<SessionPayload>(`/api/sessions/${threadId}`, { signal }),
   preferences: (changes: Partial<Preferences>) => api<Preferences>("/api/preferences", { method: "PATCH", body: JSON.stringify({ ...changes, clientRequestId: newClientRequestId() }) }),
 };
 

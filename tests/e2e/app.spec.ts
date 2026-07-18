@@ -31,6 +31,27 @@ test("loads the local app and exposes a single-sidebar workspace", async ({ page
   }
 });
 
+test("leaves an archived current Session instead of keeping a stale Composer open", async ({ page }) => {
+  test.setTimeout(60_000);
+  await ensureProject(page);
+  const sidebar = page.locator(".sidebar");
+  test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
+  await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  const previousSessionUrl = page.url();
+  await Promise.all([
+    page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 30_000 }),
+    page.getByRole("button", { name: "新建 Session", exact: true }).click(),
+  ]);
+  const archivedUrl = page.url();
+  const archivedThreadId = archivedUrl.split("/sessions/")[1]!;
+
+  await page.getByRole("button", { name: "更多" }).click();
+  await page.getByRole("menuitem", { name: "归档" }).click();
+
+  await expect(page).not.toHaveURL(archivedUrl);
+  await expect(page.locator(`.session-row-shell[data-thread-id="${archivedThreadId}"]`)).toHaveCount(0);
+});
+
 test("streams model tool activity into the timeline without a refresh", async ({ page }) => {
   test.setTimeout(150_000);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -211,19 +232,24 @@ test("adapts the workspace controls and navigation to the available width", asyn
   const sort = page.locator(".sort-button");
   const sortBefore = await sort.textContent();
   const directionBefore = sortBefore?.includes("↓") ? "desc" : "asc";
-  const expectedBefore = await page.evaluate(async (direction) => {
-    const response = await fetch(`/api/sessions?sortDirection=${direction}&search=`);
-    return (await response.json() as Array<{ threadId: string }>).map((session) => session.threadId);
-  }, directionBefore);
-  await expect.poll(() => page.locator(".sidebar-list > .session-row-shell").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-thread-id")))).toEqual(expectedBefore);
+  const readSortedRows = () => page.locator(".sidebar-list > .session-row-shell").evaluateAll((rows) => rows.map((row) => ({
+    threadId: row.getAttribute("data-thread-id")!,
+    updatedAt: Number(row.getAttribute("data-updated-at")),
+  })));
+  const isMonotonic = (rows: Array<{ updatedAt: number }>, direction: "asc" | "desc") => rows.every((row, index) => {
+    if (index === 0) return true;
+    return direction === "asc" ? rows[index - 1]!.updatedAt <= row.updatedAt : rows[index - 1]!.updatedAt >= row.updatedAt;
+  });
+  const rowsBefore = await readSortedRows();
+  expect(rowsBefore.length).toBeGreaterThan(1);
+  expect(new Set(rowsBefore.map((row) => row.updatedAt)).size).toBeGreaterThan(1);
+  expect(isMonotonic(rowsBefore, directionBefore)).toBe(true);
   await sort.click();
   await expect(sort).not.toHaveText(sortBefore ?? "");
   const directionAfter = directionBefore === "desc" ? "asc" : "desc";
-  const expectedAfter = await page.evaluate(async (direction) => {
-    const response = await fetch(`/api/sessions?sortDirection=${direction}&search=`);
-    return (await response.json() as Array<{ threadId: string }>).map((session) => session.threadId);
-  }, directionAfter);
-  await expect.poll(() => page.locator(".sidebar-list > .session-row-shell").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-thread-id")))).toEqual(expectedAfter);
+  await expect.poll(async () => isMonotonic(await readSortedRows(), directionAfter)).toBe(true);
+  const rowsAfter = await readSortedRows();
+  expect(rowsAfter.map((row) => row.threadId).sort()).toEqual(rowsBefore.map((row) => row.threadId).sort());
 
   await page.getByRole("button", { name: "从此轮之后 Fork" }).first().click();
   await expect(page.getByRole("dialog", { name: "创建 Fork" })).toBeVisible();
@@ -379,8 +405,8 @@ test("shows disconnection and recovers after the managed App Server crashes", as
   }), { timeout: 30_000 }).toBe("connected");
   await expect.poll(async () => page.evaluate(async (id) => {
     const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" }).then((response) => response.json()) as { runtimeStates: Array<{ threadId: string; state: string }> };
-    return bootstrap.runtimeStates.find((runtime) => runtime.threadId === id)?.state ?? "idle";
-  }, threadId), { timeout: 30_000 }).not.toBe("running");
+    return bootstrap.runtimeStates.find((runtime) => runtime.threadId === id)?.state ?? "missing";
+  }, threadId), { timeout: 30_000 }).toMatch(/^(disconnected|interrupted|failed)$/);
   await expect(page.locator(".main-pane .header-status")).not.toContainText("正在执行", { timeout: 30_000 });
 });
 
@@ -489,16 +515,32 @@ test("discovers an existing App Server Session, applies Project defaults, and re
     await page.getByRole("button", { name: "E2E Defaults Project 更多操作" }).click();
     await page.getByRole("menuitem", { name: "从侧边栏移除" }).click();
     await expect(page.locator(".project-group", { hasText: "E2E Defaults Project" })).toHaveCount(0);
+    await expect(page).toHaveURL(/\/$/);
     await expect(stat(projectRoot)).resolves.toBeTruthy();
 
-    const afterRemoval = await page.evaluate(async ({ projectId, threadId }) => {
-      const [projects, session] = await Promise.all([
-        fetch("/api/projects").then((response) => response.json()) as Promise<Array<{ id: string }>>,
-        fetch(`/api/sessions/${threadId}`),
-      ]);
-      return { mapped: projects.some((project) => project.id === projectId), sessionStatus: session.status };
-    }, setup);
-    expect(afterRemoval).toEqual({ mapped: false, sessionStatus: 200 });
+    const rediscovered = await page.evaluate(async ({ projectId, threadId, root }) => {
+      const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" }).then((response) => response.json()) as { csrfToken: string };
+      const headers = { "content-type": "application/json", "x-csrf-token": bootstrap.csrfToken };
+      const projectsAfterRemoval = await fetch("/api/projects").then((response) => response.json()) as Array<{ id: string }>;
+      const create = await fetch("/api/projects", {
+        method: "POST", headers,
+        body: JSON.stringify({ path: root, clientRequestId: crypto.randomUUID() }),
+      });
+      if (!create.ok) throw new Error(`Project re-add failed: ${create.status}`);
+      const recreated = await create.json() as { id: string };
+      const rescan = await fetch(`/api/projects/${recreated.id}/rescan`, {
+        method: "POST", headers,
+        body: JSON.stringify({ clientRequestId: crypto.randomUUID() }),
+      });
+      if (!rescan.ok) throw new Error(`Project rescan failed: ${rescan.status}`);
+      const sessions = await fetch(`/api/sessions?projectId=${encodeURIComponent(recreated.id)}&sortDirection=desc&search=`).then((response) => response.json()) as Array<{ threadId: string }>;
+      return {
+        removedMapping: !projectsAfterRemoval.some((project) => project.id === projectId),
+        recreatedProject: recreated.id !== projectId,
+        rediscoveredThread: sessions.some((session) => session.threadId === threadId),
+      };
+    }, { ...setup, root: projectRoot });
+    expect(rediscovered).toEqual({ removedMapping: true, recreatedProject: true, rediscoveredThread: true });
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

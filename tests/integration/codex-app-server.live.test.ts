@@ -83,6 +83,17 @@ run("real codex app-server with isolated CODEX_HOME", () => {
   it("initializes, lists models, runs a turn, persists a goal, and forks", async () => {
     const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
+    const notificationOrder: Array<{ method: string; threadId?: string; turnId?: string }> = [];
+    adapter.supervisor.on("notification", (notification: { method: string; params?: Record<string, unknown> }) => {
+      const turn = notification.params?.turn as { id?: string } | undefined;
+      const threadId = notification.params?.threadId;
+      const turnId = notification.params?.turnId;
+      notificationOrder.push({
+        method: notification.method,
+        ...(typeof threadId === "string" ? { threadId } : {}),
+        ...(typeof turnId === "string" ? { turnId } : turn?.id ? { turnId: turn.id } : {}),
+      });
+    });
     adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
     await adapter.start();
     const created: string[] = [];
@@ -102,6 +113,13 @@ run("real codex app-server with isolated CODEX_HOME", () => {
       const turn = await adapter.startTurn(session.thread.id, process.cwd(), "Reply with exactly CODEX_WEB_TEST_OK. Do not use tools.", { accessMode: "fullAccess", model: null, reasoning: "low" }, crypto.randomUUID());
       expect(turn.turn.id).toBeTruthy();
       await expect(completion).resolves.toEqual({ status: "completed" });
+      const turnNotifications = notificationOrder.filter((notification) => notification.threadId === session.thread.id && notification.turnId === turn.turn.id);
+      const startedIndex = turnNotifications.findIndex((notification) => notification.method === "turn/started");
+      const itemIndex = turnNotifications.findIndex((notification) => notification.method.startsWith("item/"));
+      const completedIndex = turnNotifications.findIndex((notification) => notification.method === "turn/completed");
+      expect(startedIndex).toBeGreaterThanOrEqual(0);
+      expect(itemIndex).toBeGreaterThan(startedIndex);
+      expect(completedIndex).toBeGreaterThan(itemIndex);
       const goal = await adapter.setGoal({ threadId: session.thread.id, objective: "Integration goal", tokenBudget: 10_000, status: "active" });
       expect((await adapter.getGoal(session.thread.id))?.objective).toBe(goal.objective);
       const fork = await adapter.forkSession(session.thread.id, turn.turn.id, { accessMode: "fullAccess", model: null, reasoning: null });

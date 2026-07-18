@@ -10,6 +10,7 @@ function turn(id: string, status: Thread["turns"][number]["status"]): Thread["tu
 
 describe("session operation rules", () => {
   it("recognizes both empty-rollout variants as transient Session materialization races", () => {
+    expect(isUnmaterializedSessionReadError(new JsonRpcError("no rollout found for thread id redacted", -32600))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not materialized yet"))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("failed to read rollout /tmp/test.jsonl: rollout at /tmp/test.jsonl is empty"))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not found"))).toBe(false);
@@ -214,6 +215,33 @@ describe("session operation rules", () => {
 
     expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1");
     expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "workspaceWrite" });
+  });
+
+  it("serves the live snapshot while a newly started Session rollout is still materializing", async () => {
+    const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-1", "inProgress")] };
+    const settings = { model: null, reasoning: "low", accessMode: "readOnly" as const };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => { throw new JsonRpcError("no rollout found for thread id thread-1", -32600); }),
+      readSession: vi.fn(async () => { throw new JsonRpcError("no rollout found for thread id thread-1", -32600); }),
+      getGoal: vi.fn(async () => null),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("thread-1", snapshot);
+    (service as unknown as { settings: Map<string, typeof settings> }).settings.set("thread-1", settings);
+
+    await expect(service.readSession("thread-1")).resolves.toMatchObject({
+      thread: { id: "thread-1", turns: [{ id: "turn-1", status: "inProgress" }] },
+      runtime: { state: "running", activeTurnId: "turn-1" },
+      settings: { model: null, reasoning: "low", accessMode: "readOnly" },
+    });
   });
 
   it("fails a cold Session read when resume fails instead of substituting Project Full Access", async () => {
@@ -451,7 +479,88 @@ describe("session operation rules", () => {
 
     expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", current);
     expect(adapter.readSession).toHaveBeenCalledWith("thread-1");
-    expect(runtimes.reconcileFromSnapshot).toHaveBeenCalledWith("thread-1", snapshot.turns[0]);
+    expect(runtimes.reconcileFromSnapshot).toHaveBeenCalledWith("thread-1", snapshot.turns);
+  });
+
+  it("serializes a new Turn behind reconnect reconciliation for the same Session", async () => {
+    const calls: string[] = [];
+    let releaseResume!: () => void;
+    const resumePending = new Promise<void>((resolve) => { releaseResume = resolve; });
+    const snapshot = { id: "thread-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("old-turn", "completed")] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => { calls.push("resume"); await resumePending; return { thread: snapshot, settings: { model: "session-model", reasoning: "low", accessMode: "readOnly" as const } }; }),
+      readSession: vi.fn(async () => { calls.push("read"); return snapshot; }),
+      startTurn: vi.fn(async () => { calls.push("start"); return { turn: turn("new-turn", "inProgress") }; }),
+    });
+    let runtime = { threadId: "thread-1", state: "disconnected", activeFlags: [] as string[], pendingRequestIds: [] as string[], activeTurnId: undefined as string | undefined };
+    const runtimes = {
+      list: vi.fn(() => [runtime]),
+      listSideChats: vi.fn(() => []),
+      getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => runtime),
+      reconcileFromSnapshot: vi.fn(() => { calls.push("reconcile"); runtime = { ...runtime, state: "idle" }; }),
+      setActiveTurn: vi.fn((_threadId: string, turnId: string) => { runtime = { ...runtime, state: "running", activeTurnId: turnId }; }),
+    };
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const reconciling = service.reconcileAfterReconnect();
+    await vi.waitFor(() => expect(adapter.resumeSession).toHaveBeenCalledTimes(1));
+    const starting = service.startTurn("thread-1", "new work", { clientUserMessageId: "message-1" }, "request-1");
+    await Promise.resolve();
+    expect(adapter.startTurn).not.toHaveBeenCalled();
+
+    releaseResume();
+    await reconciling;
+    await starting;
+
+    expect(calls).toEqual(["resume", "read", "reconcile", "start"]);
+    expect(runtime).toMatchObject({ state: "running", activeTurnId: "new-turn" });
+  });
+
+  it("serializes an in-flight Session read before removing its Project", async () => {
+    let releaseRead!: () => void;
+    const readPending = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-1", "completed")] };
+    const mapping = { thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "created" as const, parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1, hidden: 0 };
+    let mapped: typeof mapping | null = mapping;
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "session-model", reasoning: "low", accessMode: "readOnly" as const } })),
+      readSession: vi.fn(async () => { await readPending; return snapshot; }),
+      getGoal: vi.fn(async () => null),
+      unsubscribe: vi.fn(async () => undefined),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => mapped),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+      listProjectSessions: vi.fn(() => mapped ? [mapped] : []),
+      deleteProject: vi.fn(() => { mapped = null; }),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      restoreThread: vi.fn(), removeThread: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const reading = service.readSession("thread-1");
+    await vi.waitFor(() => expect(adapter.readSession).toHaveBeenCalledTimes(1));
+    const removing = service.removeProject("project-1");
+    await Promise.resolve();
+    expect(repositories.deleteProject).not.toHaveBeenCalled();
+
+    releaseRead();
+    await expect(reading).resolves.toMatchObject({ thread: { id: "thread-1" }, settings: { accessMode: "readOnly" } });
+    await removing;
+
+    expect(repositories.deleteProject).toHaveBeenCalledWith("project-1");
+    expect((service as unknown as { settings: Map<string, unknown> }).settings.has("thread-1")).toBe(false);
+    expect((service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots.has("thread-1")).toBe(false);
   });
 
   it("rejects a Side Chat anchor unless it is a completed Turn", async () => {
@@ -676,11 +785,15 @@ describe("session operation rules", () => {
       archiveSession: vi.fn(async () => { throw new JsonRpcError("no rollout found for thread id empty-1", -32600); }),
       unsubscribe: vi.fn(async () => undefined),
     });
-    const repositories = { removeProjectSession: vi.fn() };
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "empty-1", project_id: "project-1" })),
+      removeProjectSession: vi.fn(),
+    };
     const runtimes = {
       listSideChats: vi.fn(() => []),
       getSideChat: vi.fn(() => undefined),
       get: vi.fn(() => ({ threadId: "empty-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      removeThread: vi.fn(),
       notifySessionSummaryUpdated: vi.fn(),
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
@@ -704,6 +817,7 @@ describe("session operation rules", () => {
     });
     const repositories = {
       listProjectSessions: vi.fn(() => mappings),
+      getProjectSession: vi.fn((threadId: string) => mappings.find((mapping) => mapping.thread_id === threadId)),
       removeProjectSession: vi.fn((threadId: string) => {
         const index = mappings.findIndex((mapping) => mapping.thread_id === threadId);
         if (index >= 0) mappings.splice(index, 1);
@@ -713,6 +827,7 @@ describe("session operation rules", () => {
       listSideChats: vi.fn(() => []),
       getSideChat: vi.fn(() => undefined),
       get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      removeThread: vi.fn(),
       notifySessionSummaryUpdated: vi.fn(),
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
@@ -728,7 +843,10 @@ describe("session operation rules", () => {
   it("rejects parent Session archival while its Side Chat Turn is active", async () => {
     const sideChat = { threadId: "side-1", parentThreadId: "parent", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [], createdAt: 1 };
     const adapter = Object.assign(new EventEmitter(), { archiveSession: vi.fn(), unsubscribe: vi.fn() });
-    const repositories = { removeProjectSession: vi.fn() };
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "parent", project_id: "project-1" })),
+      removeProjectSession: vi.fn(),
+    };
     const runtimes = {
       listSideChats: vi.fn(() => [sideChat]),
       getSideChat: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : undefined),
@@ -751,12 +869,16 @@ describe("session operation rules", () => {
       unsubscribe: vi.fn(async () => { calls.push("unsubscribe-side"); }),
       archiveSession: vi.fn(async () => { calls.push("archive-parent"); }),
     });
-    const repositories = { removeProjectSession: vi.fn(() => { calls.push("remove-parent-mapping"); }) };
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "parent", project_id: "project-1" })),
+      removeProjectSession: vi.fn(() => { calls.push("remove-parent-mapping"); }),
+    };
     const runtimes = {
       listSideChats: vi.fn(() => [sideChat]),
       getSideChat: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : undefined),
       get: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
       removeSideChat: vi.fn(() => { calls.push("remove-side-runtime"); }),
+      removeThread: vi.fn(),
       notifySessionSummaryUpdated: vi.fn(),
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
@@ -814,19 +936,110 @@ describe("session operation rules", () => {
     const runtimes = {
       listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
       get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      removeThread: vi.fn(),
     };
     const service = new SessionService(repositories as never, {} as never, {} as never, runtimes as never);
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("thread-1", { model: "stale", reasoning: "high", accessMode: "fullAccess" });
+    (service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots.set("thread-1", { id: "thread-1" });
 
     await service.removeProject("project-1");
 
     expect(repositories.deleteProject).toHaveBeenCalledWith("project-1");
     expect(repositories.setPreferences).toHaveBeenCalledWith({ lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: ["project-2"] });
+    expect((service as unknown as { settings: Map<string, unknown> }).settings.has("thread-1")).toBe(false);
+    expect((service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots.has("thread-1")).toBe(false);
+    expect(runtimes.removeThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("does not resurrect removed Session caches from delayed background loads or events", async () => {
+    let resolveGoal!: (goal: { objective: string } | null) => void;
+    let resolveSnapshot!: (snapshot: { id: string; turns: Thread["turns"] }) => void;
+    const goalPending = new Promise<{ objective: string } | null>((resolve) => { resolveGoal = resolve; });
+    const snapshotPending = new Promise<{ id: string; turns: Thread["turns"] }>((resolve) => { resolveSnapshot = resolve; });
+    const mapping = { thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "forked" as const, parent_thread_id: "parent", fork_turn_id: "turn-1", added_at: 1, last_seen_at: 1, hidden: 0 };
+    const adapter = Object.assign(new EventEmitter(), {
+      getGoal: vi.fn(() => goalPending),
+      readSession: vi.fn(() => snapshotPending),
+      unsubscribe: vi.fn(async () => undefined),
+    });
+    const repositories = {
+      listProjectSessions: vi.fn(() => [mapping]),
+      deleteProject: vi.fn(),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      removeThread: vi.fn(), notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    const loadingGoal = (service as unknown as { ensureGoalPresence(ids: string[]): Promise<void> }).ensureGoalPresence(["thread-1"]);
+    const loadingSnapshot = (service as unknown as { ensureForkSnapshots(rows: unknown[]): Promise<void> }).ensureForkSnapshots([mapping]);
+    await vi.waitFor(() => {
+      expect(adapter.getGoal).toHaveBeenCalledTimes(1);
+      expect(adapter.readSession).toHaveBeenCalledTimes(1);
+    });
+
+    await service.removeProject("project-1");
+    resolveGoal({ objective: "late goal" });
+    resolveSnapshot({ id: "thread-1", turns: [turn("turn-1", "completed")] });
+    await Promise.all([loadingGoal, loadingSnapshot]);
+    service.handleEvent(projectAdapterEvent({ method: "thread/settings/updated", params: { threadId: "thread-1", threadSettings: {
+      model: "late-model", effort: "high", approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
+    } } })!);
+
+    expect((service as unknown as { goalPresence: Map<string, boolean> }).goalPresence.has("thread-1")).toBe(false);
+    expect((service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots.has("thread-1")).toBe(false);
+    expect((service as unknown as { settings: Map<string, unknown> }).settings.has("thread-1")).toBe(false);
+    expect(runtimes.notifySessionSummaryUpdated).not.toHaveBeenCalled();
+  });
+
+  it("serializes Session creation before removing the same Project", async () => {
+    let releaseCreation!: () => void;
+    const creationPending = new Promise<void>((resolve) => { releaseCreation = resolve; });
+    const calls: string[] = [];
+    const mappings: Array<{ thread_id: string; project_id: string; cwd_snapshot: string }> = [];
+    const thread = { id: "created-thread", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      startSession: vi.fn(async () => { calls.push("start-session"); await creationPending; return { thread }; }),
+      archiveSession: vi.fn(),
+    });
+    const project = { id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" };
+    const repositories = {
+      getProject: vi.fn(() => project),
+      upsertProjectSession: vi.fn((mapping: typeof mappings[number]) => { calls.push("insert-mapping"); mappings.push(mapping); }),
+      listProjectSessions: vi.fn(() => [...mappings]),
+      deleteProject: vi.fn(() => { calls.push("delete-project"); }),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []),
+      getSideChat: vi.fn(() => undefined),
+      get: vi.fn((threadId: string) => ({ threadId, state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      removeThread: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const creating = service.createSession("project-1", {}, "create-request");
+    await vi.waitFor(() => expect(adapter.startSession).toHaveBeenCalledTimes(1));
+    const removing = service.removeProject("project-1");
+    await Promise.resolve();
+    expect(repositories.deleteProject).not.toHaveBeenCalled();
+
+    releaseCreation();
+    await creating;
+    await removing;
+
+    expect(calls).toEqual(["start-session", "insert-mapping", "delete-project"]);
+    expect(adapter.archiveSession).not.toHaveBeenCalled();
   });
 
   it("closes an idle Side Chat before removing its Project", async () => {
     const calls: string[] = [];
     const sideChat = { threadId: "side-1", parentThreadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [], createdAt: 1 };
-    const adapter = Object.assign(new EventEmitter(), { unsubscribe: vi.fn(async () => { calls.push("unsubscribe-side"); }) });
+    const adapter = Object.assign(new EventEmitter(), { unsubscribe: vi.fn(async (threadId: string) => { calls.push(`unsubscribe-${threadId}`); }) });
     const repositories = {
       listProjectSessions: vi.fn(() => [{ thread_id: "thread-1", project_id: "project-1" }]),
       deleteProject: vi.fn(() => { calls.push("delete-project"); }),
@@ -838,12 +1051,13 @@ describe("session operation rules", () => {
       getSideChat: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : undefined),
       get: vi.fn((threadId: string) => threadId === sideChat.threadId ? sideChat : { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
       removeSideChat: vi.fn(() => { calls.push("remove-side-runtime"); }),
+      removeThread: vi.fn(),
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
 
     await service.removeProject("project-1");
 
-    expect(calls).toEqual(["unsubscribe-side", "remove-side-runtime", "delete-project"]);
+    expect(calls).toEqual(["unsubscribe-side-1", "remove-side-runtime", "unsubscribe-thread-1", "delete-project"]);
   });
 
   it("waits for concurrent Side Chat creation and closes the new chat before removing its Project", async () => {
@@ -869,6 +1083,7 @@ describe("session operation rules", () => {
       get: vi.fn((threadId: string) => sideChats.find((sideChat) => sideChat.threadId === threadId) ?? { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] }),
       registerSideChat: vi.fn((sideChat: typeof sideChats[number]) => { sideChats.push(sideChat); }),
       removeSideChat: vi.fn((threadId: string) => { sideChats.splice(sideChats.findIndex((sideChat) => sideChat.threadId === threadId), 1); }),
+      removeThread: vi.fn(),
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
     (service as unknown as { settings: Map<string, unknown> }).settings.set("thread-1", { model: null, reasoning: null, accessMode: "fullAccess" });
@@ -917,5 +1132,119 @@ describe("session operation rules", () => {
     await rename;
     await start;
     expect(adapter.startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects persistent mutations queued behind Project removal", async () => {
+    const mapping = { thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" };
+    let mapped: typeof mapping | null = mapping;
+    let releaseUnsubscribe!: () => void;
+    const unsubscribePending = new Promise<void>((resolve) => { releaseUnsubscribe = resolve; });
+    const adapter = Object.assign(new EventEmitter(), {
+      unsubscribe: vi.fn(() => unsubscribePending),
+      renameSession: vi.fn(), archiveSession: vi.fn(), getGoal: vi.fn(), setGoal: vi.fn(), clearGoal: vi.fn(),
+    });
+    const repositories = {
+      listProjectSessions: vi.fn(() => mapped ? [mapped] : []),
+      getProjectSession: vi.fn(() => mapped),
+      deleteProject: vi.fn(() => { mapped = null; }),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      markViewed: vi.fn(), removeThread: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const removing = service.removeProject("project-1");
+    await vi.waitFor(() => expect(adapter.unsubscribe).toHaveBeenCalledWith("thread-1"));
+    const rejected = [
+      expect(service.rename("thread-1", "stale rename")).rejects.toThrow("not mapped"),
+      expect(service.archive("thread-1")).rejects.toThrow("not mapped"),
+      expect(service.getGoal("thread-1")).rejects.toThrow("not mapped"),
+      expect(service.setGoal({ threadId: "thread-1", status: "paused" })).rejects.toThrow("not mapped"),
+      expect(service.clearGoal("thread-1")).rejects.toThrow("not mapped"),
+      expect(service.markViewed("thread-1")).rejects.toThrow("not mapped"),
+    ];
+    releaseUnsubscribe();
+    await removing;
+    await Promise.all(rejected);
+
+    expect(adapter.renameSession).not.toHaveBeenCalled();
+    expect(adapter.archiveSession).not.toHaveBeenCalled();
+    expect(adapter.getGoal).not.toHaveBeenCalled();
+    expect(adapter.setGoal).not.toHaveBeenCalled();
+    expect(adapter.clearGoal).not.toHaveBeenCalled();
+    expect(runtimes.markViewed).not.toHaveBeenCalled();
+  });
+
+  it("does not start later background-load batches after their Sessions are removed", async () => {
+    const mappings = Array.from({ length: 9 }, (_, index) => ({
+      thread_id: `thread-${index}`, project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer",
+      origin: "forked" as const, parent_thread_id: "parent", fork_turn_id: "turn-1", added_at: 1, last_seen_at: 1, hidden: 0,
+    }));
+    let releaseGoals!: () => void;
+    let releaseReads!: () => void;
+    const goalsPending = new Promise<void>((resolve) => { releaseGoals = resolve; });
+    const readsPending = new Promise<void>((resolve) => { releaseReads = resolve; });
+    const adapter = Object.assign(new EventEmitter(), {
+      getGoal: vi.fn(async () => { await goalsPending; return { objective: "late" }; }),
+      readSession: vi.fn(async (threadId: string) => { await readsPending; return { id: threadId, turns: [turn("turn-1", "completed")] }; }),
+      unsubscribe: vi.fn(async () => undefined),
+    });
+    const repositories = {
+      listProjectSessions: vi.fn(() => mappings), deleteProject: vi.fn(),
+      getPreferences: vi.fn(() => ({ sidebarMode: "recent", sortDirection: "desc", sideChatWidth: 42, lastProjectId: null, lastThreadId: null, fullAccessNoticeSeenProjects: [] })),
+      setPreferences: vi.fn(),
+    };
+    const runtimes = {
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn((threadId: string) => ({ threadId, state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      removeThread: vi.fn(), notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    const goals = (service as unknown as { ensureGoalPresence(ids: string[]): Promise<void> }).ensureGoalPresence(mappings.map((mapping) => mapping.thread_id));
+    const reads = (service as unknown as { ensureForkSnapshots(rows: unknown[]): Promise<void> }).ensureForkSnapshots(mappings);
+    await vi.waitFor(() => {
+      expect(adapter.getGoal).toHaveBeenCalledTimes(8);
+      expect(adapter.readSession).toHaveBeenCalledTimes(8);
+    });
+
+    await service.removeProject("project-1");
+    releaseGoals();
+    releaseReads();
+    await Promise.all([goals, reads]);
+
+    expect(adapter.getGoal).toHaveBeenCalledTimes(8);
+    expect(adapter.readSession).toHaveBeenCalledTimes(8);
+    expect((service as unknown as { goalPresence: Map<string, boolean> }).goalPresence.size).toBe(0);
+    expect((service as unknown as { sessionSnapshots: Map<string, unknown> }).sessionSnapshots.size).toBe(0);
+  });
+
+  it("reconciles a disconnected Session after a later normal read succeeds", async () => {
+    const snapshot = { id: "thread-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-1", "completed")] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: null, reasoning: null, accessMode: "readOnly" as const } })),
+      readSession: vi.fn().mockRejectedValueOnce(new Error("temporary read failure")).mockResolvedValueOnce(snapshot),
+      getGoal: vi.fn(async () => null),
+    });
+    const runtimes = {
+      list: vi.fn(() => [{ threadId: "thread-1", state: "disconnected", activeFlags: [], pendingRequestIds: [] }]),
+      listSideChats: vi.fn(() => []), getSideChat: vi.fn(() => undefined),
+      get: vi.fn(() => ({ threadId: "thread-1", state: "disconnected", activeFlags: [], pendingRequestIds: [] })),
+      reconcileFromSnapshot: vi.fn(),
+    };
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await service.reconcileAfterReconnect();
+    expect(runtimes.reconcileFromSnapshot).not.toHaveBeenCalled();
+    await service.readSession("thread-1");
+
+    expect(runtimes.reconcileFromSnapshot).toHaveBeenCalledWith("thread-1", snapshot.turns);
   });
 });

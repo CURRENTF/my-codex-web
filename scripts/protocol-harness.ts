@@ -8,9 +8,18 @@ const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME
 type Notification = { method: string; params?: Record<string, unknown> };
 const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "protocol-harness" });
 const fixture: Array<{ method: string; itemType?: string; status?: string }> = [];
+const notificationOrder: Array<{ method: string; threadId?: string; turnId?: string }> = [];
 adapter.supervisor.on("notification", (notification: Notification) => {
   const item = notification.params?.item as { type?: string; status?: string } | undefined;
   const turn = notification.params?.turn as { status?: string } | undefined;
+  const turnWithId = notification.params?.turn as { id?: string } | undefined;
+  const threadId = notification.params?.threadId;
+  const turnId = notification.params?.turnId;
+  notificationOrder.push({
+    method: notification.method,
+    ...(typeof threadId === "string" ? { threadId } : {}),
+    ...(typeof turnId === "string" ? { turnId } : turnWithId?.id ? { turnId: turnWithId.id } : {}),
+  });
   fixture.push({ method: notification.method, ...(item?.type ? { itemType: item.type } : {}), ...(item?.status || turn?.status ? { status: item?.status ?? turn?.status } : {}) });
 });
 adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
@@ -24,6 +33,16 @@ function waitForNotification(predicate: (notification: Notification) => boolean,
     };
     adapter.supervisor.on("notification", onNotification);
   });
+}
+
+function assertTurnNotificationOrder(threadId: string, turnId: string): void {
+  const notifications = notificationOrder.filter((notification) => notification.threadId === threadId && notification.turnId === turnId);
+  const startedIndex = notifications.findIndex((notification) => notification.method === "turn/started");
+  const itemIndex = notifications.findIndex((notification) => notification.method.startsWith("item/"));
+  const completedIndex = notifications.findIndex((notification) => notification.method === "turn/completed");
+  if (startedIndex < 0 || itemIndex <= startedIndex || completedIndex <= itemIndex) {
+    throw new Error(`Unexpected notification order for Turn: ${notifications.map((notification) => notification.method).join(", ")}`);
+  }
 }
 
 const created: string[] = [];
@@ -52,6 +71,7 @@ try {
   await adapter.interruptTurn(parent.thread.id, interruptTurn.turn.id);
   const interrupted = await interruptedCompletion;
   if ((interrupted.params?.turn as { status?: string } | undefined)?.status !== "interrupted") throw new Error("turn/interrupt did not produce an interrupted terminal notification");
+  assertTurnNotificationOrder(parent.thread.id, interruptTurn.turn.id);
   await adapter.readSession(parent.thread.id);
   const resumed = await adapter.resumeSession(parent.thread.id);
   if (resumed.settings.model !== settings.model || resumed.settings.reasoning !== settings.reasoning || resumed.settings.accessMode !== settings.accessMode) throw new Error("thread/resume did not preserve Session settings");
@@ -61,6 +81,7 @@ try {
   const completedTurn = await adapter.startTurn(parent.thread.id, process.cwd(), "Reply with exactly CODEX_WEB_HARNESS_OK. Do not call tools.", settings, crypto.randomUUID());
   const completed = await completedNotification;
   if ((completed.params?.turn as { status?: string } | undefined)?.status !== "completed") throw new Error("The completion Turn did not finish successfully");
+  assertTurnNotificationOrder(parent.thread.id, completedTurn.turn.id);
 
   const goal = await adapter.setGoal({ threadId: parent.thread.id, objective: "Protocol harness goal", tokenBudget: 10_000, status: "active" });
   if ((await adapter.getGoal(parent.thread.id))?.objective !== goal.objective) throw new Error("thread/goal/get did not return the stored Goal");

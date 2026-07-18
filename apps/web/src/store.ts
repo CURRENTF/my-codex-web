@@ -3,22 +3,24 @@ import type { PendingRequestSummary, SideChatRuntime, ThreadRuntime, UiEvent } f
 
 interface AppStore {
   connectionState: "connected" | "connecting" | "disconnected";
+  lastEventSeq: number;
   runtimes: Record<string, ThreadRuntime>;
   sideChats: Record<string, SideChatRuntime>;
   deltas: Record<string, string>;
   pendingRequests: Record<string, PendingRequestSummary>;
   drafts: Record<string, string>;
   setDraft(threadId: string, text: string): void;
-  initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected"): void;
+  initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number): void;
   markDisconnected(): void;
   consume(event: UiEvent): void;
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {},
+  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {},
   setDraft: (threadId, text) => set((state) => ({ drafts: { ...state.drafts, [threadId]: text } })),
-  initialize: (runtimes, sideChats, deltas = {}, pendingRequests = [], connectionState = "connected") => set({
+  initialize: (runtimes, sideChats, deltas = {}, pendingRequests = [], connectionState = "connected", eventSeq = 0) => set({
     connectionState,
+    lastEventSeq: eventSeq,
     runtimes: Object.fromEntries(runtimes.map((runtime) => [runtime.threadId, runtime])),
     sideChats: Object.fromEntries(sideChats.map((runtime) => [runtime.threadId, runtime])),
     deltas,
@@ -33,39 +35,41 @@ export const useAppStore = create<AppStore>((set) => ({
     }])),
   })),
   consume: (event) => set((state) => {
+    if (event.seq <= state.lastEventSeq) return state;
+    const sequenced = { lastEventSeq: event.seq };
     if (event.type === "connection.changed") {
       const connectionState = (event.payload as { state?: AppStore["connectionState"] }).state;
-      return connectionState ? { connectionState } : state;
+      return connectionState ? { ...sequenced, connectionState } : sequenced;
     }
     if (event.type === "runtime.changed") {
       const runtime = event.payload as ThreadRuntime;
-      return { runtimes: { ...state.runtimes, [runtime.threadId]: runtime } };
+      return { ...sequenced, runtimes: { ...state.runtimes, [runtime.threadId]: runtime } };
     }
     if (event.type === "sideChat.created") {
       const sideChat = event.payload as SideChatRuntime;
-      return { sideChats: { ...state.sideChats, [sideChat.threadId]: sideChat } };
+      return { ...sequenced, sideChats: { ...state.sideChats, [sideChat.threadId]: sideChat } };
     }
     if (event.type === "sideChat.closed" && event.sideChatId) {
-      const sideChats = { ...state.sideChats }; delete sideChats[event.sideChatId]; return { sideChats };
+      const sideChats = { ...state.sideChats }; delete sideChats[event.sideChatId]; return { ...sequenced, sideChats };
     }
     if (event.type === "item.delta") {
       const payload = event.payload as { itemId?: string; delta?: string };
-      if (!payload.itemId || !payload.delta) return state;
-      return { deltas: { ...state.deltas, [payload.itemId]: (state.deltas[payload.itemId] ?? "") + payload.delta } };
+      if (!payload.itemId || !payload.delta) return sequenced;
+      return { ...sequenced, deltas: { ...state.deltas, [payload.itemId]: (state.deltas[payload.itemId] ?? "") + payload.delta } };
     }
     if (event.type === "item.upserted") {
       const payload = event.payload as { item?: { id?: string }; completedAtMs?: number; completed?: boolean };
       const itemId = payload.item?.id;
-      if (!itemId || (!payload.completed && payload.completedAtMs === undefined) || state.deltas[itemId] === undefined) return state;
-      const deltas = { ...state.deltas }; delete deltas[itemId]; return { deltas };
+      if (!itemId || (!payload.completed && payload.completedAtMs === undefined) || state.deltas[itemId] === undefined) return sequenced;
+      const deltas = { ...state.deltas }; delete deltas[itemId]; return { ...sequenced, deltas };
     }
     if (event.type === "pendingRequest.created") {
       const pending = event.payload as PendingRequestSummary;
-      return { pendingRequests: { ...state.pendingRequests, [pending.id]: pending } };
+      return { ...sequenced, pendingRequests: { ...state.pendingRequests, [pending.id]: pending } };
     }
     if (event.type === "pendingRequest.resolved") {
-      const { id } = event.payload as { id: string }; const pendingRequests = { ...state.pendingRequests }; delete pendingRequests[id]; return { pendingRequests };
+      const { id } = event.payload as { id: string }; const pendingRequests = { ...state.pendingRequests }; delete pendingRequests[id]; return { ...sequenced, pendingRequests };
     }
-    return state;
+    return sequenced;
   }),
 }));

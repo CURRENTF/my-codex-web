@@ -9,7 +9,7 @@
 | 检查 | 结果 |
 | --- | --- |
 | `npm run check` | 通过 |
-| `npm test` | 138 passed，4 个真实集成测试默认 skipped |
+| `npm test` | 157 passed，4 个真实集成测试默认 skipped |
 | `npm run build` | 通过；仅有 Vite 500 kB chunk warning |
 | `npm run schema:check` | 通过；Schema 与 Codex CLI `0.144.3` 一致 |
 | `RUN_CODEX_INTEGRATION=1 ... npm run test:integration` | 4 passed；包含无活动 Turn 的 Steer 错误码、父 Turn 执行中从顶部创建 Side Chat |
@@ -26,7 +26,7 @@
 
 | 能力 | 验收证据 |
 | --- | --- |
-| Project 与 Session 发现 | 冷启动先精确扫描每个 Project 根目录、再全量后台分页扫描；canonical cwd、三种来源、嵌套 Project 最长路径规则均有回归测试；E2E 场景覆盖先创建并解除映射一个真实 Session，再通过添加文件夹重新发现 |
+| Project 与 Session 发现 | 冷启动先精确扫描每个 Project 根目录、再全量后台分页扫描；canonical cwd、三种来源、嵌套 Project 最长路径规则均有回归测试；E2E 场景覆盖先创建并解除映射一个真实 Session，再通过添加文件夹重新发现；Project 扫描、创建、Fork、移动和删除共享 Project 锁 |
 | 最近 / 项目 Sidebar | 双模式、排序、搜索、Project 折叠和重新扫描可用 |
 | 实时 Timeline | 用户消息乐观显示；Agent Delta、命令/工具中间状态、输出和最终回复通过 WebSocket 自动更新，无需刷新 |
 | Composer | 模型与 Reasoning 来自 `model/list`；首次切换到 Full Access 会在发送前显示 Project 级提示；空闲发送、运行中 Steer 和 Interrupt 状态正确 |
@@ -39,7 +39,8 @@
 | 本地安全 | 仅监听 `127.0.0.1`、Host/Origin/Fetch Metadata/CSRF/Cookie/WS Token 校验、CSP 与 frame 限制，无任意 Shell 或文件读取 HTTP API |
 | 协议边界 | App Server 原始 Notification、Server Request、Thread/Goal 类型只在 Codex Adapter 内解析，业务层只消费稳定 DTO |
 | 测试隔离 | 真实路径规范化会拒绝正常 Home 及其符号链接；E2E 启动前核验 health 中的 canonical home |
-| App Server 重启 | Runtime 断开投影、snapshot 重同步和 ephemeral Side Chat 清理已验证 |
+| App Server 重启 | Runtime 断开投影、完整 Turn snapshot 重同步、恢复失败的退避重试和 ephemeral Side Chat 清理已验证；后续正常读取可从临时失败中自愈 |
+| Project 删除一致性 | 删除期间暂停自动打开旧 Session、取消当前 Session 查询并抑制确认框返回焦点触发的旧 Project 扫描；Session 读取、mutation 与删除共用 Thread 锁，迟到或分批的 Goal/Fork 加载和通知不会复活已删除状态；归档 tombstone 阻止旧扫描页恢复映射；Safari 实测删除后路由回到 `/`，日志无旧 Project `rescan`、未映射 Session 读取或 500；重新添加同一目录后 Session 可再次发现 |
 
 ## 手动 macOS Safari 验证
 
@@ -52,7 +53,9 @@
 - Side Chat 分栏、独立发送和实时回复正常，且不进入 Sidebar。
 - App Server 重启后 ephemeral Side Chat 被清理。
 - 最近列表排序方向可以切换。
-- 桌面分栏、紧凑宽度顶部标签和移动窄宽 Sidebar 抽屉均在 Safari 中检查，布局随窗口宽度自动切换。
+- 删除当前 Project 后地址正确回到 `/`，目录和 Codex Session 保留；重新添加同一目录后原 Session 自动恢复到 Sidebar。
+- 删除确认框关闭不会再触发旧 Project 的后台扫描，删除后也不会重试读取已解除映射的当前 Session。
+- 桌面分栏、紧凑宽度顶部标签和移动窄宽 Sidebar 抽屉均在 Safari 中检查，布局随窗口宽度自动切换；窄窗口 Composer 仍固定在底部且主内容可独立滚动。
 
 手动验收只使用 Safari；最终回归不启动 Playwright、Chrome 调试进程或 WebDriver，也不操作用户正在使用的 Chrome。
 

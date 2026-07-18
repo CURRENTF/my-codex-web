@@ -98,6 +98,7 @@ export class Repositories {
 
   deleteProject(id: string): void {
     this.db.transaction(() => {
+      this.db.prepare("DELETE FROM thread_ui_state WHERE thread_id IN (SELECT thread_id FROM project_sessions WHERE project_id = ?)").run(id);
       this.db.prepare("DELETE FROM project_sessions WHERE project_id = ?").run(id);
       this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
     })();
@@ -132,7 +133,10 @@ export class Repositories {
   }
 
   removeProjectSession(threadId: string): void {
-    this.db.prepare("DELETE FROM project_sessions WHERE thread_id = ?").run(threadId);
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM thread_ui_state WHERE thread_id = ?").run(threadId);
+      this.db.prepare("DELETE FROM project_sessions WHERE thread_id = ?").run(threadId);
+    })();
   }
 
   moveProjectSession(threadId: string, projectId: string): ProjectSessionRow {

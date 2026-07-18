@@ -16,6 +16,8 @@ import { RequestDeduplicator } from "./request-deduplicator.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
 import { isAllowedSocketContext, localRequestError } from "./local-security.js";
 import { ActiveTurnConflictError, ForkBoundaryError, SessionService, SteerConflictError } from "./session-service.js";
+import { KeyedOperationLock } from "./keyed-operation-lock.js";
+import { ConnectionRecovery, type AppServerConnectionState } from "./connection-recovery.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -76,27 +78,32 @@ export async function createServer() {
   };
   const events = new EventGateway(authenticateSocket);
   const runtimes = new ThreadRuntimeRegistry(events, repositories);
-  const indexer = new ProjectIndexer(repositories, adapter);
-  const sessions = new SessionService(repositories, adapter, indexer, runtimes);
+  const projectLocks = new KeyedOperationLock();
+  const indexer = new ProjectIndexer(repositories, adapter, projectLocks);
+  const sessions = new SessionService(repositories, adapter, indexer, runtimes, projectLocks);
   const mutations = new RequestDeduplicator();
   const once = <T>(request: { method: string; url: string }, clientRequestId: string, action: () => Promise<T> | T) =>
     mutations.run(`${request.method}\u0000${request.url}\u0000${clientRequestId}`, action);
 
   let startupPhase = true;
-  adapter.on("connection", (event: { state: "connected" | "connecting" | "disconnected" }) => {
-    if (event.state !== "connected") {
-      runtimes.handleConnection(event.state);
-      return;
-    }
-    const scanAfterRecovery = !startupPhase;
-    void sessions.reconcileAfterReconnect()
-      .then(async () => {
-        if (!scanAfterRecovery || !adapter.account) return;
-        await indexer.scanStartupRoots();
-        indexer.scanAllInBackground();
-      })
-      .catch((error) => app.log.warn({ error }, "Failed to reconcile Runtime after App Server reconnect"))
-      .finally(() => { if (adapter.connected) runtimes.handleConnection("connected"); });
+  let connectionState: AppServerConnectionState = "disconnected";
+  const recovery = new ConnectionRecovery({
+    reconcile: () => sessions.reconcileAfterReconnect(),
+    onState: (state) => {
+      connectionState = state;
+      runtimes.handleConnection(state);
+    },
+    onRecovered: () => {
+      if (!startupPhase && adapter.account) {
+        void indexer.scanStartupRoots()
+          .then(() => indexer.scanAllInBackground())
+          .catch((error) => app.log.warn({ error }, "Failed to scan Projects after App Server reconnect"));
+      }
+    },
+    onError: (error) => app.log.warn({ error }, "Failed to reconcile Runtime after App Server reconnect; retrying"),
+  });
+  adapter.on("connection", (event: { state: AppServerConnectionState }) => {
+    void recovery.handle(event.state);
   });
   adapter.on("event", (event) => {
     runtimes.handleEvent(event);
@@ -117,6 +124,9 @@ export async function createServer() {
     if (!secureEqual(request.cookies.codex_web_session, sessionToken)) return reply.code(401).send({ error: "Invalid session" });
     if (request.method !== "GET" && request.method !== "HEAD" && !secureEqual(request.headers["x-csrf-token"] as string | undefined, csrfToken)) {
       return reply.code(403).send({ error: "Invalid CSRF token" });
+    }
+    if (request.method !== "GET" && request.method !== "HEAD" && connectionState !== "connected") {
+      return reply.code(503).send({ error: "Codex App Server is still reconnecting" });
     }
   });
 
@@ -148,13 +158,13 @@ export async function createServer() {
     return reply.code(500).send({ error: error instanceof Error ? error.message : "Unknown server error" });
   });
 
-  app.get("/api/health", async () => ({ ok: true, connection: adapter.connected ? "connected" : "disconnected", codexHome: config.codexHome }));
+  app.get("/api/health", async () => ({ ok: true, connection: connectionState, codexHome: config.codexHome }));
   app.get("/api/bootstrap", async (_request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");
     reply.setCookie("codex_web_session", sessionToken, { httpOnly: true, sameSite: "strict", secure: false, path: "/" });
     return {
       eventSeq: events.currentSeq,
-      connection: { state: adapter.connected ? "connected" : "disconnected", codexVersion: null },
+      connection: { state: connectionState, codexVersion: null },
       authReady: adapter.account !== null,
       csrfToken,
       projects: repositories.listProjects(),
@@ -314,8 +324,9 @@ export async function createServer() {
   });
 
   await adapter.start();
+  await recovery.waitForCurrent();
   startupPhase = false;
-  if (adapter.account) {
+  if (adapter.account && (connectionState as AppServerConnectionState) === "connected") {
     await indexer.scanStartupRoots();
     indexer.scanAllInBackground();
   }
@@ -323,6 +334,7 @@ export async function createServer() {
   return {
     app, adapter, events, repositories,
     async close() {
+      recovery.stop();
       events.close();
       adapter.stop();
       repositories.close();

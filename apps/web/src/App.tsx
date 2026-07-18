@@ -9,6 +9,7 @@ import { COMPOSER_FOCUS_RETRY_DELAYS, shouldRestoreComposerFocus } from "./compo
 import { shouldWarnAboutParallelFullAccess } from "./parallel-write-warning";
 import { resizedSideChatWidth } from "./side-chat-layout";
 import { bootstrapGate } from "./bootstrap-gate";
+import { shouldRunFocusRescan } from "./focus-rescan";
 import { recentSessionToAutoOpen, sessionCreationProjectId } from "./session-selection";
 import { queryClient } from "./main";
 import { useAppStore } from "./store";
@@ -32,9 +33,9 @@ function EmptyWorkspace({ onAdd }: { onAdd(): void }) {
 
 export function App() {
   const navigate = useNavigate(); const location = useLocation(); const client = useQueryClient();
-  const selectedThreadId = threadIdFromPath(location.pathname); const [search, setSearch] = useState(""); const [mobilePane, setMobilePane] = useState<"main" | "side">("main"); const [sidebarOpen, setSidebarOpen] = useState(false);
+  const selectedThreadId = threadIdFromPath(location.pathname); const [search, setSearch] = useState(""); const [mobilePane, setMobilePane] = useState<"main" | "side">("main"); const [sidebarOpen, setSidebarOpen] = useState(false); const [autoOpenSuppressed, setAutoOpenSuppressed] = useState(false);
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
-  const initialized = useRef(false); const lastFocusScan = useRef(0); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
+  const initialized = useRef(false); const lastFocusScan = useRef(0); const modalFocusSuppressed = useRef(false); const autoOpenSuppressedRef = useRef(false); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
   const restoreMainComposerFocus = useRef(false); const focusOrigin = useRef<Element | null>(null); const focusTimers = useRef<number[]>([]);
   const bindMainComposer = useCallback((element: HTMLTextAreaElement | null) => { mainComposerRef.current = element; }, []);
   const scheduleMainComposerFocus = useCallback(() => {
@@ -56,8 +57,8 @@ export function App() {
   const bootstrapQuery = useQuery({ queryKey: ["bootstrap"], queryFn: bootstrap, staleTime: Infinity, retry: 2 });
   const bootstrapData = bootstrapQuery.data; const preferences = bootstrapData?.preferences;
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: endpoints.projects, enabled: !!bootstrapData });
-  const allSessionsQuery = useQuery({ queryKey: ["sessions", "", preferences?.sortDirection], queryFn: () => endpoints.sessions("", preferences?.sortDirection ?? "desc"), enabled: !!bootstrapData?.authReady });
-  const filteredSessionsQuery = useQuery({ queryKey: ["sessions", search, preferences?.sortDirection], queryFn: () => endpoints.sessions(search, preferences?.sortDirection ?? "desc"), enabled: !!bootstrapData?.authReady && !!search.trim() });
+  const allSessionsQuery = useQuery({ queryKey: ["sessions", "", preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions("", preferences?.sortDirection ?? "desc", signal), enabled: !!bootstrapData?.authReady });
+  const filteredSessionsQuery = useQuery({ queryKey: ["sessions", search, preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions(search, preferences?.sortDirection ?? "desc", signal), enabled: !!bootstrapData?.authReady && !!search.trim() });
   const consume = useAppStore((state) => state.consume); const initialize = useAppStore((state) => state.initialize); const markDisconnected = useAppStore((state) => state.markDisconnected); const sideChats = useAppStore((state) => state.sideChats);
   const projects = projectsQuery.data ?? bootstrapData?.projects ?? []; const allSessions = allSessionsQuery.data ?? []; const sessions = search.trim() ? (filteredSessionsQuery.data ?? []) : allSessions;
   const bootstrapReady = !!bootstrapData;
@@ -66,30 +67,31 @@ export function App() {
   const sideThreadId = sideChat?.threadId ?? null;
   const mainRuntime = useAppStore((state) => selectedThreadId ? state.runtimes[selectedThreadId] : undefined);
   const sideRuntime = useAppStore((state) => sideThreadId ? state.runtimes[sideThreadId] : undefined);
-  const mainSessionForWarning = useQuery({ queryKey: ["session", selectedThreadId], queryFn: () => endpoints.session(selectedThreadId!), enabled: !!selectedThreadId && !!sideThreadId });
-  const sideSessionForWarning = useQuery({ queryKey: ["session", sideThreadId], queryFn: () => endpoints.session(sideThreadId!), enabled: !!sideThreadId, retry: false });
+  const mainSessionForWarning = useQuery({ queryKey: ["session", selectedThreadId], queryFn: ({ signal }) => endpoints.session(selectedThreadId!, signal), enabled: !!selectedThreadId && !!sideThreadId });
+  const sideSessionForWarning = useQuery({ queryKey: ["session", sideThreadId], queryFn: ({ signal }) => endpoints.session(sideThreadId!, signal), enabled: !!sideThreadId, retry: false });
   const parallelWriteWarning = shouldWarnAboutParallelFullAccess(
     mainRuntime && mainSessionForWarning.data ? { state: mainRuntime.state, accessMode: mainSessionForWarning.data.settings.accessMode } : null,
     sideRuntime && sideSessionForWarning.data ? { state: sideRuntime.state, accessMode: sideSessionForWarning.data.settings.accessMode } : null,
   );
 
   useEffect(() => {
-    if (!bootstrapData || initialized.current) return; initialized.current = true; initialize(bootstrapData.runtimeStates, bootstrapData.activeSideChats, bootstrapData.itemDeltas, bootstrapData.pendingRequests, bootstrapData.connection.state);
+    if (!bootstrapData || initialized.current) return; initialized.current = true; initialize(bootstrapData.runtimeStates, bootstrapData.activeSideChats, bootstrapData.itemDeltas, bootstrapData.pendingRequests, bootstrapData.connection.state, bootstrapData.eventSeq);
   }, [bootstrapData, initialize]);
   useEffect(() => {
     if (!allSessionsQuery.isSuccess) return;
-    const threadId = recentSessionToAutoOpen(selectedThreadId, allSessions, projects, preferences?.lastProjectId);
+    const threadId = recentSessionToAutoOpen(selectedThreadId, allSessions, projects, preferences?.lastProjectId, autoOpenSuppressedRef.current || autoOpenSuppressed);
     if (threadId) navigate(`/sessions/${threadId}`, { replace: true });
-  }, [allSessions, allSessionsQuery.isSuccess, navigate, preferences?.lastProjectId, projects, selectedThreadId]);
+  }, [allSessions, allSessionsQuery.isSuccess, autoOpenSuppressed, navigate, preferences?.lastProjectId, projects, selectedThreadId]);
   useEffect(() => {
     if (!bootstrapReady) return;
     let socket: WebSocket | null = null; let retryTimer: number | undefined; let retryAttempt = 0; let disposed = false; let snapshotRefresh: Promise<boolean> | null = null;
     let buffering = false; let bufferedEvents: UiEvent[] = [];
     const applyEvent = (event: UiEvent) => {
+      if (event.seq <= useAppStore.getState().lastEventSeq) return;
       const liveDeltas = useAppStore.getState().deltas;
       const eventConnectionState = event.type === "connection.changed" ? (event.payload as { state?: string }).state : undefined;
       if (eventConnectionState !== "connected") consume(event);
-      if (eventConnectionState === "connected") void refreshSnapshot().catch(scheduleReconnect);
+      if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
       if (["turn.started", "turn.completed", "item.upserted", "item.delta", "goal.updated", "goal.cleared", "session.settings.updated"].includes(event.type) && event.threadId) {
         client.setQueryData<SessionPayload>(["session", event.threadId], (current) => applySessionEvent(current, event, liveDeltas));
       }
@@ -103,7 +105,7 @@ export function App() {
         if (disposed) return false;
         client.setQueryData(["bootstrap"], fresh);
         client.setQueryData(["projects"], fresh.projects);
-        initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state);
+        initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq);
         const replay = bufferedEvents.filter((event) => event.seq > fresh.eventSeq).sort((left, right) => left.seq - right.seq);
         bufferedEvents = [];
         buffering = false;
@@ -122,35 +124,65 @@ export function App() {
       });
       return snapshotRefresh;
     };
+    const closeCurrentSocket = () => {
+      const current = socket;
+      socket = null;
+      if (!current) return;
+      current.onopen = null;
+      current.onmessage = null;
+      current.onclose = null;
+      current.onerror = null;
+      current.close();
+    };
     const scheduleReconnect = () => {
-      if (disposed) return;
+      if (disposed || retryTimer !== undefined) return;
       const delay = Math.min(10_000, 500 * 2 ** retryAttempt++);
       retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
         void refreshSnapshot().then((ready) => { if (ready) connect(); }).catch(scheduleReconnect);
       }, delay);
     };
+    const resetSocketAndReconnect = () => {
+      closeCurrentSocket();
+      markDisconnected();
+      scheduleReconnect();
+    };
     const connect = () => {
+      if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      socket = new WebSocket(`${protocol}://${window.location.host}/api/events`);
-      socket.onopen = () => {
+      const nextSocket = new WebSocket(`${protocol}://${window.location.host}/api/events`);
+      socket = nextSocket;
+      nextSocket.onopen = () => {
+        if (socket !== nextSocket) return;
         retryAttempt = 0;
-        void refreshSnapshot().catch(() => socket?.close());
+        void refreshSnapshot().catch(resetSocketAndReconnect);
       };
-      socket.onmessage = (message) => {
+      nextSocket.onmessage = (message) => {
+        if (socket !== nextSocket) return;
         const event = JSON.parse(message.data) as UiEvent;
         if (buffering) bufferedEvents.push(event);
         else applyEvent(event);
       };
-      socket.onclose = () => {
+      nextSocket.onclose = () => {
+        if (socket !== nextSocket) return;
+        socket = null;
         markDisconnected();
         scheduleReconnect();
       };
     };
     connect();
-    return () => { disposed = true; if (retryTimer !== undefined) window.clearTimeout(retryTimer); socket?.close(); };
+    return () => { disposed = true; if (retryTimer !== undefined) window.clearTimeout(retryTimer); closeCurrentSocket(); };
   }, [bootstrapReady, client, consume, initialize, markDisconnected]);
   useEffect(() => {
-    const onFocus = () => { if (Date.now() - lastFocusScan.current < 60_000) return; lastFocusScan.current = Date.now(); for (const project of projects) void api(`/api/projects/${project.id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => client.invalidateQueries({ queryKey: ["sessions"] })); };
+    const onFocus = () => {
+      const now = Date.now();
+      if (!shouldRunFocusRescan({ now, lastScanAt: lastFocusScan.current, modalFocusSuppressed: modalFocusSuppressed.current })) return;
+      lastFocusScan.current = now;
+      void Promise.allSettled(projects.map((project) => api(`/api/projects/${project.id}/rescan`, {
+        method: "POST",
+        body: JSON.stringify({ clientRequestId: newClientRequestId() }),
+      }))).then(() => client.invalidateQueries({ queryKey: ["sessions"] }));
+    };
     window.addEventListener("focus", onFocus); return () => window.removeEventListener("focus", onFocus);
   }, [client, projects]);
   useLayoutEffect(() => {
@@ -159,9 +191,17 @@ export function App() {
   useEffect(() => () => { for (const timer of focusTimers.current) window.clearTimeout(timer); }, []);
 
   const updatePreferences = useMutation({ mutationFn: (changes: Partial<Preferences>) => endpoints.preferences(changes), onSuccess: (updated) => client.setQueryData(["bootstrap"], bootstrapData ? { ...bootstrapData, preferences: updated } : bootstrapData) });
+  const suppressAutoOpen = (suppressed: boolean) => { autoOpenSuppressedRef.current = suppressed; setAutoOpenSuppressed(suppressed); };
   const addProject = async () => {
-    const picked = await api<{ path: string | null }>("/api/system/pick-directory", { method: "POST" });
-    const root = picked.path ?? window.prompt("输入本地文件夹的绝对路径"); if (!root?.trim()) return;
+    modalFocusSuppressed.current = true;
+    let root: string | null;
+    try {
+      const picked = await api<{ path: string | null }>("/api/system/pick-directory", { method: "POST" });
+      root = picked.path ?? window.prompt("输入本地文件夹的绝对路径");
+    } finally {
+      window.setTimeout(() => { modalFocusSuppressed.current = false; }, 0);
+    }
+    if (!root?.trim()) return;
     const project = await api<Project>("/api/projects", { method: "POST", body: JSON.stringify({ path: root.trim(), clientRequestId: newClientRequestId() }) });
     const updatedPreferences = await endpoints.preferences({ lastProjectId: project.id });
     client.setQueryData(["bootstrap"], bootstrapData ? { ...bootstrapData, preferences: updatedPreferences } : bootstrapData);
@@ -181,16 +221,49 @@ export function App() {
     await Promise.all(ordered.map((project, index) => api(`/api/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ orderIndex: index, clientRequestId: newClientRequestId() }) }))); void client.invalidateQueries({ queryKey: ["projects"] });
   };
   const removeProject = async (project: Project) => {
-    if (!window.confirm(`从侧边栏移除 ${project.name}？目录和 Codex Session 不会被删除。`)) return;
+    modalFocusSuppressed.current = true;
+    let confirmed: boolean;
+    try {
+      confirmed = window.confirm(`从侧边栏移除 ${project.name}？目录和 Codex Session 不会被删除。`);
+    } finally {
+      window.setTimeout(() => { modalFocusSuppressed.current = false; }, 0);
+    }
+    if (!confirmed) return;
     const removedSelectedProject = selected?.projectId === project.id;
-    await api(`/api/projects/${project.id}`, { method: "DELETE", body: JSON.stringify({ clientRequestId: newClientRequestId() }) });
-    if (settingsProject?.id === project.id) setSettingsProject(null);
-    if (removedSelectedProject) navigate("/", { replace: true });
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ["bootstrap"] }),
-      client.invalidateQueries({ queryKey: ["projects"] }),
-      client.invalidateQueries({ queryKey: ["sessions"] }),
-    ]);
+    if (removedSelectedProject) {
+      suppressAutoOpen(true);
+      await Promise.all([
+        selectedThreadId ? client.cancelQueries({ queryKey: ["session", selectedThreadId] }) : Promise.resolve(),
+        client.cancelQueries({ queryKey: ["sessions"] }),
+      ]);
+      navigate("/", { replace: true });
+    }
+    try {
+      await api(`/api/projects/${project.id}`, { method: "DELETE", body: JSON.stringify({ clientRequestId: newClientRequestId() }) });
+      if (settingsProject?.id === project.id) setSettingsProject(null);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["bootstrap"] }),
+        client.invalidateQueries({ queryKey: ["projects"] }),
+        client.invalidateQueries({ queryKey: ["sessions"] }),
+      ]);
+      if (removedSelectedProject && selectedThreadId) client.removeQueries({ queryKey: ["session", selectedThreadId] });
+    } finally {
+      if (removedSelectedProject) suppressAutoOpen(false);
+    }
+  };
+  const handleArchived = async (threadId: string) => {
+    suppressAutoOpen(true);
+    try {
+      await Promise.all([
+        client.cancelQueries({ queryKey: ["session", threadId] }),
+        client.cancelQueries({ queryKey: ["sessions"] }),
+      ]);
+      navigate("/", { replace: true });
+      client.removeQueries({ queryKey: ["session", threadId] });
+      await client.invalidateQueries({ queryKey: ["sessions"] });
+    } finally {
+      suppressAutoOpen(false);
+    }
   };
   const closeSide = async () => {
     if (!sideThreadId) return;
@@ -214,7 +287,7 @@ export function App() {
     <main ref={workspaceRef} className="workspace">
       <div className={`workspace-layout ${sideThreadId ? "with-side-chat" : ""} ${parallelWriteWarning ? "has-parallel-warning" : ""}`} style={sideThreadId ? { "--side-width": `${preferences?.sideChatWidth ?? 42}%` } as CSSProperties : undefined}>
         {sideThreadId && <div className="compact-workspace-header"><div className="mobile-pane-tabs"><button className={mobilePane === "main" ? "active" : ""} onClick={() => setMobilePane("main")}>Main Session</button><button className={mobilePane === "side" ? "active" : ""} onClick={() => setMobilePane("side")}>Side Chat</button></div>{parallelWriteWarning && <div className="compact-parallel-warning"><WarningCircle size={14} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}</div>}
-        <div className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={preferences?.fullAccessNoticeSeenProjects.includes(selectedProject.id) ?? false} onAcknowledgeFullAccess={() => updatePreferences.mutate({ fullAccessNoticeSeenProjects: [...new Set([...(preferences?.fullAccessNoticeSeenProjects ?? []), selectedProject.id])] })} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} /> : <div className="no-selection"><TerminalWindow size={30} /><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
+        <div className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={preferences?.fullAccessNoticeSeenProjects.includes(selectedProject.id) ?? false} onAcknowledgeFullAccess={() => updatePreferences.mutate({ fullAccessNoticeSeenProjects: [...new Set([...(preferences?.fullAccessNoticeSeenProjects ?? []), selectedProject.id])] })} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><TerminalWindow size={30} /><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
         {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} sideChat parallelWriteWarning={parallelWriteWarning} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
     </main><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} />
