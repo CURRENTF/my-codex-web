@@ -14,7 +14,7 @@ import type { ThreadResumeResponse } from "@codex-web/codex-schema/v2/ThreadResu
 import type { ThreadStartResponse } from "@codex-web/codex-schema/v2/ThreadStartResponse";
 import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
 import type { TurnStartResponse } from "@codex-web/codex-schema/v2/TurnStartResponse";
-import { JsonRpcError, type RpcServerRequest } from "./json-rpc-transport.js";
+import { JsonRpcError, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, type RpcServerRequest } from "./json-rpc-transport.js";
 import { projectAdapterEvent } from "./adapter-events.js";
 import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
@@ -33,6 +33,7 @@ export interface ListSessionsInput {
   sortDirection?: "asc" | "desc";
   cwd?: string | string[];
   searchTerm?: string;
+  archived?: boolean;
 }
 
 export interface SessionSettings {
@@ -48,14 +49,38 @@ export interface ResumedSession {
 
 export interface ListedSession {
   id: string; preview: string; name: string | null; cwd: string; sourceKind: string;
-  createdAt: number; updatedAt: number; forkedFromId: string | null;
+  createdAt: number; updatedAt: number; forkedFromId: string | null; threadSource?: string | null;
 }
 
 export interface GoalUpdate {
   threadId: string; objective?: string; status?: "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete"; tokenBudget?: number | null;
 }
 
+export class OperationUncertainError extends Error {
+  readonly code = "operation_uncertain";
+
+  constructor(readonly operation: string, cause?: unknown) {
+    super(`Codex did not confirm ${operation}; the operation result is unknown and the connection is restarting`, { cause });
+    this.name = "OperationUncertainError";
+  }
+}
+
 const SIDE_CHAT_INSTRUCTIONS = `You are in a side chat forked from a parent Codex session. The parent history is reference context only. Do not continue the parent task or plan. Only messages after the side-chat boundary define the current task. Default to explanation and lightweight exploration. Modify files only when the side-chat user explicitly asks. Do not start, steer, or control subagents belonging to the parent session.`;
+
+export const SIDE_CHAT_BOUNDARY_TIMEOUT_MS = 15_000;
+export const SIDE_CHAT_CLEANUP_RETRY_BASE_MS = 1_000;
+const SIDE_CHAT_CLEANUP_RETRY_MAX_MS = 30_000;
+export const ACKNOWLEDGED_MUTATION_TIMEOUT_MS = 30_000;
+export const acknowledgedMutationTimeout = (timeoutMs = ACKNOWLEDGED_MUTATION_TIMEOUT_MS) => ({
+  timeoutMs,
+  disconnectOnTimeout: true,
+  operationUncertainOnDisconnect: true,
+} as const);
+export const NON_IDEMPOTENT_MUTATION_TIMEOUT = {
+  timeoutMs: 60_000,
+  disconnectOnTimeout: true,
+  operationUncertainOnDisconnect: true,
+} as const;
 
 function sandboxMode(accessMode: AccessMode): "danger-full-access" | "workspace-write" | "read-only" {
   if (accessMode === "fullAccess") return "danger-full-access";
@@ -132,6 +157,10 @@ export class CodexAdapter extends EventEmitter {
   private accountCheckPromise: Promise<void> | null = null;
   private modelsValue: ModelOption[] = [];
   private readonly pendingRequests = new Map<string, RpcServerRequest>();
+  private readonly failedSideChatCleanupAttempts = new Map<string, number>();
+  private readonly failedSideChatCleanupTimers = new Map<string, NodeJS.Timeout>();
+  private pendingNonIdempotentMutations = 0;
+  private pendingAcknowledgedMutations = 0;
 
   constructor(private readonly options: AdapterOptions) {
     super();
@@ -158,6 +187,7 @@ export class CodexAdapter extends EventEmitter {
     this.supervisor.on("stderr", (line) => this.emit("stderr", line));
     this.supervisor.on("disconnected", (details) => {
       this.ready = false;
+      this.pendingRequests.clear();
       this.emit("connection", { state: "disconnected", details });
     });
     this.supervisor.on("restart", () => void this.initialize().catch((error) => {
@@ -178,9 +208,14 @@ export class CodexAdapter extends EventEmitter {
     });
   }
 
-  stop(): void { this.supervisor.stop(); }
+  stop(): void {
+    this.clearFailedSideChatCleanups();
+    this.supervisor.stop();
+  }
 
   async initialize(): Promise<void> {
+    // A supervisor restart destroys every ephemeral Thread from the old process.
+    this.clearFailedSideChatCleanups();
     this.emit("connection", { state: "connecting" });
     const transport = this.supervisor.transport;
     await transport.request("initialize", {
@@ -217,8 +252,18 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async listModels(): Promise<ModelOption[]> {
-    const response = await this.supervisor.transport.request<ModelListResponse>("model/list", { limit: 100, includeHidden: false });
-    return response.data.filter((model) => !model.hidden).map((model) => ({
+    const models: ModelListResponse["data"] = [];
+    let cursor: string | null = null;
+    do {
+      const response: ModelListResponse = await this.supervisor.transport.request<ModelListResponse>("model/list", {
+        cursor,
+        limit: 100,
+        includeHidden: false,
+      });
+      models.push(...response.data);
+      cursor = response.nextCursor;
+    } while (cursor);
+    return models.filter((model) => !model.hidden).map((model) => ({
       id: model.id,
       model: model.model,
       displayName: model.displayName,
@@ -240,11 +285,11 @@ export class CodexAdapter extends EventEmitter {
       sortKey: "updated_at",
       sortDirection: input.sortDirection ?? "desc",
       sourceKinds: ["cli", "vscode", "appServer"],
-      archived: false,
+      archived: input.archived ?? false,
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.searchTerm ? { searchTerm: input.searchTerm } : {}),
     });
-    return { data: response.data.map((thread) => ({ id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId })), nextCursor: response.nextCursor };
+    return { data: response.data.map((thread) => ({ id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId, threadSource: thread.threadSource })), nextCursor: response.nextCursor };
   }
 
   async readSession(threadId: string): Promise<SessionThread> {
@@ -262,21 +307,21 @@ export class CodexAdapter extends EventEmitter {
     return { thread: projectThread(response.thread), settings: projectResumeSettings(response) };
   }
 
-  async startSession(cwd: string, settings: SessionSettings, ephemeral = false): Promise<{ thread: SessionThread }> {
-    const response = await this.supervisor.transport.request<ThreadStartResponse>("thread/start", {
+  async startSession(cwd: string, settings: SessionSettings, ephemeral = false, threadSource = "codex-web"): Promise<{ thread: SessionThread }> {
+    const response = await this.nonIdempotentMutation<ThreadStartResponse>("thread/start", {
       cwd,
       model: settings.model ?? null,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
       ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
       ephemeral,
-      threadSource: "codex-web",
+      threadSource,
     });
     return { thread: projectThread(response.thread) };
   }
 
   async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string): Promise<{ turn: SessionTurn }> {
-    const response = await this.supervisor.transport.request<TurnStartResponse>("turn/start", {
+    const response = await this.nonIdempotentMutation<TurnStartResponse>("turn/start", {
       threadId,
       clientUserMessageId,
       input: [{ type: "text", text, text_elements: [] }],
@@ -290,7 +335,7 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async steerTurn(threadId: string, expectedTurnId: string, text: string, clientUserMessageId: string): Promise<{ turnId: string }> {
-    return this.supervisor.transport.request("turn/steer", {
+    return this.nonIdempotentMutation("turn/steer", {
       threadId,
       expectedTurnId,
       clientUserMessageId,
@@ -299,11 +344,11 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {
-    await this.supervisor.transport.request("turn/interrupt", { threadId, turnId });
+    await this.acknowledgedMutation("turn/interrupt", { threadId, turnId });
   }
 
-  async forkSession(threadId: string, lastTurnId: string | null, settings: SessionSettings, ephemeral = false, cwd = this.options.cwd): Promise<{ thread: SessionThread }> {
-    const response = await this.supervisor.transport.request<ThreadForkResponse>("thread/fork", {
+  async forkSession(threadId: string, lastTurnId: string | null, settings: SessionSettings, ephemeral = false, cwd = this.options.cwd, threadSource = "codex-web"): Promise<{ thread: SessionThread }> {
+    const response = await this.nonIdempotentMutation<ThreadForkResponse>("thread/fork", {
       threadId,
       ...(lastTurnId ? { lastTurnId } : {}),
       ...(settings.model ? { model: settings.model } : {}),
@@ -312,13 +357,13 @@ export class CodexAdapter extends EventEmitter {
       sandbox: sandboxMode(settings.accessMode),
       ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
       ephemeral,
-      threadSource: "codex-web",
+      threadSource,
     });
     return { thread: projectThread(response.thread) };
   }
 
   async createSideChat(threadId: string, lastTurnId: string | null, settings: SessionSettings, cwd = this.options.cwd): Promise<{ thread: SessionThread }> {
-    const response = await retryThreadMaterialization(() => this.supervisor.transport.request<ThreadForkResponse>("thread/fork", {
+    const response = await retryThreadMaterialization(() => this.nonIdempotentMutation<ThreadForkResponse>("thread/fork", {
       threadId,
       ...(lastTurnId ? { lastTurnId } : {}),
       ...(settings.model ? { model: settings.model } : {}),
@@ -335,7 +380,7 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async createEmptySideChat(cwd: string, settings: SessionSettings): Promise<{ thread: SessionThread }> {
-    const response = await this.supervisor.transport.request<ThreadStartResponse>("thread/start", {
+    const response = await this.nonIdempotentMutation<ThreadStartResponse>("thread/start", {
       cwd,
       ...(settings.model ? { model: settings.model } : {}),
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
@@ -351,33 +396,76 @@ export class CodexAdapter extends EventEmitter {
 
   private async initializeSideChatThread(threadId: string): Promise<void> {
     try {
-      await this.supervisor.transport.request("thread/inject_items", {
+      await this.acknowledgedMutation("thread/inject_items", {
         threadId,
         items: [{ type: "message", role: "user", content: [{ type: "input_text", text: "SIDE CHAT BOUNDARY: Only messages after this item are the current task." }] }],
-      }, 15_000);
+      }, SIDE_CHAT_BOUNDARY_TIMEOUT_MS);
     } catch (error) {
-      await this.unsubscribe(threadId).catch(() => undefined);
+      if (error instanceof OperationUncertainError) throw error;
+      await this.cleanupFailedSideChat(threadId);
       throw error;
     }
     try {
       await this.clearGoal(threadId);
     } catch (error) {
       if (error instanceof JsonRpcError && error.message.includes("ephemeral thread does not support goals")) return;
-      await this.unsubscribe(threadId).catch(() => undefined);
+      if (error instanceof OperationUncertainError) throw error;
+      await this.cleanupFailedSideChat(threadId);
       throw error;
     }
   }
 
+  private async cleanupFailedSideChat(threadId: string): Promise<void> {
+    try {
+      await this.unsubscribe(threadId);
+    } catch (error) {
+      this.emit("warning", new Error("Failed to confirm cleanup for an uninitialized Side Chat", { cause: error }));
+      this.failedSideChatCleanupAttempts.set(threadId, 0);
+      this.scheduleFailedSideChatCleanup(threadId);
+    }
+  }
+
+  private scheduleFailedSideChatCleanup(threadId: string): void {
+    if (this.failedSideChatCleanupTimers.has(threadId)) return;
+    const attempt = this.failedSideChatCleanupAttempts.get(threadId) ?? 0;
+    const delay = Math.min(SIDE_CHAT_CLEANUP_RETRY_MAX_MS, SIDE_CHAT_CLEANUP_RETRY_BASE_MS * 2 ** attempt);
+    const timer = setTimeout(() => {
+      this.failedSideChatCleanupTimers.delete(threadId);
+      void this.retryFailedSideChatCleanup(threadId);
+    }, delay);
+    timer.unref();
+    this.failedSideChatCleanupTimers.set(threadId, timer);
+  }
+
+  private async retryFailedSideChatCleanup(threadId: string): Promise<void> {
+    if (!this.failedSideChatCleanupAttempts.has(threadId)) return;
+    try {
+      await this.unsubscribe(threadId);
+      this.failedSideChatCleanupAttempts.delete(threadId);
+    } catch (error) {
+      const attempt = (this.failedSideChatCleanupAttempts.get(threadId) ?? 0) + 1;
+      this.failedSideChatCleanupAttempts.set(threadId, attempt);
+      this.emit("warning", new Error("Retry failed while cleaning up an uninitialized Side Chat", { cause: error }));
+      this.scheduleFailedSideChatCleanup(threadId);
+    }
+  }
+
+  private clearFailedSideChatCleanups(): void {
+    for (const timer of this.failedSideChatCleanupTimers.values()) clearTimeout(timer);
+    this.failedSideChatCleanupTimers.clear();
+    this.failedSideChatCleanupAttempts.clear();
+  }
+
   async unsubscribe(threadId: string): Promise<void> {
-    await this.supervisor.transport.request("thread/unsubscribe", { threadId });
+    await this.acknowledgedMutation("thread/unsubscribe", { threadId });
   }
 
   async renameSession(threadId: string, name: string): Promise<void> {
-    await this.supervisor.transport.request("thread/name/set", { threadId, name });
+    await this.acknowledgedMutation("thread/name/set", { threadId, name });
   }
 
   async archiveSession(threadId: string): Promise<void> {
-    await this.supervisor.transport.request("thread/archive", { threadId });
+    await this.acknowledgedMutation("thread/archive", { threadId });
   }
 
   async getGoal(threadId: string): Promise<Goal | null> {
@@ -386,12 +474,50 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async setGoal(params: GoalUpdate): Promise<Goal> {
-    const response = await this.supervisor.transport.request<ThreadGoalSetResponse>("thread/goal/set", params as ThreadGoalSetParams);
+    const response = await this.acknowledgedMutation<ThreadGoalSetResponse>("thread/goal/set", params as ThreadGoalSetParams);
     return projectGoal(response.goal);
   }
 
   async clearGoal(threadId: string): Promise<void> {
-    await this.supervisor.transport.request("thread/goal/clear", { threadId });
+    await this.acknowledgedMutation("thread/goal/clear", { threadId });
+  }
+
+  restartForRecovery(): boolean {
+    if (this.pendingNonIdempotentMutations > 0 || this.pendingAcknowledgedMutations > 0) return false;
+    this.supervisor.retryCurrent();
+    return true;
+  }
+
+  private async acknowledgedMutation<TResult = unknown>(
+    method: string,
+    params: unknown,
+    timeoutMs = ACKNOWLEDGED_MUTATION_TIMEOUT_MS,
+  ): Promise<TResult> {
+    this.pendingAcknowledgedMutations += 1;
+    try {
+      return await this.supervisor.transport.request<TResult>(method, params, acknowledgedMutationTimeout(timeoutMs));
+    } catch (error) {
+      if (error instanceof JsonRpcMutationResponseTimeoutError || error instanceof JsonRpcMutationConnectionLostError) {
+        throw new OperationUncertainError(method, error);
+      }
+      throw error;
+    } finally {
+      this.pendingAcknowledgedMutations -= 1;
+    }
+  }
+
+  private async nonIdempotentMutation<TResult>(method: string, params: unknown): Promise<TResult> {
+    this.pendingNonIdempotentMutations += 1;
+    try {
+      return await this.supervisor.transport.request<TResult>(method, params, NON_IDEMPOTENT_MUTATION_TIMEOUT);
+    } catch (error) {
+      if (error instanceof JsonRpcMutationResponseTimeoutError || error instanceof JsonRpcMutationConnectionLostError) {
+        throw new OperationUncertainError(method, error);
+      }
+      throw error;
+    } finally {
+      this.pendingNonIdempotentMutations -= 1;
+    }
   }
 
   respondPendingRequest(requestId: string, allow: boolean, answers: Record<string, string[]> = {}): void {

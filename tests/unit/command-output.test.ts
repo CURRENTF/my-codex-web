@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandOutputText } from "../../apps/web/src/command-output";
+import { commandOutputText, commandResultDisplay } from "../../apps/web/src/command-output";
 
 describe("commandOutputText", () => {
   it("shows live command deltas before the completion item arrives", () => {
@@ -17,5 +17,12 @@ describe("commandOutputText", () => {
 
   it("does not duplicate a live delta already present in an updated item", () => {
     expect(commandOutputText("STEP_1\nSTEP_2\n", "STEP_2\n", true)).toBe("STEP_1\nSTEP_2");
+  });
+
+  it("keeps a real late exit code while making the interrupted Turn explicit", () => {
+    expect(commandResultDisplay("completed", 0, "interrupted")).toEqual({
+      label: "Turn 已中断 · exit 0",
+      tone: "interrupted",
+    });
   });
 });

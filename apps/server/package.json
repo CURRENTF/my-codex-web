@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "CODEX_WEB_DEV_VITE_ORIGIN=1 tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@codex-web/codex-adapter": "*",
     "@codex-web/shared-types": "*",
     "@fastify/cookie": "^11.0.0",
-    "@fastify/static": "^10.1.0",
+    "@fastify/static": "^10.1.2",
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.5.0",
     "open": "^10.2.0",

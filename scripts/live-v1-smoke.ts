@@ -5,6 +5,8 @@ import { requireIsolatedCodexHome } from "./isolated-codex-home.js";
 const baseUrl = process.env.CODEX_WEB_SMOKE_URL ?? "http://127.0.0.1:7373";
 const expectedCodexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_SMOKE_CODEX_HOME, "CODEX_WEB_SMOKE_CODEX_HOME");
 const origin = new URL(baseUrl).origin;
+const turnTimeoutMs = Number(process.env.CODEX_WEB_SMOKE_TURN_TIMEOUT_MS ?? 600_000);
+assert.ok(Number.isFinite(turnTimeoutMs) && turnTimeoutMs > 0, "CODEX_WEB_SMOKE_TURN_TIMEOUT_MS must be a positive number");
 let cookie = "";
 let csrfToken = "";
 
@@ -31,7 +33,7 @@ type SessionSummary = { threadId: string; origin: string; parentThreadId: string
 
 async function readSession(threadId: string): Promise<SessionPayload> { return request(`/api/sessions/${threadId}`); }
 async function waitForTurn(threadId: string, turnId: string): Promise<Turn> {
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + turnTimeoutMs;
   while (Date.now() < deadline) {
     const turn = (await readSession(threadId)).thread.turns.find((candidate) => candidate.id === turnId);
     if (turn && turn.status !== "inProgress") return turn;
@@ -59,13 +61,18 @@ const settings: Settings = {
 
 const persistentThreads: string[] = [];
 let sideThreadId: string | null = null;
+let activeTurn: { threadId: string; turnId: string } | null = null;
 try {
   const parent = await request<{ thread: { id: string } }>(`/api/projects/${project.id}/sessions`, mutation(settings));
   persistentThreads.push(parent.thread.id);
   const first = await request<{ turn: Turn }>(`/api/sessions/${parent.thread.id}/turns`, mutation({ ...settings, text: "Reply with exactly FORK_BOUNDARY_ONE. Do not use tools.", clientUserMessageId: crypto.randomUUID() }));
+  activeTurn = { threadId: parent.thread.id, turnId: first.turn.id };
   assert.equal((await waitForTurn(parent.thread.id, first.turn.id)).status, "completed");
+  activeTurn = null;
   const second = await request<{ turn: Turn }>(`/api/sessions/${parent.thread.id}/turns`, mutation({ ...settings, text: "Reply with exactly FORK_BOUNDARY_TWO. Do not use tools.", clientUserMessageId: crypto.randomUUID() }));
+  activeTurn = { threadId: parent.thread.id, turnId: second.turn.id };
   assert.equal((await waitForTurn(parent.thread.id, second.turn.id)).status, "completed");
+  activeTurn = null;
 
   const parentPayload = await readSession(parent.thread.id);
   assert.deepEqual(parentPayload.settings, settings);
@@ -117,6 +124,11 @@ try {
     inheritedSettings: inheritedPayload.settings,
   }, null, 2));
 } finally {
+  if (activeTurn) {
+    const pending = activeTurn;
+    await request(`/api/sessions/${pending.threadId}/interrupt`, mutation()).catch(() => undefined);
+    await waitForTurn(pending.threadId, pending.turnId).catch(() => undefined);
+  }
   if (sideThreadId) await request(`/api/side-chats/${sideThreadId}`, { method: "DELETE", body: JSON.stringify({ clientRequestId: crypto.randomUUID() }) }).catch(() => undefined);
   for (const threadId of persistentThreads.reverse()) await request(`/api/sessions/${threadId}/archive`, mutation()).catch(() => undefined);
 }

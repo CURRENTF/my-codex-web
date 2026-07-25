@@ -126,6 +126,40 @@ describe("applySessionEvent", () => {
     expect(lateInProgress.thread.turns[0]?.items[0]).toMatchObject({ status: "interrupted" });
   });
 
+  it("preserves a late natural command result without changing the interrupted Turn", () => {
+    const started = applySessionEvent(session, event("turn.started", { turn: {
+      id: "turn-1",
+      status: "inProgress",
+      items: [{ type: "commandExecution", id: "command-1", command: "sleep 45", cwd: "/tmp", status: "inProgress", aggregatedOutput: null, exitCode: null, durationMs: null }],
+      startedAt: 10,
+      completedAt: null,
+      durationMs: null,
+    } }))!;
+    const interrupted = applySessionEvent(started, event("turn.completed", { turn: {
+      id: "turn-1",
+      status: "interrupted",
+      items: [],
+      startedAt: 10,
+      completedAt: 22,
+      durationMs: 12_000,
+    } }))!;
+    const lateCompleted = applySessionEvent(interrupted, event("item.upserted", {
+      turnId: "turn-1",
+      completedAtMs: 55_000,
+      item: { type: "commandExecution", id: "command-1", command: "sleep 45", cwd: "/tmp", status: "completed", aggregatedOutput: "", exitCode: 0, durationMs: 45_000 },
+    }))!;
+
+    expect(lateCompleted.thread.turns[0]).toMatchObject({
+      status: "interrupted",
+    });
+    expect(lateCompleted.thread.turns[0]?.items[0]).toMatchObject({
+      type: "commandExecution",
+      status: "completed",
+      exitCode: 0,
+      durationMs: 45_000,
+    });
+  });
+
   it("terminalizes streamed tool items when an interrupted Turn completion omits items", () => {
     const started = applySessionEvent(session, event("turn.started", { turn: {
       id: "turn-1",

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
-import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, type AdapterEvent, type AdapterPendingRequest, type SessionSettings } from "@codex-web/codex-adapter";
+import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, OperationUncertainError, type AdapterEvent, type AdapterPendingRequest, type SessionSettings } from "@codex-web/codex-adapter";
 import { Repositories, type ProjectSessionRow } from "./database.js";
 import { ProjectIndexer } from "./project-indexer.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
@@ -18,6 +19,33 @@ export class ActiveTurnConflictError extends Error {
   constructor(operation: string) { super(`${operation} is unavailable while a Turn is active`); }
 }
 
+export class ActiveTurnIdentityError extends Error {
+  constructor() { super("The active Turn could not be identified; refresh the Session and retry Interrupt"); }
+}
+
+export class ProjectUnavailableError extends Error {
+  constructor() { super("Project directory is unavailable"); }
+}
+
+export class SessionDisconnectedError extends Error {
+  constructor(operation: string) { super(`${operation} is unavailable until the Session has been reconciled after reconnecting`); }
+}
+
+export class UncertainTurnAppliedError extends Error {
+  constructor() { super("The previously unconfirmed Turn appeared in the Session; duplicate sending was cancelled"); }
+}
+
+export class SideChatCloseTimeoutError extends Error {
+  constructor() { super("Side Chat is still running and could not be closed safely; retry after the current Turn finishes"); }
+}
+
+export class ReconciliationPendingError extends Error {
+  constructor() { super("Observed Codex children are still materializing; reconnect reconciliation will retry"); }
+}
+
+export const SIDE_CHAT_ACTIVE_TURN_ID_WAIT_MS = 2_000;
+export const SIDE_CHAT_TERMINAL_WAIT_MS = 30_000;
+
 export function isUnmaterializedSessionReadError(error: unknown): boolean {
   return isThreadMaterializationRace(error);
 }
@@ -25,6 +53,10 @@ export function isUnmaterializedSessionReadError(error: unknown): boolean {
 export function isSteerTurnConflictError(error: unknown): boolean {
   if (!(error instanceof JsonRpcError)) return false;
   return /no active turn|active turn.*(?:not found|finished|completed)|expected.?turn.?id.*(?:mismatch|does not match)|turn\b.*\bis not active/i.test(error.message);
+}
+
+export function recoveryThreadSource(kind: "session" | "fork", scope: string, clientRequestId: string): string {
+  return `codex-web-${kind}:${encodeURIComponent(scope)}:${clientRequestId}`;
 }
 
 function sessionSummaryMatchesSearch(summary: Pick<SessionSummary, "title" | "preview">, search: string | undefined): boolean {
@@ -38,6 +70,12 @@ interface ProjectSettings { defaultModel: string | null; defaultReasoning: strin
 type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
 type SnapshotItem = SnapshotTurn["items"][number];
+
+function snapshotHasClientUserMessage(snapshot: SessionSnapshot, turnId: string, clientUserMessageId: string): boolean {
+  return snapshot.turns.find((turn) => turn.id === turnId)?.items.some((item) => (
+    item.type === "userMessage" && item.clientId === clientUserMessageId
+  )) ?? false;
+}
 
 function terminalizeSnapshotItem(item: SnapshotItem, turnStatus: SnapshotTurn["status"]): SnapshotItem {
   if (turnStatus === "inProgress" || !("status" in item) || item.status !== "inProgress") return item;
@@ -84,7 +122,7 @@ function snapshotItemKey(item: SnapshotItem): string {
   if (item.type === "userMessage") return `user:${JSON.stringify(item.content)}`;
   if (item.type === "agentMessage") return `agent:${item.phase ?? ""}:${item.text}`;
   if (item.type === "plan") return `plan:${item.text}`;
-  if (item.type === "reasoning") return `reasoning:${JSON.stringify([item.summary, item.content])}`;
+  if (item.type === "reasoning") return `reasoning:${JSON.stringify(item.summary)}`;
   if (item.type === "commandExecution") return `command:${item.cwd}:${item.command}`;
   if (item.type === "fileChange") return `files:${JSON.stringify(item.changes.map((change) => stableValue(change)))}`;
   if (item.type === "mcpToolCall") return `mcp:${item.server}:${item.tool}`;
@@ -181,7 +219,47 @@ export function mergeSessionSnapshot(primary: SessionSnapshot, supplemental: Ses
   return terminalizeSessionSnapshot({ ...primary, turns });
 }
 
-export class SessionService {
+interface PendingForkRecovery {
+  threadSource: string;
+  parentThreadId: string;
+  projectId: string;
+  lastTurnId: string | null;
+  expectedTurnIds: string[];
+  empty: boolean;
+  inheritGoal: boolean;
+  settings: SessionSettings;
+  prefill?: string;
+  recoveryDeadlineAt?: number;
+  background?: boolean;
+  abandonAt?: number;
+}
+
+interface PendingSessionRecovery {
+  threadSource: string;
+  projectId: string;
+  settings: SessionSettings;
+  recoveryDeadlineAt?: number;
+  background?: boolean;
+  abandonAt?: number;
+}
+
+interface PendingSteerRecovery {
+  expectedTurnId: string;
+  clientUserMessageId: string;
+  draft: string;
+}
+
+type ForkRecoveryOutcome = "finalized" | "discard" | "retry";
+type SessionRecoveryOutcome = "finalized" | "discard" | "retry";
+const UNCERTAIN_FORK_RECOVERY_ATTEMPTS = 3;
+const UNCERTAIN_FORK_RECOVERY_DELAY_MS = 100;
+const UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS = 30_000;
+export const UNCERTAIN_CHILD_BACKGROUND_TTL_MS = 5 * 60_000;
+export const DEFERRED_CHILD_RECOVERY_DELAY_MS = 1_000;
+const UNCERTAIN_TURN_RECONCILIATION_ATTEMPTS = 3;
+const UNCERTAIN_TURN_RECONCILIATION_DELAY_MS = 100;
+
+export class SessionService extends EventEmitter {
   private readonly locks = new Map<string, Promise<unknown>>();
   private readonly idempotentResults = new Map<string, Promise<unknown>>();
   private readonly userMessageResults = new Map<string, Promise<unknown>>();
@@ -192,6 +270,19 @@ export class SessionService {
   private readonly goalPresenceLoading = new Set<string>();
   private readonly removedThreads = new Set<string>();
   private readonly sessionGenerations = new Map<string, number>();
+  private readonly uncertainSessions = new Map<string, PendingSessionRecovery>();
+  private readonly observedSessions = new Map<string, SessionSnapshot>();
+  private readonly uncertainForks = new Map<string, PendingForkRecovery>();
+  private readonly observedForks = new Map<string, SessionSnapshot>();
+  private readonly uncertainArchives = new Set<string>();
+  private readonly uncertainTurnBaselines = new Map<string, string | undefined>();
+  private readonly uncertainTurnMessageIds = new Map<string, string>();
+  private readonly uncertainTurnDrafts = new Map<string, string>();
+  private readonly uncertainSteers = new Map<string, PendingSteerRecovery>();
+  private readonly sessionPrefills = new Map<string, string>();
+  private childRecovery: Promise<{ sessionRecoveryPending: boolean; forkRecoveryPending: boolean }> | null = null;
+  private childRecoveryTimer: NodeJS.Timeout | null = null;
+  private recoveryCriticalOperations = 0;
 
   constructor(
     private readonly repositories: Repositories,
@@ -199,7 +290,7 @@ export class SessionService {
     private readonly indexer: ProjectIndexer,
     private readonly runtimes: ThreadRuntimeRegistry,
     private readonly projectLocks = new KeyedOperationLock(),
-  ) {}
+  ) { super(); }
 
   async listSessions(options: { projectId?: string; search?: string; sortDirection?: "asc" | "desc" } = {}): Promise<SessionSummary[]> {
     const mappings = this.repositories.listProjectSessions(options.projectId);
@@ -296,10 +387,11 @@ export class SessionService {
       this.adapter.getGoal(threadId),
     ]);
     const snapshot = this.sessionSnapshots.get(threadId);
-    const thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : terminalizeSessionSnapshot(persistedThread);
+    let thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : terminalizeSessionSnapshot(persistedThread);
     this.sessionSnapshots.set(threadId, thread);
+    this.clearPrefillAfterTurnStart(threadId, thread.turns);
     this.goalPresence.set(threadId, goal !== null);
-    if (this.runtimes.get(threadId).state === "disconnected") this.runtimes.reconcileFromSnapshot(threadId, thread.turns);
+    if (this.runtimes.get(threadId).state === "disconnected") thread = await this.reconcileRuntimeSnapshot(threadId, thread);
     return { thread, goal, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
   }
 
@@ -336,6 +428,10 @@ export class SessionService {
       try {
         await this.adapter.archiveSession(threadId);
       } catch (error) {
+        if (error instanceof OperationUncertainError) {
+          this.uncertainArchives.add(threadId);
+          throw error;
+        }
         if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) {
           this.indexer.restoreSessionDiscovery?.(threadId);
           throw error;
@@ -389,52 +485,102 @@ export class SessionService {
   }
 
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
-    return this.idempotent(`project:${projectId}:create`, clientRequestId, () => this.projectLocks.withKey(projectId, async () => {
-      const project = this.requireProject(projectId);
+    return this.idempotent(`project:${projectId}:create`, clientRequestId, () => this.projectLocks.withKey(projectId, () => this.withRecoveryCriticalOperation(async () => {
+      const project = this.requireAvailableProject(projectId);
       const settings = this.resolveSettings(projectId, input);
-      const response = await this.adapter.startSession(project.canonicalPath, settings);
-      this.settings.set(response.thread.id, settings);
-      this.sessionSnapshots.set(response.thread.id, response.thread);
+      const recovery: PendingSessionRecovery = {
+        threadSource: recoveryThreadSource("session", projectId, clientRequestId),
+        projectId,
+        settings,
+      };
+      this.uncertainSessions.set(recovery.threadSource, recovery);
+      this.indexer.markThreadSourcePending?.(recovery.threadSource);
       try {
-        const now = Date.now();
-        this.repositories.upsertProjectSession({
-          thread_id: response.thread.id, project_id: projectId, cwd_snapshot: project.canonicalPath,
-          source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
-          added_at: now, last_seen_at: now,
-        });
+        const response = await this.adapter.startSession(project.canonicalPath, settings, false, recovery.threadSource);
+        this.observedSessions.set(recovery.threadSource, response.thread);
+        const result = await this.finalizeCreatedSession(response.thread, recovery, true);
+        this.uncertainSessions.delete(recovery.threadSource);
+        this.observedSessions.delete(recovery.threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
+        return result;
       } catch (error) {
-        this.clearSessionCaches(response.thread.id);
-        await this.adapter.archiveSession(response.thread.id).catch(() => undefined);
+        if (error instanceof OperationUncertainError) {
+          recovery.recoveryDeadlineAt = Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+        } else {
+          this.uncertainSessions.delete(recovery.threadSource);
+          this.observedSessions.delete(recovery.threadSource);
+          this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
+        }
         throw error;
       }
-      this.restoreSession(response.thread.id);
-      return { thread: response.thread, settings };
-    }));
+    })));
+  }
+
+  private async finalizeCreatedSession(thread: SessionSnapshot, recovery: PendingSessionRecovery, rollbackOnFailure: boolean) {
+    this.settings.set(thread.id, recovery.settings);
+    this.sessionSnapshots.set(thread.id, thread);
+    try {
+      const now = Date.now();
+      this.repositories.upsertProjectSession({
+        thread_id: thread.id, project_id: recovery.projectId, cwd_snapshot: thread.cwd,
+        source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+        added_at: now, last_seen_at: now,
+      });
+    } catch (error) {
+      if (rollbackOnFailure && !(await this.rollbackCreatedThread(thread.id))) {
+        this.retainUncertainChild(thread.id, recovery);
+        throw new OperationUncertainError("thread/start finalization", error);
+      }
+      throw error;
+    }
+    this.restoreSession(thread.id);
+    this.runtimes.notifySessionSummaryUpdated(thread.id, "session-created");
+    return { thread, settings: recovery.settings };
   }
 
   async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string }, clientRequestId: string) {
     return this.idempotentUserMessage(threadId, "turn", input.clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
-      const runtime = this.runtimes.get(threadId);
-      if (runtime.activeTurnId) throw new ActiveTurnConflictError("Starting another Turn");
+      this.assertNoActiveTurn(threadId, "Starting another Turn");
       const mapping = this.requireMapping(threadId);
-      const project = this.requireProject(mapping.project_id);
+      const project = this.requireAvailableProject(mapping.project_id);
       await this.ensureSessionSettings(threadId);
       const settings = this.resolveSettings(project.id, input, threadId);
-      const response = await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, text, settings, input.clientUserMessageId);
+      const previousLastTurnId = this.sessionSnapshots.get(threadId)?.turns.at(-1)?.id;
+      let response;
+      try {
+        response = await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, text, settings, input.clientUserMessageId);
+      } catch (error) {
+        if (error instanceof OperationUncertainError) {
+          this.uncertainTurnBaselines.set(threadId, previousLastTurnId);
+          this.uncertainTurnMessageIds.set(threadId, input.clientUserMessageId);
+          this.uncertainTurnDrafts.set(threadId, text);
+          this.runtimes.markOperationUncertain(threadId, previousLastTurnId);
+        }
+        throw error;
+      }
+      this.uncertainTurnBaselines.delete(threadId);
+      this.uncertainTurnMessageIds.delete(threadId);
+      this.uncertainTurnDrafts.delete(threadId);
       this.settings.set(threadId, settings);
       this.upsertSnapshotTurn(threadId, response.turn);
       this.runtimes.setActiveTurn(threadId, response.turn.id);
+      this.sessionPrefills.delete(threadId);
       return response;
     }));
   }
 
   async steer(threadId: string, text: string, expectedTurnId: string, clientUserMessageId: string, clientRequestId: string) {
     return this.idempotentUserMessage(threadId, "steer", clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
+      if (this.uncertainSteers.has(threadId)) throw new SessionDisconnectedError("Steer");
       const runtime = this.runtimes.get(threadId);
       if (!runtime.activeTurnId || runtime.activeTurnId !== expectedTurnId) throw new SteerConflictError();
       try {
         return await this.adapter.steerTurn(threadId, expectedTurnId, text, clientUserMessageId);
       } catch (error) {
+        if (error instanceof OperationUncertainError) {
+          this.uncertainSteers.set(threadId, { expectedTurnId, clientUserMessageId, draft: text });
+          this.runtimes.markOperationUncertain(threadId, expectedTurnId);
+        }
         if (isSteerTurnConflictError(error)) throw new SteerConflictError();
         throw error;
       }
@@ -443,63 +589,331 @@ export class SessionService {
 
   async interrupt(threadId: string): Promise<void> {
     return this.withLock(threadId, async () => {
-      const activeTurnId = this.runtimes.get(threadId).activeTurnId;
+      let activeTurnId: string | undefined;
+      try {
+        activeTurnId = await this.activeTurnIdForInterrupt(threadId);
+      } catch (error) {
+        if (!(error instanceof ActiveTurnIdentityError)) throw error;
+        activeTurnId = await this.runtimes.waitForActiveTurnId(threadId, SIDE_CHAT_ACTIVE_TURN_ID_WAIT_MS);
+        if (!activeTurnId) {
+          const runtime = this.runtimes.get(threadId);
+          activeTurnId = runtime.activeTurnId;
+          if (!activeTurnId && (runtime.state === "running" || runtime.state === "waitingForInput")) throw error;
+        }
+      }
       if (activeTurnId) await this.adapter.interruptTurn(threadId, activeTurnId);
     });
   }
 
-  async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string, empty = false) {
+  async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string, empty = false, prefill?: string) {
     this.assertPersistentSession(threadId, "Fork");
     const sourceProjectId = this.requireMapping(threadId).project_id;
-    return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.projectLocks.withKey(sourceProjectId, () => this.withLock(threadId, async () => {
+    return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.projectLocks.withKey(sourceProjectId, () => this.withLock(threadId, () => this.withRecoveryCriticalOperation(async () => {
+      this.assertSessionReconciled(threadId, "Fork");
       const mapping = this.requireMapping(threadId);
       if (mapping.project_id !== sourceProjectId) throw new Error("Session Project changed while forking; retry the operation");
       const settings = await this.ensureSessionSettings(threadId);
-      const cwd = mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath;
-      let response;
-      if (empty) {
-        if (lastTurnId !== null) throw new ForkBoundaryError("An empty Fork cannot include a Turn boundary");
-        response = await this.adapter.startSession(cwd, settings);
-      } else {
+      const project = this.requireAvailableProject(mapping.project_id);
+      const cwd = mapping.cwd_snapshot ?? project.canonicalPath;
+      if (empty && lastTurnId !== null) throw new ForkBoundaryError("An empty Fork cannot include a Turn boundary");
+      let expectedTurnIds: string[] = [];
+      if (!empty) {
         const source = await this.readSessionUnlocked(threadId);
         assertValidForkBoundary(source.thread.turns, lastTurnId);
-        response = await this.adapter.forkSession(threadId, lastTurnId, settings, false, cwd);
+        const boundaryIndex = source.thread.turns.findIndex((turn) => turn.id === lastTurnId);
+        expectedTurnIds = source.thread.turns.slice(0, boundaryIndex + 1).map((turn) => turn.id);
       }
-      this.settings.set(response.thread.id, settings);
-      this.sessionSnapshots.set(response.thread.id, response.thread);
+      const recovery: PendingForkRecovery = {
+        threadSource: recoveryThreadSource("fork", threadId, clientRequestId),
+        parentThreadId: threadId,
+        projectId: mapping.project_id,
+        lastTurnId,
+        expectedTurnIds,
+        empty,
+        inheritGoal,
+        settings,
+        ...(empty && prefill ? { prefill } : {}),
+      };
+      this.uncertainForks.set(recovery.threadSource, recovery);
+      this.indexer.markThreadSourcePending?.(recovery.threadSource);
       try {
-        if (inheritGoal) {
-          const goal = await this.adapter.getGoal(threadId);
-          if (goal) await this.adapter.setGoal({ threadId: response.thread.id, objective: goal.objective, status: goal.status, tokenBudget: goal.tokenBudget });
-        } else {
-          await this.adapter.clearGoal(response.thread.id);
-        }
+        const response = empty
+          ? await this.adapter.startSession(cwd, settings, false, recovery.threadSource)
+          : await this.adapter.forkSession(threadId, lastTurnId, settings, false, cwd, recovery.threadSource);
+        this.observedForks.set(recovery.threadSource, response.thread);
+        const result = await this.finalizeFork(response.thread, recovery, true);
+        this.uncertainForks.delete(recovery.threadSource);
+        this.observedForks.delete(recovery.threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
+        return result;
       } catch (error) {
-        this.settings.delete(response.thread.id);
-        this.sessionSnapshots.delete(response.thread.id);
-        await this.adapter.archiveSession(response.thread.id).catch(() => undefined);
+        if (error instanceof OperationUncertainError) {
+          recovery.recoveryDeadlineAt = Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+        } else {
+          this.uncertainForks.delete(recovery.threadSource);
+          this.observedForks.delete(recovery.threadSource);
+          this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
+        }
         throw error;
+      }
+    }))));
+  }
+
+  private async finalizeFork(thread: SessionSnapshot, recovery: PendingForkRecovery, rollbackOnFailure: boolean, applyGoalPolicy = true) {
+    this.settings.set(thread.id, recovery.settings);
+    this.sessionSnapshots.set(thread.id, thread);
+    try {
+      if (applyGoalPolicy) {
+        if (recovery.inheritGoal) {
+          const goal = await this.adapter.getGoal(recovery.parentThreadId);
+          if (goal) await this.adapter.setGoal({ threadId: thread.id, objective: goal.objective, status: goal.status, tokenBudget: goal.tokenBudget });
+        } else {
+          await this.adapter.clearGoal(thread.id);
+        }
       }
       const now = Date.now();
       this.repositories.upsertProjectSession({
-        thread_id: response.thread.id, project_id: mapping.project_id,
-        cwd_snapshot: response.thread.cwd, source_kind: "appServer", origin: "forked",
-        parent_thread_id: threadId, fork_turn_id: lastTurnId, added_at: now, last_seen_at: now,
+        thread_id: thread.id, project_id: recovery.projectId,
+        cwd_snapshot: thread.cwd, source_kind: "appServer", origin: "forked",
+        parent_thread_id: recovery.parentThreadId, fork_turn_id: recovery.lastTurnId, added_at: now, last_seen_at: now,
       });
-      this.restoreSession(response.thread.id);
-      return { thread: response.thread, settings };
-    })));
+    } catch (error) {
+      if (rollbackOnFailure && !(await this.rollbackCreatedThread(thread.id))) {
+        this.retainUncertainChild(thread.id, recovery);
+        throw new OperationUncertainError("thread/fork finalization", error);
+      }
+      throw error;
+    }
+    this.restoreSession(thread.id);
+    if (recovery.prefill) this.sessionPrefills.set(thread.id, recovery.prefill);
+    if (recovery.prefill) this.runtimes.notifySessionSummaryUpdated(thread.id, "fork-created", { prefill: recovery.prefill });
+    else this.runtimes.notifySessionSummaryUpdated(thread.id, "fork-created");
+    return { thread, settings: recovery.settings };
+  }
+
+  private async recoverUncertainForks(): Promise<boolean> {
+    if (!this.uncertainForks.size) return false;
+    let pending = false;
+    for (const [threadSource, recovery] of this.uncertainForks) {
+      const project = this.repositories.getProject(recovery.projectId);
+      const parentMapping = this.repositories.getProjectSession(recovery.parentThreadId);
+      if (!project || parentMapping?.project_id !== recovery.projectId) {
+        this.uncertainForks.delete(threadSource);
+        this.observedForks.delete(threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+        continue;
+      }
+      const knownObserved = this.observedForks.get(threadSource);
+      if (recovery.background === true && recovery.abandonAt !== undefined && Date.now() >= recovery.abandonAt) {
+        this.uncertainForks.delete(threadSource);
+        this.observedForks.delete(threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+        if (knownObserved) this.indexer.restoreSessionDiscovery?.(knownObserved.id);
+        continue;
+      }
+      let observed = this.observedForks.get(threadSource);
+      if (!observed) {
+        observed = await this.findListedSessionByThreadSource(threadSource);
+        if (observed) this.observedForks.set(threadSource, observed);
+      }
+      if (!observed) {
+        recovery.recoveryDeadlineAt ??= Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+        if (Date.now() < recovery.recoveryDeadlineAt) {
+          pending = true;
+          continue;
+        }
+        if (recovery.empty) {
+          this.uncertainForks.delete(threadSource);
+          this.observedForks.delete(threadSource);
+          this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+          continue;
+        }
+        recovery.background = true;
+        recovery.abandonAt ??= Date.now() + UNCERTAIN_CHILD_BACKGROUND_TTL_MS;
+        continue;
+      }
+
+      recovery.recoveryDeadlineAt ??= Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+      const finalAttempt = recovery.background === true || Date.now() >= recovery.recoveryDeadlineAt;
+      let outcome: ForkRecoveryOutcome = "retry";
+      const attemptCount = finalAttempt ? 1 : UNCERTAIN_FORK_RECOVERY_ATTEMPTS;
+      for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+        outcome = await this.tryRecoverObservedFork(recovery, observed);
+        if (outcome !== "retry") break;
+        if (attempt + 1 < attemptCount) {
+          await new Promise((resolve) => setTimeout(resolve, UNCERTAIN_FORK_RECOVERY_DELAY_MS * 2 ** attempt));
+        }
+      }
+      if (outcome === "retry") {
+        if (finalAttempt) {
+          if (!recovery.background) {
+            recovery.background = true;
+            recovery.abandonAt = Date.now() + UNCERTAIN_CHILD_BACKGROUND_TTL_MS;
+            this.indexer.markSessionArchived?.(observed.id);
+          }
+        } else {
+          pending = true;
+        }
+        continue;
+      }
+      this.uncertainForks.delete(threadSource);
+      this.observedForks.delete(threadSource);
+      this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+      if (recovery.background) this.indexer.restoreSessionDiscovery?.(observed.id);
+    }
+    return pending;
+  }
+
+  private tryRecoverObservedFork(recovery: PendingForkRecovery, observed: SessionSnapshot): Promise<ForkRecoveryOutcome> {
+    return this.projectLocks.withKey(recovery.projectId, () => this.withLock(recovery.parentThreadId, async () => {
+      const project = this.repositories.getProject(recovery.projectId);
+      const parentMapping = this.repositories.getProjectSession(recovery.parentThreadId);
+      if (!project || parentMapping?.project_id !== recovery.projectId) return "discard";
+      let recovered = observed;
+      if (recovery.empty) {
+        if (!(await this.listedSessionExists(observed.id))) return "retry";
+      } else {
+        try {
+          recovered = await this.adapter.readSession(observed.id);
+        } catch (error) {
+          if (isUnmaterializedSessionReadError(error)) return "retry";
+          throw error;
+        }
+        const exactHistory = recovered.turns.map((turn) => turn.id).join("\u0000") === recovery.expectedTurnIds.join("\u0000");
+        if (!exactHistory || recovered.forkedFromId !== recovery.parentThreadId) return "retry";
+      }
+      await this.finalizeFork(recovered, recovery, false, !recovery.empty || recovery.inheritGoal);
+      return "finalized";
+    }));
+  }
+
+  private async listedSessionExists(threadId: string): Promise<boolean> {
+    let cursor: string | null = null;
+    do {
+      const page = await this.adapter.listSessions({ cursor, limit: 100 });
+      if (page.data.some((thread) => thread.id === threadId)) return true;
+      cursor = page.nextCursor;
+    } while (cursor);
+    return false;
+  }
+
+  private async findListedSessionByThreadSource(threadSource: string): Promise<SessionSnapshot | undefined> {
+    const matches = [];
+    let cursor: string | null = null;
+    do {
+      const page = await this.adapter.listSessions({ cursor, limit: 100 });
+      matches.push(...page.data.filter((thread) => thread.threadSource === threadSource));
+      if (matches.length > 1) return undefined;
+      cursor = page.nextCursor;
+    } while (cursor);
+    const [thread] = matches;
+    return thread ? { ...thread, ephemeral: false, turns: [] } : undefined;
+  }
+
+  private async recoverUncertainSessions(): Promise<boolean> {
+    if (!this.uncertainSessions.size) return false;
+    let pending = false;
+    for (const [threadSource, recovery] of this.uncertainSessions) {
+      if (!this.repositories.getProject(recovery.projectId)) {
+        this.uncertainSessions.delete(threadSource);
+        this.observedSessions.delete(threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+        continue;
+      }
+      const knownObserved = this.observedSessions.get(threadSource);
+      if (recovery.background === true && recovery.abandonAt !== undefined && Date.now() >= recovery.abandonAt) {
+        this.uncertainSessions.delete(threadSource);
+        this.observedSessions.delete(threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+        if (knownObserved) this.indexer.restoreSessionDiscovery?.(knownObserved.id);
+        continue;
+      }
+      let observed = this.observedSessions.get(threadSource);
+      if (!observed) {
+        observed = await this.findListedSessionByThreadSource(threadSource);
+        if (observed) this.observedSessions.set(threadSource, observed);
+      }
+      if (!observed) {
+        recovery.recoveryDeadlineAt ??= Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+        if (Date.now() < recovery.recoveryDeadlineAt) {
+          pending = true;
+          continue;
+        }
+        this.uncertainSessions.delete(threadSource);
+        this.observedSessions.delete(threadSource);
+        this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+        continue;
+      }
+      recovery.recoveryDeadlineAt ??= Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+      const finalAttempt = recovery.background === true || Date.now() >= recovery.recoveryDeadlineAt;
+      let outcome: SessionRecoveryOutcome = "retry";
+      const attemptCount = finalAttempt ? 1 : UNCERTAIN_FORK_RECOVERY_ATTEMPTS;
+      for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+        outcome = await this.tryRecoverObservedSession(recovery, observed);
+        if (outcome !== "retry") break;
+        if (attempt + 1 < attemptCount) {
+          await new Promise((resolve) => setTimeout(resolve, UNCERTAIN_FORK_RECOVERY_DELAY_MS * 2 ** attempt));
+        }
+      }
+      if (outcome === "retry") {
+        if (finalAttempt) {
+          if (!recovery.background) {
+            recovery.background = true;
+            recovery.abandonAt = Date.now() + UNCERTAIN_CHILD_BACKGROUND_TTL_MS;
+            this.indexer.markSessionArchived?.(observed.id);
+          }
+        } else {
+          pending = true;
+        }
+        continue;
+      }
+      this.uncertainSessions.delete(threadSource);
+      this.observedSessions.delete(threadSource);
+      this.indexer.restoreThreadSourceDiscovery?.(threadSource);
+      if (recovery.background) this.indexer.restoreSessionDiscovery?.(observed.id);
+    }
+    return pending;
+  }
+
+  private tryRecoverObservedSession(recovery: PendingSessionRecovery, observed: SessionSnapshot): Promise<SessionRecoveryOutcome> {
+    return this.projectLocks.withKey(recovery.projectId, async () => {
+      if (!this.repositories.getProject(recovery.projectId)) return "discard";
+      if (!(await this.listedSessionExists(observed.id))) return "retry";
+      await this.finalizeCreatedSession(observed, recovery, false);
+      return "finalized";
+    });
   }
 
   handlePendingRequest(request: AdapterPendingRequest): void {
     this.runtimes.handlePendingRequest(request);
   }
 
+  listPrefills(): Record<string, string> {
+    return Object.fromEntries(this.sessionPrefills);
+  }
+
+  async recoverDeferredChildren(): Promise<void> {
+    await this.recoverChildren();
+  }
+
   handleEvent(event: AdapterEvent): void {
+    if (event.type === "threadStarted" && event.threadSource) {
+      const sessionRecovery = this.uncertainSessions.get(event.threadSource);
+      if (sessionRecovery) this.observedSessions.set(event.threadSource, event.thread);
+      const recovery = this.uncertainForks.get(event.threadSource);
+      if (recovery) this.observedForks.set(event.threadSource, event.thread);
+    }
+    if (event.type === "turnStarted") {
+      this.uncertainTurnBaselines.delete(event.threadId);
+      this.uncertainTurnMessageIds.delete(event.threadId);
+      this.uncertainTurnDrafts.delete(event.threadId);
+    }
     this.updateSessionSnapshot(event);
   }
 
   async reconcileAfterReconnect(): Promise<void> {
+    await this.recoverUncertainArchives();
+    const { sessionRecoveryPending, forkRecoveryPending } = await this.recoverChildren();
     const sideChats = this.runtimes.listSideChats();
     const sideChatIds = new Set(sideChats.map((sideChat) => sideChat.threadId));
     await Promise.all(sideChats.map((sideChat) => this.withLock(sideChat.threadId, async () => {
@@ -513,32 +927,167 @@ export class SessionService {
       try {
         await this.resumeWithPreferredSettings(runtime.threadId);
         const snapshot = await this.adapter.readSession(runtime.threadId);
-        this.sessionSnapshots.set(runtime.threadId, snapshot);
-        this.runtimes.reconcileFromSnapshot(runtime.threadId, snapshot.turns);
+        await this.reconcileRuntimeSnapshot(runtime.threadId, snapshot);
       } catch {
         // The previous Turn's outcome is unknown after an App Server crash.
         // Keep the explicit disconnected state until a later successful read.
       }
     })));
+    if (sessionRecoveryPending || forkRecoveryPending) throw new ReconciliationPendingError();
+  }
+
+  private async reconcileRuntimeSnapshot(threadId: string, initialSnapshot: SessionSnapshot): Promise<SessionSnapshot> {
+    let snapshot = initialSnapshot;
+    for (let attempt = 0; attempt < UNCERTAIN_TURN_RECONCILIATION_ATTEMPTS; attempt += 1) {
+      this.sessionSnapshots.set(threadId, snapshot);
+      this.clearPrefillAfterTurnStart(threadId, snapshot.turns);
+      const uncertainSteer = this.uncertainSteers.get(threadId);
+      if (uncertainSteer) {
+        if (snapshotHasClientUserMessage(snapshot, uncertainSteer.expectedTurnId, uncertainSteer.clientUserMessageId)) {
+          this.uncertainSteers.delete(threadId);
+          this.runtimes.confirmUncertainTurnApplied(
+            threadId,
+            snapshot.turns,
+            this.activeSteerTurnId(snapshot, uncertainSteer.expectedTurnId),
+          );
+          return snapshot;
+        }
+        if (attempt + 1 === UNCERTAIN_TURN_RECONCILIATION_ATTEMPTS) return snapshot;
+        await new Promise((resolve) => setTimeout(resolve, UNCERTAIN_TURN_RECONCILIATION_DELAY_MS * 2 ** attempt));
+        const persisted = await this.adapter.readSession(threadId);
+        snapshot = mergeSessionSnapshot(persisted, snapshot);
+        continue;
+      }
+      const outcome = this.runtimes.reconcileFromSnapshot(threadId, snapshot.turns);
+      if (outcome !== "uncertainTurnUnchanged") {
+        const baseline = this.uncertainTurnBaselines.get(threadId);
+        const lastTurn = snapshot.turns.at(-1);
+        if (this.uncertainTurnBaselines.has(threadId) && lastTurn && lastTurn.id !== baseline) {
+          this.uncertainTurnBaselines.delete(threadId);
+          this.uncertainTurnMessageIds.delete(threadId);
+          this.uncertainTurnDrafts.delete(threadId);
+          if (outcome === "unresolved") this.runtimes.confirmUncertainTurnApplied(threadId, snapshot.turns);
+        }
+        return snapshot;
+      }
+      if (attempt + 1 === UNCERTAIN_TURN_RECONCILIATION_ATTEMPTS) {
+        return snapshot;
+      }
+      await new Promise((resolve) => setTimeout(resolve, UNCERTAIN_TURN_RECONCILIATION_DELAY_MS * 2 ** attempt));
+      const persisted = await this.adapter.readSession(threadId);
+      snapshot = mergeSessionSnapshot(persisted, snapshot);
+    }
+    return snapshot;
+  }
+
+  async resolveUncertainTurn(threadId: string): Promise<{ status: "notApplied" | "alreadyResolved"; clientUserMessageId?: string; draft?: string }> {
+    this.assertPersistentSession(threadId, "uncertain Turn resolution");
+    return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
+      const uncertainSteer = this.uncertainSteers.get(threadId);
+      if (!uncertainSteer && !this.uncertainTurnBaselines.has(threadId)) return { status: "alreadyResolved" };
+      const baseline = this.uncertainTurnBaselines.get(threadId);
+      const persisted = await this.adapter.readSession(threadId);
+      const cached = this.sessionSnapshots.get(threadId);
+      const snapshot = cached ? mergeSessionSnapshot(persisted, cached) : terminalizeSessionSnapshot(persisted);
+      this.sessionSnapshots.set(threadId, snapshot);
+      this.clearPrefillAfterTurnStart(threadId, snapshot.turns);
+      if (uncertainSteer) {
+        if (snapshotHasClientUserMessage(snapshot, uncertainSteer.expectedTurnId, uncertainSteer.clientUserMessageId)) {
+          this.uncertainSteers.delete(threadId);
+          this.runtimes.confirmUncertainTurnApplied(
+            threadId,
+            snapshot.turns,
+            this.activeSteerTurnId(snapshot, uncertainSteer.expectedTurnId),
+          );
+          throw new UncertainTurnAppliedError();
+        }
+        this.uncertainSteers.delete(threadId);
+        this.clearUserMessageResult(threadId, "steer", uncertainSteer.clientUserMessageId);
+        this.runtimes.confirmUncertainTurnNotApplied(
+          threadId,
+          snapshot.turns,
+          this.activeSteerTurnId(snapshot, uncertainSteer.expectedTurnId),
+        );
+        return {
+          status: "notApplied",
+          clientUserMessageId: uncertainSteer.clientUserMessageId,
+          draft: uncertainSteer.draft,
+        };
+      }
+      const lastTurn = snapshot.turns.at(-1);
+      if (lastTurn && lastTurn.id !== baseline) {
+        this.uncertainTurnBaselines.delete(threadId);
+        this.uncertainTurnMessageIds.delete(threadId);
+        this.uncertainTurnDrafts.delete(threadId);
+        this.runtimes.confirmUncertainTurnApplied(threadId, snapshot.turns);
+        throw new UncertainTurnAppliedError();
+      }
+      const clientUserMessageId = this.uncertainTurnMessageIds.get(threadId);
+      const draft = this.uncertainTurnDrafts.get(threadId);
+      this.uncertainTurnBaselines.delete(threadId);
+      this.uncertainTurnMessageIds.delete(threadId);
+      this.uncertainTurnDrafts.delete(threadId);
+      if (clientUserMessageId) this.clearUserMessageResult(threadId, "turn", clientUserMessageId);
+      this.runtimes.confirmUncertainTurnNotApplied(threadId, snapshot.turns);
+      return { status: "notApplied", ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(draft ? { draft } : {}) };
+    });
+  }
+
+  private async recoverUncertainArchives(): Promise<void> {
+    if (!this.uncertainArchives.size) return;
+    const unarchived = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const page = await this.adapter.listSessions({ cursor, limit: 100, archived: false });
+      for (const thread of page.data) unarchived.add(thread.id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    for (const threadId of [...this.uncertainArchives]) {
+      this.uncertainArchives.delete(threadId);
+      if (unarchived.has(threadId)) {
+        this.indexer.restoreSessionDiscovery?.(threadId);
+        continue;
+      }
+      this.repositories.removeProjectSession(threadId);
+      this.clearSessionCaches(threadId);
+      this.runtimes.notifySessionSummaryUpdated(threadId, "archived-after-reconnect");
+    }
+  }
+
+  private recoverChildren(): Promise<{ sessionRecoveryPending: boolean; forkRecoveryPending: boolean }> {
+    if (this.childRecovery) return this.childRecovery;
+    let tracked!: Promise<{ sessionRecoveryPending: boolean; forkRecoveryPending: boolean }>;
+    tracked = (async () => {
+      const sessionRecoveryPending = await this.recoverUncertainSessions();
+      const forkRecoveryPending = await this.recoverUncertainForks();
+      return { sessionRecoveryPending, forkRecoveryPending };
+    })().finally(() => {
+      if (this.childRecovery === tracked) this.childRecovery = null;
+      this.syncDeferredChildRecoveryTimer();
+    });
+    this.childRecovery = tracked;
+    return tracked;
   }
 
   async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
     this.assertPersistentSession(parentThreadId, "nested Side Chat");
-    return this.withLocks([parentThreadId, `side-chat:${parentThreadId}`], async () => {
+    return this.withLocks([parentThreadId, `side-chat:${parentThreadId}`], () => this.withRecoveryCriticalOperation(async () => {
+      this.assertSessionReconciled(parentThreadId, "Side Chat");
       const existing = this.runtimes.listSideChats().find((sideChat) => sideChat.parentThreadId === parentThreadId);
       if (existing) return existing;
-      if (anchorTurnId) {
-        const source = await this.readSessionUnlocked(parentThreadId);
-        assertValidForkBoundary(source.thread.turns, anchorTurnId);
-      }
+      let source = this.sessionSnapshots.get(parentThreadId);
+      if (anchorTurnId && !source) source = (await this.readSessionUnlocked(parentThreadId)).thread;
+      if (anchorTurnId) assertValidForkBoundary(source?.turns ?? [], anchorTurnId);
       const settings = await this.ensureSessionSettings(parentThreadId);
       const mapping = this.requireMapping(parentThreadId);
-      const cwd = mapping.cwd_snapshot ?? this.requireProject(mapping.project_id).canonicalPath;
+      const project = this.requireAvailableProject(mapping.project_id);
+      const cwd = mapping.cwd_snapshot ?? project.canonicalPath;
       let response;
       try {
         response = await this.adapter.createSideChat(parentThreadId, anchorTurnId, settings, cwd);
       } catch (error) {
-        if (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found")) throw error;
+        if (!isUnmaterializedSessionReadError(error) || !source || source.turns.length > 0) throw error;
         response = await this.adapter.createEmptySideChat(cwd, settings);
       }
       this.settings.set(response.thread.id, settings);
@@ -555,7 +1104,7 @@ export class SessionService {
       this.restoreSession(response.thread.id);
       this.runtimes.registerSideChat(runtime);
       return runtime;
-    });
+    }));
   }
 
   async closeSideChat(threadId: string): Promise<void> {
@@ -565,16 +1114,80 @@ export class SessionService {
   private async closeSideChatUnlocked(threadId: string): Promise<void> {
     const sideChat = this.runtimes.getSideChat(threadId);
     if (!sideChat) return;
-    if (sideChat.activeTurnId) {
-      await this.adapter.interruptTurn(threadId, sideChat.activeTurnId);
-      const stopped = await this.runtimes.waitForTerminal(threadId, 10_000);
-      if (!stopped) throw new Error("Side Chat Turn did not stop before the close timeout");
+    let activeTurnId: string | undefined;
+    try {
+      activeTurnId = await this.activeTurnIdForInterrupt(threadId);
+    } catch (error) {
+      if (!(error instanceof ActiveTurnIdentityError)) throw error;
+      activeTurnId = await this.runtimes.waitForActiveTurnId(threadId, SIDE_CHAT_TERMINAL_WAIT_MS);
+    }
+    if (activeTurnId) {
+      try {
+        await this.adapter.interruptTurn(threadId, activeTurnId);
+      } catch (error) {
+        if (!isSteerTurnConflictError(error)) throw error;
+        await this.adapter.unsubscribe(threadId);
+        this.clearSideChatState(threadId);
+        return;
+      }
+      const terminal = await this.runtimes.waitForTerminal(threadId, SIDE_CHAT_TERMINAL_WAIT_MS);
+      if (!terminal) {
+        this.recoverTimedOutSideChat(threadId);
+        return;
+      }
+    } else {
+      const runtime = this.runtimes.get(threadId);
+      if (runtime.state === "running" || runtime.state === "waitingForInput") {
+        this.recoverTimedOutSideChat(threadId);
+        return;
+      }
     }
     await this.adapter.unsubscribe(threadId);
+    this.clearSideChatState(threadId);
+  }
+
+  private clearSideChatState(threadId: string): void {
     this.settings.delete(threadId);
     this.sessionSnapshots.delete(threadId);
     this.markSessionRemoved(threadId);
     this.runtimes.removeSideChat(threadId);
+  }
+
+  private recoverTimedOutSideChat(threadId: string): void {
+    const anotherTurnIsActive = this.runtimes.list().some((runtime) =>
+      runtime.threadId !== threadId && (runtime.state === "running" || runtime.state === "waitingForInput"));
+    const anotherSideChatExists = this.runtimes.listSideChats().some((sideChat) => sideChat.threadId !== threadId);
+    if (anotherTurnIsActive || anotherSideChatExists || this.recoveryCriticalOperations > 0) throw new SideChatCloseTimeoutError();
+    if (this.adapter.restartForRecovery() === false) throw new SideChatCloseTimeoutError();
+    this.clearSideChatState(threadId);
+  }
+
+  private async activeTurnIdForInterrupt(threadId: string): Promise<string | undefined> {
+    const runtime = this.runtimes.get(threadId);
+    if (runtime.activeTurnId) return runtime.activeTurnId;
+    if (runtime.state !== "running" && runtime.state !== "waitingForInput") return undefined;
+
+    const cached = this.sessionSnapshots.get(threadId);
+    if (this.runtimes.getSideChat(threadId)) {
+      const activeTurnId = [...(cached?.turns ?? [])].reverse().find((turn) => turn.status === "inProgress")?.id;
+      if (!activeTurnId) throw new ActiveTurnIdentityError();
+      this.runtimes.setActiveTurn(threadId, activeTurnId);
+      return activeTurnId;
+    }
+
+    let persisted: SessionSnapshot;
+    try {
+      persisted = await this.adapter.readSession(threadId);
+    } catch (error) {
+      if (isUnmaterializedSessionReadError(error)) throw new ActiveTurnIdentityError();
+      throw error;
+    }
+    const thread = cached ? mergeSessionSnapshot(persisted, cached) : terminalizeSessionSnapshot(persisted);
+    this.sessionSnapshots.set(threadId, thread);
+    const activeTurnId = [...thread.turns].reverse().find((turn) => turn.status === "inProgress")?.id;
+    if (!activeTurnId) throw new ActiveTurnIdentityError();
+    this.runtimes.setActiveTurn(threadId, activeTurnId);
+    return activeTurnId;
   }
 
   getGoal(threadId: string) {
@@ -604,8 +1217,23 @@ export class SessionService {
   }
 
   private assertNoActiveTurn(threadId: string, operation: string): void {
+    if (this.uncertainTurnBaselines.has(threadId)) throw new SessionDisconnectedError(operation);
     const runtime = this.runtimes.get(threadId);
+    if (runtime.state === "disconnected") throw new SessionDisconnectedError(operation);
     if (runtime.activeTurnId || runtime.state === "running" || runtime.state === "waitingForInput") throw new ActiveTurnConflictError(operation);
+  }
+
+  private assertSessionReconciled(threadId: string, operation: string): void {
+    if (this.runtimes.get(threadId).state === "disconnected") throw new SessionDisconnectedError(operation);
+  }
+
+  private async withRecoveryCriticalOperation<T>(operation: () => Promise<T>): Promise<T> {
+    this.recoveryCriticalOperations += 1;
+    try {
+      return await operation();
+    } finally {
+      this.recoveryCriticalOperations -= 1;
+    }
   }
 
   async respondPendingRequest(requestId: string, allow: boolean, answers: Record<string, string[]> = {}): Promise<void> {
@@ -650,13 +1278,22 @@ export class SessionService {
     }
     const mapping = this.requireMapping(threadId);
     const settings = resolveSessionSettings(this.requireProject(mapping.project_id), {}, current ?? resumed.settings);
+    const cachedSnapshot = this.sessionSnapshots.get(threadId);
+    const thread = cachedSnapshot ? mergeSessionSnapshot(resumed.thread, cachedSnapshot) : resumed.thread;
     this.settings.set(threadId, settings);
-    return { ...resumed, settings };
+    this.sessionSnapshots.set(threadId, thread);
+    return { ...resumed, thread, settings };
   }
 
   private requireProject(projectId: string) {
     const project = this.repositories.getProject(projectId);
     if (!project) throw new Error("Project not found");
+    return project;
+  }
+
+  private requireAvailableProject(projectId: string) {
+    const project = this.requireProject(projectId);
+    if (project.available === false) throw new ProjectUnavailableError();
     return project;
   }
 
@@ -677,13 +1314,74 @@ export class SessionService {
   private clearSessionCaches(threadId: string): void {
     this.settings.delete(threadId);
     this.sessionSnapshots.delete(threadId);
+    this.sessionPrefills.delete(threadId);
     this.goalPresence.delete(threadId);
     this.goalPresenceLoading.delete(threadId);
+    this.uncertainArchives.delete(threadId);
+    this.uncertainTurnBaselines.delete(threadId);
+    this.uncertainTurnMessageIds.delete(threadId);
+    this.uncertainTurnDrafts.delete(threadId);
+    this.uncertainSteers.delete(threadId);
     for (const key of this.commandOutputDeltas.keys()) {
       if (key.startsWith(`${threadId}\u0000`)) this.commandOutputDeltas.delete(key);
     }
     this.markSessionRemoved(threadId);
-    this.runtimes.removeThread(threadId);
+    this.runtimes.removeThread?.(threadId);
+  }
+
+  private async rollbackCreatedThread(threadId: string): Promise<boolean> {
+    try { this.repositories.removeProjectSession?.(threadId); } catch { /* best-effort rollback after a database failure */ }
+    this.clearSessionCaches(threadId);
+    try {
+      await this.adapter.archiveSession(threadId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private retainUncertainChild(threadId: string, recovery: PendingSessionRecovery | PendingForkRecovery): void {
+    recovery.background = true;
+    recovery.recoveryDeadlineAt = Date.now();
+    recovery.abandonAt = Date.now() + UNCERTAIN_CHILD_BACKGROUND_TTL_MS;
+    this.indexer.markSessionArchived?.(threadId);
+    this.indexer.scanAllInBackground?.();
+    this.syncDeferredChildRecoveryTimer();
+  }
+
+  private activeSteerTurnId(snapshot: SessionSnapshot, expectedTurnId: string): string | undefined {
+    return snapshot.turns.find((turn) => turn.id === expectedTurnId && turn.status === "inProgress")?.id;
+  }
+
+  private hasBackgroundChildRecovery(): boolean {
+    return [...this.uncertainSessions.values(), ...this.uncertainForks.values()]
+      .some((recovery) => recovery.background === true);
+  }
+
+  private syncDeferredChildRecoveryTimer(): void {
+    if (!this.hasBackgroundChildRecovery()) {
+      if (this.childRecoveryTimer) clearTimeout(this.childRecoveryTimer);
+      this.childRecoveryTimer = null;
+      return;
+    }
+    if (this.childRecoveryTimer) return;
+    this.childRecoveryTimer = setTimeout(() => {
+      this.childRecoveryTimer = null;
+      void this.recoverDeferredChildren()
+        .catch((error: unknown) => this.emit("deferredRecoveryError", error))
+        .finally(() => this.syncDeferredChildRecoveryTimer());
+    }, DEFERRED_CHILD_RECOVERY_DELAY_MS);
+    this.childRecoveryTimer.unref();
+  }
+
+  dispose(): void {
+    if (this.childRecoveryTimer) clearTimeout(this.childRecoveryTimer);
+    this.childRecoveryTimer = null;
+    this.removeAllListeners();
+  }
+
+  private clearPrefillAfterTurnStart(threadId: string, turns: SnapshotTurn[]): void {
+    if (turns.length) this.sessionPrefills.delete(threadId);
   }
 
   private restoreSession(threadId: string): void {
@@ -731,9 +1429,14 @@ export class SessionService {
     return promise;
   }
 
+  private clearUserMessageResult(threadId: string, operation: "turn" | "steer", clientUserMessageId: string): void {
+    this.userMessageResults.delete(`${threadId}\u0000${operation}\u0000${clientUserMessageId}`);
+  }
+
   private updateSessionSnapshot(event: AdapterEvent): void {
     const threadId = "threadId" in event ? event.threadId : undefined;
     if (threadId && this.removedThreads.has(threadId)) return;
+    if (event.type === "turnStarted") this.sessionPrefills.delete(event.threadId);
     if (event.type === "settingsUpdated") this.settings.set(event.threadId, event.settings);
     if (event.type === "goalUpdated") this.goalPresence.set(event.threadId, true);
     if (event.type === "goalCleared") this.goalPresence.set(event.threadId, false);

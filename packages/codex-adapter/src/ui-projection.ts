@@ -6,9 +6,9 @@ import type { TurnPlanUpdatedNotification } from "@codex-web/codex-schema/v2/Tur
 import type { FileChangePatchUpdatedNotification } from "@codex-web/codex-schema/v2/FileChangePatchUpdatedNotification";
 
 export function projectThreadItem(item: ThreadItem): SessionItem | null {
-  if (item.type === "userMessage") return { type: "userMessage", id: item.id, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part ? { path: part.path } : {}) })) };
+  if (item.type === "userMessage") return { type: "userMessage", id: item.id, clientId: item.clientId, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part ? { path: part.path } : {}) })) };
   if (item.type === "agentMessage") return { type: "agentMessage", id: item.id, text: item.text, ...(item.phase ? { phase: item.phase } : {}) };
-  if (item.type === "reasoning") return { type: "reasoning", id: item.id, summary: item.summary, content: item.content };
+  if (item.type === "reasoning") return { type: "reasoning", id: item.id, summary: item.summary };
   if (item.type === "plan") return { type: "plan", id: item.id, text: item.text };
   if (item.type === "commandExecution") return { type: "commandExecution", id: item.id, command: item.command, cwd: item.cwd, status: item.status, aggregatedOutput: item.aggregatedOutput, exitCode: item.exitCode, durationMs: item.durationMs };
   if (item.type === "fileChange") return { type: "fileChange", id: item.id, changes: item.changes.map((change) => ({ path: change.path, kind: typeof change.kind === "string" ? change.kind : change.kind.type, ...(change.diff ? { diff: change.diff } : {}) })), status: item.status };
@@ -101,7 +101,6 @@ const deltaKinds: Record<string, ItemDeltaUiEventPayload["kind"]> = {
   "item/agentMessage/delta": "agentMessage",
   "item/plan/delta": "plan",
   "item/reasoning/summaryTextDelta": "reasoningSummary",
-  "item/reasoning/textDelta": "reasoning",
   "item/commandExecution/outputDelta": "commandOutput",
 };
 

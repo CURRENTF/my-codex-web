@@ -1,7 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnPlan } from "@codex-web/codex-adapter";
+import { projectAdapterEvent, projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnPlan } from "@codex-web/codex-adapter";
 
 describe("Codex UI projection", () => {
+  it("preserves the exact thread source and subagent parent on thread/started", () => {
+    const event = projectAdapterEvent({
+      method: "thread/started",
+      params: {
+        thread: {
+          id: "child", sessionId: "session-1", forkedFromId: "parent", parentThreadId: "visible-parent", preview: "", ephemeral: false,
+          modelProvider: "openai", createdAt: 1, updatedAt: 1, recencyAt: 1, status: { type: "idle" }, path: "/secret/internal.jsonl",
+          cwd: "/tmp/project", cliVersion: "test", source: "appServer", threadSource: "codex-web-fork:request-1",
+          agentNickname: null, agentRole: null, gitInfo: null, name: null, turns: [],
+        },
+      },
+    });
+
+    expect(event).toMatchObject({
+      type: "threadStarted",
+      threadId: "child",
+      threadSource: "codex-web-fork:request-1",
+      parentThreadId: "visible-parent",
+      thread: { id: "child", forkedFromId: "parent", cwd: "/tmp/project" },
+    });
+  });
+
   it("projects protocol command items into the stable shared DTO", () => {
     const item = projectThreadItem({
       type: "commandExecution",
@@ -18,6 +40,20 @@ describe("Codex UI projection", () => {
     });
 
     expect(item).toEqual({ type: "commandExecution", id: "command-1", command: "printf ok", cwd: "/tmp/project", status: "completed", aggregatedOutput: "ok", exitCode: 0, durationMs: 12 });
+  });
+
+  it("keeps the client user-message ID needed to reconcile uncertain Steer requests", () => {
+    expect(projectThreadItem({
+      type: "userMessage",
+      id: "user-1",
+      clientId: "client-message-1",
+      content: [{ type: "text", text: "steer", text_elements: [] }],
+    })).toEqual({
+      type: "userMessage",
+      id: "user-1",
+      clientId: "client-message-1",
+      content: [{ type: "text", text: "steer" }],
+    });
   });
 
   it("drops unknown protocol fields from turn and delta events", () => {
@@ -42,6 +78,25 @@ describe("Codex UI projection", () => {
       id: "turn-plan:turn-1",
       text: "Verification plan\n[~] Run command\n[ ] Report result",
     });
+  });
+
+  it("exposes reasoning summaries but drops full reasoning content and deltas", () => {
+    expect(projectThreadItem({
+      type: "reasoning",
+      id: "reasoning-1",
+      summary: ["Checked the relevant files"],
+      content: ["private chain-of-thought content"],
+    })).toEqual({
+      type: "reasoning",
+      id: "reasoning-1",
+      summary: ["Checked the relevant files"],
+    });
+    expect(projectItemDelta("item/reasoning/summaryTextDelta", { itemId: "reasoning-1", delta: "summary" })).toEqual({
+      itemId: "reasoning-1",
+      delta: "summary",
+      kind: "reasoningSummary",
+    });
+    expect(projectItemDelta("item/reasoning/textDelta", { itemId: "reasoning-1", delta: "private chain-of-thought content" })).toBeNull();
   });
 
   it("projects a complete refresh snapshot without exposing raw protocol fields", () => {

@@ -12,6 +12,7 @@ export const config = {
   logPath: path.join(dataDir, "logs", "server.log"),
   projectRoot: process.env.CODEX_WEB_PROJECT_ROOT ?? path.resolve(import.meta.dirname, "../../.."),
   openBrowser: process.env.CODEX_WEB_OPEN_BROWSER === "1",
+  allowViteOrigin: process.env.CODEX_WEB_DEV_VITE_ORIGIN === "1",
   codexCommand: process.env.CODEX_WEB_CODEX_BIN ?? "codex",
   version: "0.1.0",
 };

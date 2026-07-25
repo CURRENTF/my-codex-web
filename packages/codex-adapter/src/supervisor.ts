@@ -44,13 +44,20 @@ export class CodexProcessSupervisor extends EventEmitter {
   private spawn(): JsonRpcTransport {
     const transport = new JsonRpcTransport(this.options);
     this.transportValue = transport;
+    let disconnectedReported = false;
+    const reportDisconnected = (details: unknown) => {
+      if (disconnectedReported) return;
+      disconnectedReported = true;
+      this.emit("disconnected", details);
+    };
     transport.on("notification", (value) => this.emit("notification", value));
     transport.on("serverRequest", (value) => this.emit("serverRequest", value));
     transport.on("stderr", (value) => this.emit("stderr", value));
     transport.on("protocolError", (error, line) => this.emit("protocolError", error, line));
+    transport.once("disconnecting", reportDisconnected);
     transport.once("exit", (details) => {
       if (this.transportValue === transport) this.transportValue = null;
-      this.emit("disconnected", details);
+      reportDisconnected(details);
       if (!this.stopping) this.scheduleRestart();
     });
     transport.start();

@@ -43,6 +43,7 @@ export interface SessionSummary {
 export interface ThreadRuntime {
   threadId: string;
   activeTurnId?: string;
+  uncertainTurnStart?: boolean;
   state: RuntimeState;
   activeFlags: string[];
   pendingRequestIds: string[];
@@ -109,9 +110,9 @@ export interface Goal {
 }
 
 export type SessionItem =
-  | { type: "userMessage"; id: string; content: Array<{ type: string; text?: string; path?: string }> }
+  | { type: "userMessage"; id: string; clientId?: string | null; content: Array<{ type: string; text?: string; path?: string }> }
   | { type: "agentMessage"; id: string; text: string; phase?: string }
-  | { type: "reasoning"; id: string; summary: string[]; content: string[] }
+  | { type: "reasoning"; id: string; summary: string[] }
   | { type: "plan"; id: string; text: string }
   | { type: "commandExecution"; id: string; command: string; cwd: string; status: string; aggregatedOutput: string | null; exitCode: number | null; durationMs: number | null }
   | { type: "fileChange"; id: string; changes: Array<{ path: string; kind: string; diff?: string }>; status: string }
@@ -141,7 +142,7 @@ export interface SessionThread {
 
 export interface TurnUiEventPayload { turn: SessionTurn }
 export interface ItemUiEventPayload { turnId: string; item: SessionItem; startedAtMs?: number; completedAtMs?: number; completed?: boolean }
-export interface ItemDeltaUiEventPayload { itemId: string; delta: string; kind: "agentMessage" | "plan" | "reasoningSummary" | "reasoning" | "commandOutput" }
+export interface ItemDeltaUiEventPayload { itemId: string; delta: string; kind: "agentMessage" | "plan" | "reasoningSummary" | "commandOutput" }
 
 export interface ModelOption {
   id: string;
@@ -174,6 +175,7 @@ export interface BootstrapPayload {
   runtimeStates: ThreadRuntime[];
   activeSideChats: SideChatRuntime[];
   itemDeltas: Record<string, string>;
+  sessionPrefills: Record<string, string>;
   pendingRequests: PendingRequestSummary[];
 }
 

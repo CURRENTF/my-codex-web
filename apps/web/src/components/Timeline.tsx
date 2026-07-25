@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, CheckCircle, Clipboard, Code, FileCode, GitFork, TerminalWindow, Wrench, X, XCircle } from "@phosphor-icons/react";
 import { Virtuoso } from "react-virtuoso";
 import type { CodexItem, CodexTurn } from "../api";
-import { commandOutputText } from "../command-output";
+import { commandOutputText, commandResultDisplay } from "../command-output";
 import { forkBoundaryForTurn } from "../fork-boundary";
 import { useAppStore } from "../store";
 
@@ -17,9 +17,9 @@ function diffStats(diff = ""): { additions: number; deletions: number } {
   return { additions, deletions };
 }
 
-function CommandCard({ item, liveDelta }: { item: Extract<CodexItem, { type: "commandExecution" }>; liveDelta?: string }) {
-  const [open, setOpen] = useState(false); const output = commandOutputText(item.aggregatedOutput, liveDelta, open);
-  return <div className="tool-card"><button className="tool-card-header" onClick={() => setOpen(!open)}><TerminalWindow size={16} /><span className="tool-title">{item.command}</span><span className={`tool-result ${item.exitCode === 0 ? "ok" : item.exitCode === null ? "running" : "bad"}`}>{item.exitCode === null ? item.status : `exit ${item.exitCode}`}</span></button>
+function CommandCard({ item, liveDelta, turnStatus }: { item: Extract<CodexItem, { type: "commandExecution" }>; liveDelta?: string; turnStatus: CodexTurn["status"] }) {
+  const [open, setOpen] = useState(false); const output = commandOutputText(item.aggregatedOutput, liveDelta, open); const result = commandResultDisplay(item.status, item.exitCode, turnStatus);
+  return <div className="tool-card"><button className="tool-card-header" onClick={() => setOpen(!open)}><TerminalWindow size={16} /><span className="tool-title">{item.command}</span><span className={`tool-result ${result.tone}`}>{result.label}</span></button>
     <div className="tool-subline"><code>{item.cwd}</code>{item.durationMs !== null && <span>{(item.durationMs / 1_000).toFixed(1)}s</span>}</div>
     {output && <pre className={`command-output ${open ? "" : "preview"}`}>{output}</pre>}
   </div>;
@@ -37,13 +37,13 @@ function ToolCard({ title, status, details, icon = <Code size={16} /> }: { title
   return <details className="tool-card compact expandable"><summary className="tool-card-header">{icon}<span className="tool-title">{title}</span><span className="tool-result">{status}</span></summary><pre className="tool-details">{details}</pre></details>;
 }
 
-function Item({ item, onOpenDiff }: { item: CodexItem; onOpenDiff(change: { path: string; kind: string; diff?: string }): void }) {
+function Item({ item, turnStatus, onOpenDiff }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
   if (item.type === "userMessage") return <div className="user-message"><div>{textFromUser(item)}</div></div>;
   if (item.type === "agentMessage") return <article className="agent-message">{item.text}{delta ?? ""}</article>;
-  if (item.type === "reasoning") return <details className="summary-card"><summary><Wrench size={15} />思考与执行摘要</summary><div className="summary-content">{[...item.summary, ...item.content, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div></details>;
+  if (item.type === "reasoning") return <details className="summary-card"><summary><Wrench size={15} />思考与执行摘要</summary><div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div></details>;
   if (item.type === "plan") return <details className="summary-card"><summary><CheckCircle size={15} />Plan</summary><pre className="plan-text">{item.text}{delta ?? ""}</pre></details>;
-  if (item.type === "commandExecution") return <CommandCard item={item} liveDelta={delta} />;
+  if (item.type === "commandExecution") return <CommandCard item={item} liveDelta={delta} turnStatus={turnStatus} />;
   if (item.type === "fileChange") return <FileCard item={item} onOpenDiff={onOpenDiff} />;
   if (item.type === "mcpToolCall") return <ToolCard title={`${item.server} / ${item.tool}`} status={item.status} details={item.details} />;
   if (item.type === "genericToolCall") return <ToolCard title={item.title} status={item.status} details={item.details} />;
@@ -53,7 +53,7 @@ function Item({ item, onOpenDiff }: { item: CodexItem; onOpenDiff(change: { path
 function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDiff }: { turn: CodexTurn; previousTurnId: string | null; canFork: boolean; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void; onOpenDiff(change: { path: string; kind: string; diff?: string }): void }) {
   const finalMessage = [...turn.items].reverse().find((item) => item.type === "agentMessage") as Extract<CodexItem, { type: "agentMessage" }> | undefined;
   const duration = turn.durationMs !== null ? `${Math.max(1, Math.round(turn.durationMs / 1_000))}s` : "";
-  return <section className="turn-block">{turn.items.map((item, index) => <Item key={item.id ?? `${turn.id}-${index}`} item={item} onOpenDiff={onOpenDiff} />)}
+  return <section className="turn-block">{turn.items.map((item, index) => <Item key={item.id ?? `${turn.id}-${index}`} item={item} turnStatus={turn.status} onOpenDiff={onOpenDiff} />)}
     {turn.status !== "inProgress" && <footer className="turn-footer"><span className="turn-outcome">{turn.status === "completed" ? <Check size={13} /> : <XCircle size={13} />}已处理 {duration}</span>{finalMessage && <button onClick={() => copy(finalMessage.text)}><Clipboard size={13} />复制</button>}{canFork && <><button onClick={() => onFork(turn.id, "after", turn.id)}><GitFork size={13} />从此轮之后 Fork</button><button onClick={() => onFork(previousTurnId, "before", turn.id)}><GitFork size={13} />从此问题之前 Fork</button><button onClick={() => onSideChat(turn.id)}>从此处 Side Chat</button></>}</footer>}
   </section>;
 }

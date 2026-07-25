@@ -5,7 +5,7 @@
 ## 环境要求
 
 - macOS 13 或更高版本
-- Node.js 22 或更高版本
+- Node.js 22.22 或更高版本
 - 已安装 `codex` CLI
 - 已在 Codex 中登录
 
@@ -75,6 +75,15 @@ CODEX_WEB_TEST_CODEX_HOME="$HOME/.codex-web/test-codex-home" \
 npm run test:integration
 ```
 
+真实模型 live smoke 使用：
+
+```bash
+CODEX_WEB_SMOKE_CODEX_HOME="$HOME/.codex-web/test-codex-home" \
+npm run test:live-smoke
+```
+
+真实模型偶尔会排队数分钟；脚本默认等待每个 Turn 最多 10 分钟，并可用 `CODEX_WEB_SMOKE_TURN_TIMEOUT_MS` 调整。超时路径会先 Interrupt 活动 Turn，再清理测试 Session。
+
 运行 Web E2E 时也应显式使用隔离目录：
 
 ```bash
@@ -119,6 +128,9 @@ npm run schema:check
 - 空 Thread 在首条用户消息前不会落盘，服务端用内存快照维持其可见性。
 - ephemeral Side Chat 不支持 `thread/read(includeTurns: true)`，服务端使用内存快照和实时通知维护时间线。
 - Side Chat 必须在 15 秒内确认隐藏边界注入；失败时清理临时 Thread 并向 UI 返回错误。developer instructions 同时随 Thread 创建请求发送。
+- 所有 JSON-RPC 写操作都有断连 watchdog：Interrupt、rename、archive、Goal、unsubscribe 等确认类操作为 30 秒，Side Chat 隐藏边界为 15 秒，`thread/start`、`thread/fork`、`turn/start` 和 `turn/steer` 为 60 秒。超时不会自动重发，而是终止承载旧请求的 App Server、返回“结果不确定”，并在重连后重新扫描，避免释放业务锁后旧请求迟到生效。归档结果不确定时会保留 tombstone，重连确认 Session 是否仍未归档后再恢复或删除本地映射；未收到 `turn/start` 响应时会先把 Session 标为 disconnected，完成快照对账后恢复 Composer，下一次实际发送前再直接读取一次，发现迟到 Turn 时取消重复发送。普通 Fork 和 before-first Fork 都使用按父 Session 隔离的唯一 `codex-web-fork:<parentThreadId>:<clientRequestId>` source；普通 Session 创建使用按 Project 隔离的 `codex-web-session:<projectId>:<clientRequestId>` source。只恢复稳定列表中保留同一 source 的 durable child，普通非空 Fork 还会用 `thread/read` 校验父关系与完整 Turn ID 序列；隔离实测确认未发送首 Turn 的空 child 在 App Server 重启后不会持久化，因此它不存在时会清除 recovery source，而不会留下幽灵 Session。
+- 关闭活动 Side Chat 会在完整 30 秒安全窗口内等待缺失的 Turn ID，ID 到达后发送 Interrupt，再最多等待 30 秒终态；缺失 `turn/completed` 时可由 idle status 或“已无活动 Turn”响应确认结束。若所有终态信号都丢失，后端只在没有其他活动 Turn、没有其他 Side Chat、没有等待响应的非幂等或已应用待确认 mutation，且并发 Session/Fork/Side Chat 已完成 Goal、SQLite、边界注入和 Runtime 注册时重启 App Server 并清理临时 Thread；否则保留目标 Side Chat 并返回可重试错误，避免中断并行创建、rename/archive/Goal 写入或留下未跟踪 child。Side Chat 尚未完成隐藏边界初始化时，unsubscribe 清理失败会保留 orphan ID 并后台指数退避重试；它只记录 warning，不会为清理临时 Thread 而重启并打断主 Session。
+- `turn/start` 结果不确定且重连快照尚不能证明终态时，该 Session 保持 disconnected；Composer 与服务端 mutation 同时禁用，直到一次成功读取完成对账，避免重复启动未知上一轮任务。
 - 不读取或修改 `~/.codex` 的内部 JSONL 或 SQLite。
 
 ## 本地安全

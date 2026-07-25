@@ -8,7 +8,6 @@ export function PendingBanner({ threadId }: { threadId: string }) {
   const runtime = useAppStore((state) => state.runtimes[threadId]); const requests = useAppStore((state) => state.pendingRequests);
   const requestId = runtime?.pendingRequestIds[0]; const pending = requestId ? requests[requestId] : undefined;
   const [answers, setAnswers] = useState<Record<string, string | string[] | boolean | number>>({});
-  useEffect(() => setAnswers({}), [requestId]);
   const respond = useMutation({ mutationFn: ({ allow, values = {} }: { allow: boolean; values?: Record<string, string | string[] | boolean | number> }) => api(`/api/pending-requests/${requestId}/respond`, {
     method: "POST",
     body: JSON.stringify({
@@ -21,7 +20,11 @@ export function PendingBanner({ threadId }: { threadId: string }) {
       clientRequestId: newClientRequestId(),
     }),
   }) });
+  useEffect(() => { setAnswers({}); respond.reset(); }, [requestId]);
   if (!requestId) return null;
+  const responseError = respond.isError
+    ? <p className="pending-response-error" role="alert">响应未送达：{respond.error.message}。Codex 仍在等待，请重试。</p>
+    : null;
   if (pending?.params?.type === "userInput") {
     const complete = pending.params.questions.every((question) => { const value = answers[question.id]; return typeof value === "string" && !!value.trim(); });
     return <div className="pending-banner pending-user-input"><div className="pending-heading"><ShieldWarning size={17} weight="fill" /><span>Codex 正在等待你的输入</span></div>
@@ -35,7 +38,7 @@ export function PendingBanner({ threadId }: { threadId: string }) {
           {(question.isOther || !question.options?.length) && <input type={question.isSecret ? "password" : "text"} autoComplete="off" value={customValue} placeholder={question.isOther ? "其他答案" : "输入答案"} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} />}
         </fieldset>;
       })}</div>
-      <div className="pending-actions"><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button><button className="primary" onClick={() => respond.mutate({ allow: true, values: answers })} disabled={respond.isPending || !complete}>发送答案</button></div>
+      {responseError}<div className="pending-actions"><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button><button className="primary" onClick={() => respond.mutate({ allow: true, values: answers })} disabled={respond.isPending || !complete}>发送答案</button></div>
     </div>;
   }
   if (pending?.params?.type === "elicitation") {
@@ -52,8 +55,8 @@ export function PendingBanner({ threadId }: { threadId: string }) {
                 : <input type={field.valueType === "number" || field.valueType === "integer" ? "number" : "text"} step={field.valueType === "integer" ? 1 : undefined} value={typeof value === "string" || typeof value === "number" ? value : ""} onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))} />}
         </fieldset>;
       })}</div>}
-      <div className="pending-actions"><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button><button className="primary" onClick={() => respond.mutate({ allow: true, values })} disabled={respond.isPending || !requiredComplete}>{pending.params.mode === "url" ? "已完成，继续" : "提交"}</button></div>
+      {responseError}<div className="pending-actions"><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button><button className="primary" onClick={() => respond.mutate({ allow: true, values })} disabled={respond.isPending || !requiredComplete}>{pending.params.mode === "url" ? "已完成，继续" : "提交"}</button></div>
     </div>;
   }
-  return <div className="pending-banner"><ShieldWarning size={17} weight="fill" /><span>Codex 正在等待额外确认</span><span className="pending-kind">{pending?.method}</span><button onClick={() => respond.mutate({ allow: true })} disabled={respond.isPending}>允许一次</button><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button></div>;
+  return <div className="pending-banner"><ShieldWarning size={17} weight="fill" /><span>Codex 正在等待额外确认</span><span className="pending-kind">{pending?.method}</span><button onClick={() => respond.mutate({ allow: true })} disabled={respond.isPending}>允许一次</button><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button>{responseError}</div>;
 }

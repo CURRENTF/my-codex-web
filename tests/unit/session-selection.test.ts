@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Project, SessionSummary } from "@codex-web/shared-types";
-import { recentSessionToAutoOpen, sessionCreationProjectId } from "../../apps/web/src/session-selection";
+import { canBranchSession, recentSessionToAutoOpen, sessionCreationProjectId } from "../../apps/web/src/session-selection";
 
 function project(id: string): Project {
   return {
@@ -36,5 +36,19 @@ describe("Session selection", () => {
     const projects = [project("explicit"), project("current"), project("preferred")];
     expect(sessionCreationProjectId("explicit", "current", "preferred", projects)).toBe("explicit");
     expect(sessionCreationProjectId(undefined, "current", "preferred", projects)).toBe("current");
+  });
+
+  it("never selects an unavailable Project for Session creation", () => {
+    const missing = { ...project("missing"), available: false };
+    const available = project("available");
+    expect(sessionCreationProjectId("missing", undefined, undefined, [missing, available])).toBeUndefined();
+    expect(sessionCreationProjectId(undefined, "missing", undefined, [missing, available])).toBe("available");
+    expect(sessionCreationProjectId(undefined, undefined, "missing", [missing])).toBeUndefined();
+  });
+
+  it("disables Fork and Side Chat while the Project is unavailable or the Session is disconnected", () => {
+    expect(canBranchSession(true, "idle")).toBe(true);
+    expect(canBranchSession(false, "idle")).toBe(false);
+    expect(canBranchSession(true, "disconnected")).toBe(false);
   });
 });

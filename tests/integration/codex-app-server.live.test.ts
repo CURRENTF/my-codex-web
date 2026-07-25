@@ -1,5 +1,5 @@
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CodexAdapter, JsonRpcError, type AdapterEvent } from "@codex-web/codex-adapter";
 import { requireIsolatedCodexHome } from "../../scripts/isolated-codex-home";
 
@@ -83,15 +83,17 @@ run("real codex app-server with isolated CODEX_HOME", () => {
   it("initializes, lists models, runs a turn, persists a goal, and forks", async () => {
     const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
-    const notificationOrder: Array<{ method: string; threadId?: string; turnId?: string }> = [];
+    const notificationOrder: Array<{ method: string; threadId?: string; turnId?: string; threadSource?: string }> = [];
     adapter.supervisor.on("notification", (notification: { method: string; params?: Record<string, unknown> }) => {
       const turn = notification.params?.turn as { id?: string } | undefined;
-      const threadId = notification.params?.threadId;
+      const thread = notification.params?.thread as { id?: string; threadSource?: string | null } | undefined;
+      const threadId = notification.params?.threadId ?? thread?.id;
       const turnId = notification.params?.turnId;
       notificationOrder.push({
         method: notification.method,
         ...(typeof threadId === "string" ? { threadId } : {}),
         ...(typeof turnId === "string" ? { turnId } : turn?.id ? { turnId: turn.id } : {}),
+        ...(typeof thread?.threadSource === "string" ? { threadSource: thread.threadSource } : {}),
       });
     });
     adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
@@ -100,8 +102,13 @@ run("real codex app-server with isolated CODEX_HOME", () => {
     try {
       expect(adapter.account).not.toBeNull();
       expect(adapter.models.length).toBeGreaterThan(0);
-      const session = await adapter.startSession(path.resolve(process.cwd()), { accessMode: "fullAccess", model: null, reasoning: null });
+      const sessionSource = `codex-web-integration-session:${crypto.randomUUID()}`;
+      const session = await adapter.startSession(path.resolve(process.cwd()), { accessMode: "fullAccess", model: null, reasoning: null }, false, sessionSource);
       created.push(session.thread.id);
+      await vi.waitFor(() => {
+        const sessionStarted = notificationOrder.find((notification) => notification.method === "thread/started" && notification.threadId === session.thread.id);
+        expect(sessionStarted?.threadSource).toBe(sessionSource);
+      }, { timeout: 2_000 });
       const completion = new Promise<{ status: string }>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("Turn did not complete")), 120_000);
         adapter.on("event", (event: AdapterEvent) => {
@@ -122,8 +129,22 @@ run("real codex app-server with isolated CODEX_HOME", () => {
       expect(completedIndex).toBeGreaterThan(itemIndex);
       const goal = await adapter.setGoal({ threadId: session.thread.id, objective: "Integration goal", tokenBudget: 10_000, status: "active" });
       expect((await adapter.getGoal(session.thread.id))?.objective).toBe(goal.objective);
-      const fork = await adapter.forkSession(session.thread.id, turn.turn.id, { accessMode: "fullAccess", model: null, reasoning: null });
+      const recoverySource = `codex-web-integration-fork:${crypto.randomUUID()}`;
+      const fork = await adapter.forkSession(
+        session.thread.id,
+        turn.turn.id,
+        { accessMode: "fullAccess", model: null, reasoning: null },
+        false,
+        process.cwd(),
+        recoverySource,
+      );
       created.push(fork.thread.id); expect(fork.thread.forkedFromId).toBe(session.thread.id);
+      const listedFork = (await adapter.listSessions({ limit: 100 })).data.find((thread) => thread.id === fork.thread.id);
+      expect(listedFork?.id).toBe(fork.thread.id);
+      const readFork = await adapter.readSession(fork.thread.id);
+      expect(readFork.forkedFromId).toBe(session.thread.id);
+      expect(readFork.turns.map((candidate) => candidate.id)).toEqual([turn.turn.id]);
+      expect(notificationOrder.find((notification) => notification.method === "thread/started" && notification.threadId === fork.thread.id)?.threadSource).toBe(recoverySource);
       await adapter.clearGoal(session.thread.id); expect(await adapter.getGoal(session.thread.id)).toBeNull();
     } finally {
       for (const threadId of created) await adapter.archiveSession(threadId).catch(() => undefined);

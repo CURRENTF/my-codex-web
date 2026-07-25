@@ -22,6 +22,7 @@ export class ProjectIndexer extends EventEmitter {
   private scanning: Promise<void> | null = null;
   private scanAgain = false;
   private readonly archivedSessions = new Set<string>();
+  private readonly pendingThreadSources = new Set<string>();
 
   constructor(
     private readonly repositories: Repositories,
@@ -41,7 +42,7 @@ export class ProjectIndexer extends EventEmitter {
       name: displayName?.trim() || path.basename(canonicalPath),
       rootPath,
       canonicalPath,
-      orderIndex: projects.length,
+      orderIndex: projects.reduce((maximum, project) => Math.max(maximum, project.orderIndex), -1) + 1,
       defaultModel: null,
       defaultReasoning: null,
       defaultAccessMode: "fullAccess",
@@ -68,16 +69,18 @@ export class ProjectIndexer extends EventEmitter {
       do {
         const response = await this.adapter.listSessions({ cwd: project.canonicalPath, cursor, limit: 100 });
         for (const thread of response.data) {
-          if (this.archivedSessions.has(thread.id)) continue;
+          if (this.discoveryBlocked(thread.id, thread.threadSource)) continue;
+          const existing = this.repositories.getProjectSession(thread.id);
+          if (existing?.origin === "manual" && existing.project_id !== project.id) continue;
           this.repositories.upsertProjectSession({
             thread_id: thread.id,
             project_id: project.id,
             cwd_snapshot: thread.cwd,
             source_kind: thread.sourceKind,
-            origin: "discovered",
-            parent_thread_id: thread.forkedFromId,
-            fork_turn_id: null,
-            added_at: now,
+            origin: existing?.origin ?? "discovered",
+            parent_thread_id: existing?.parent_thread_id ?? thread.forkedFromId,
+            fork_turn_id: existing?.fork_turn_id ?? null,
+            added_at: existing?.added_at ?? now,
             last_seen_at: now,
           });
         }
@@ -120,14 +123,14 @@ export class ProjectIndexer extends EventEmitter {
     do {
       const response = await this.adapter.listSessions({ cursor, limit: 100 });
       for (const thread of response.data) {
-        if (this.archivedSessions.has(thread.id)) continue;
+        if (this.discoveryBlocked(thread.id, thread.threadSource)) continue;
         const canonicalCwd = await realpath(thread.cwd).catch(() => thread.cwd);
         const project = longestProjectMatch(canonicalCwd, projects);
         if (!project) continue;
         const observedMapping = this.repositories.getProjectSession(thread.id);
         const observedTargetProjectId = observedMapping?.origin === "manual" ? observedMapping.project_id : project.id;
         await this.projectLocks.withKeys([project.id, observedTargetProjectId], async () => {
-          if (this.archivedSessions.has(thread.id)) return;
+          if (this.discoveryBlocked(thread.id, thread.threadSource)) return;
           if (!this.repositories.getProject(project.id)) return;
           const existing = this.repositories.getProjectSession(thread.id);
           const targetProjectId = existing?.origin === "manual" ? existing.project_id : project.id;
@@ -158,11 +161,24 @@ export class ProjectIndexer extends EventEmitter {
     return this.projectLocks.withKeys(projectIds, action);
   }
 
+  markThreadSourcePending(threadSource: string): void {
+    this.pendingThreadSources.add(threadSource);
+  }
+
+  restoreThreadSourceDiscovery(threadSource: string): void {
+    this.pendingThreadSources.delete(threadSource);
+  }
+
   markSessionArchived(threadId: string): void {
     this.archivedSessions.add(threadId);
   }
 
   restoreSessionDiscovery(threadId: string): void {
     this.archivedSessions.delete(threadId);
+  }
+
+  private discoveryBlocked(threadId: string, threadSource?: string | null): boolean {
+    return this.archivedSessions.has(threadId)
+      || (typeof threadSource === "string" && this.pendingThreadSources.has(threadSource));
   }
 }

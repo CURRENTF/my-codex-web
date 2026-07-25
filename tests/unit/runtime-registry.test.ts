@@ -56,6 +56,30 @@ describe("runtime projection", () => {
     expect(afterView.get("failed-thread").state).toBe("idle");
   });
 
+  it("keeps an interrupted state after viewing and across backend restart until the next Turn starts", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T10:00:00.000Z"));
+    const databasePath = path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db");
+    const repositories = new Repositories(databasePath);
+    repositories.insertProject({ id: "project-1", name: "Project", rootPath: "/tmp/project", canonicalPath: "/tmp/project", orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: Date.now(), lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({ thread_id: "interrupted-thread", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: Date.now(), last_seen_at: Date.now() });
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+
+    notify(registry, { method: "turn/started", params: { threadId: "interrupted-thread", turn: { id: "turn-1" } } });
+    notify(registry, { method: "turn/completed", params: { threadId: "interrupted-thread", turn: { id: "turn-1", status: "interrupted" } } });
+    registry.markViewed("interrupted-thread");
+
+    expect(registry.get("interrupted-thread").state).toBe("interrupted");
+    const restored = new ThreadRuntimeRegistry(events, repositories);
+    expect(restored.get("interrupted-thread").state).toBe("interrupted");
+
+    restored.setActiveTurn("interrupted-thread", "turn-2");
+    expect(restored.get("interrupted-thread")).toMatchObject({ state: "running", activeTurnId: "turn-2" });
+    const afterNextTurn = new ThreadRuntimeRegistry(events, repositories);
+    expect(afterNextTurn.get("interrupted-thread").state).toBe("idle");
+  });
+
   it("hydrates only the remaining portion of the just-finished window", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-18T10:00:00.000Z"));
@@ -116,6 +140,73 @@ describe("runtime projection", () => {
     }]);
 
     expect(registry.get("t1")).toMatchObject({ state: "justFinished", lastTerminalStatus: "completed" });
+  });
+
+  it("keeps an uncertain Turn start disconnected when the snapshot contains only the previous Turn", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+
+    registry.markOperationUncertain("t1", "previous-turn");
+    expect(registry.get("t1")).toMatchObject({ state: "disconnected" });
+
+    const snapshot = [{
+      id: "previous-turn",
+      status: "completed",
+      items: [],
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1_000,
+    }] as const;
+    expect(registry.reconcileFromSnapshot("t1", [...snapshot])).toBe("uncertainTurnUnchanged");
+
+    expect(registry.get("t1")).toMatchObject({ state: "disconnected", uncertainTurnStart: true });
+    expect(registry.confirmUncertainTurnNotApplied("t1", [...snapshot])).toBe("reconciled");
+    expect(registry.get("t1").state).not.toBe("disconnected");
+    expect(registry.get("t1").uncertainTurnStart).toBeUndefined();
+  });
+
+  it("restores an active Turn when an uncertain Steer is resolved", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const appliedEvents: string[] = [];
+    events.on("event", (event) => appliedEvents.push(event.type));
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    const activeTurn = {
+      id: "turn-1",
+      status: "inProgress" as const,
+      items: [],
+      startedAt: 1,
+      completedAt: null,
+      durationMs: null,
+    };
+
+    registry.setActiveTurn("t1", activeTurn.id);
+    registry.markOperationUncertain("t1", activeTurn.id);
+    expect(registry.get("t1")).toMatchObject({ state: "disconnected", uncertainTurnStart: true });
+
+    expect(registry.confirmUncertainTurnNotApplied("t1", [activeTurn], activeTurn.id)).toBe("reconciled");
+    expect(registry.get("t1")).toMatchObject({ state: "running", activeTurnId: activeTurn.id });
+
+    registry.markOperationUncertain("t1", activeTurn.id);
+    expect(registry.confirmUncertainTurnApplied("t1", [activeTurn], activeTurn.id)).toBe("reconciled");
+    expect(registry.get("t1")).toMatchObject({ state: "running", activeTurnId: activeTurn.id });
+    expect(appliedEvents).toContain("uncertainTurn.applied");
+  });
+
+  it("reconciles an uncertain Turn start only after a newer terminal Turn appears", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+
+    registry.markOperationUncertain("t1", "previous-turn");
+    registry.reconcileFromSnapshot("t1", [
+      { id: "previous-turn", status: "completed", items: [], startedAt: 1, completedAt: 2, durationMs: 1_000 },
+      { id: "new-turn", status: "completed", items: [], startedAt: 3, completedAt: 4, durationMs: 1_000 },
+    ]);
+
+    expect(registry.get("t1")).toMatchObject({ lastTerminalStatus: "completed" });
+    expect(registry.get("t1").state).not.toBe("disconnected");
   });
 
   it("keeps a connection-interrupted Turn disconnected when only an older terminal snapshot is available", () => {
@@ -290,6 +381,19 @@ describe("runtime projection", () => {
     expect(registry.get("t1")).toMatchObject({ state: "waitingForInput", activeTurnId: "turn-1", pendingRequestIds: ["2"] });
   });
 
+  it("returns to running when the last request resolves before the active Turn ID is known", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    notify(registry, { method: "thread/status/changed", params: { threadId: "t1", status: { type: "active", activeFlags: [] } } });
+    pending(registry, { id: 3, method: "item/commandExecution/requestApproval", params: { threadId: "t1" } } as never);
+
+    registry.resolveServerRequest("3");
+
+    expect(registry.get("t1")).toMatchObject({ state: "running", pendingRequestIds: [] });
+    expect(registry.get("t1").activeTurnId).toBeUndefined();
+  });
+
   it("associates legacy approval requests through conversationId", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
@@ -300,6 +404,33 @@ describe("runtime projection", () => {
 
     expect(registry.get("legacy-thread")).toMatchObject({ state: "waitingForInput", pendingRequestIds: ["17"] });
     expect(registry.listPendingRequests()).toEqual([{ id: "17", method: "execCommandApproval", params: null }]);
+  });
+
+  it("routes a subagent server request to its visible parent Session", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("parent", "parent-turn");
+    registry.handleEvent({
+      type: "threadStarted",
+      threadId: "subagent",
+      parentThreadId: "parent",
+      thread: {} as never,
+    });
+
+    pending(registry, { id: 19, method: "item/commandExecution/requestApproval", params: { threadId: "subagent" } } as never);
+
+    expect(registry.get("parent")).toMatchObject({
+      state: "waitingForInput",
+      activeTurnId: "parent-turn",
+      pendingRequestIds: ["19"],
+    });
+    expect(registry.get("subagent").pendingRequestIds).toEqual([]);
+
+    registry.resolveServerRequest("19");
+
+    expect(registry.get("parent")).toMatchObject({ state: "running", pendingRequestIds: [] });
+    expect(registry.listPendingRequests()).toEqual([]);
   });
 
   it("clears a request when App Server resolves it and preserves terminal state", () => {
@@ -335,6 +466,82 @@ describe("runtime projection", () => {
     notify(registry, { method: "turn/completed", params: { threadId: "side-1", turn: { id: "turn-1", status: "interrupted" } } });
 
     await expect(terminal).resolves.toBe(true);
+  });
+
+  it("treats an idle thread/status update as terminal when turn/completed was lost", async () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("side-idle", "turn-1");
+    const terminal = registry.waitForTerminal("side-idle", 1_000);
+
+    notify(registry, { method: "thread/status/changed", params: { threadId: "side-idle", status: { type: "idle" } } });
+
+    await expect(terminal).resolves.toBe(true);
+    expect(registry.get("side-idle")).toMatchObject({ state: "idle" });
+    expect(registry.get("side-idle").activeTurnId).toBeUndefined();
+  });
+
+  it("clears terminal pending state on idle and ignores its late resolution after Side Chat removal", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.registerSideChat({ threadId: "side-idle-cleanup", parentThreadId: "parent", state: "idle", activeFlags: [], pendingRequestIds: [], createdAt: 1 });
+    registry.setActiveTurn("side-idle-cleanup", "turn-1");
+    pending(registry, { id: 31, method: "item/commandExecution/requestApproval", params: { threadId: "side-idle-cleanup" } } as never);
+    notify(registry, { method: "item/agentMessage/delta", params: { threadId: "side-idle-cleanup", turnId: "turn-1", itemId: "agent-side-idle", delta: "partial" } });
+
+    notify(registry, { method: "thread/status/changed", params: { threadId: "side-idle-cleanup", status: { type: "idle" } } });
+
+    expect(registry.get("side-idle-cleanup")).toMatchObject({ state: "idle", pendingRequestIds: [] });
+    expect(registry.listPendingRequests()).toEqual([]);
+    expect(registry.listItemDeltas()).toEqual({});
+
+    registry.removeSideChat("side-idle-cleanup");
+    notify(registry, { method: "serverRequest/resolved", params: { threadId: "side-idle-cleanup", requestId: 31 } });
+    expect(registry.list().some((runtime) => runtime.threadId === "side-idle-cleanup")).toBe(false);
+  });
+
+  it("waits briefly for a Turn ID when active status arrives before turn/started", async () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    notify(registry, { method: "thread/status/changed", params: { threadId: "side-race", status: { type: "active", activeFlags: [] } } });
+
+    const activeTurnId = registry.waitForActiveTurnId("side-race", 1_000);
+    notify(registry, { method: "turn/started", params: { threadId: "side-race", turn: { id: "turn-race", status: "inProgress", items: [] } } });
+
+    await expect(activeTurnId).resolves.toBe("turn-race");
+  });
+
+  it("bounds active Turn ID waits and removes a timed-out waiter", async () => {
+    vi.useFakeTimers();
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    notify(registry, { method: "thread/status/changed", params: { threadId: "side-race-timeout", status: { type: "active", activeFlags: [] } } });
+
+    const activeTurnId = registry.waitForActiveTurnId("side-race-timeout", 2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(activeTurnId).resolves.toBeUndefined();
+    expect((registry as unknown as { activeTurnWaiters: Map<string, unknown> }).activeTurnWaiters.has("side-race-timeout")).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("bounds terminal waits and removes a timed-out waiter", async () => {
+    vi.useFakeTimers();
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("side-long", "turn-1");
+
+    const terminal = registry.waitForTerminal("side-long", 30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(terminal).resolves.toBe(false);
+    expect((registry as unknown as { terminalWaiters: Map<string, unknown> }).terminalWaiters.has("side-long")).toBe(false);
+    vi.useRealTimers();
   });
 
   it("ignores late notifications after a Side Chat is unsubscribed and removed", () => {

@@ -1,9 +1,10 @@
-import type { Goal, ItemDeltaUiEventPayload, SessionItem, SessionTurn } from "@codex-web/shared-types";
+import type { Goal, ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn } from "@codex-web/shared-types";
 import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
-import { projectFileChangePatch, projectItemDelta, projectThreadItem, projectTurn, projectTurnPlan } from "./ui-projection.js";
+import { projectFileChangePatch, projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnPlan } from "./ui-projection.js";
 import type { SessionSettings } from "./codex-adapter.js";
 
 export type AdapterEvent =
+  | { type: "threadStarted"; threadId: string; thread: SessionThread; threadSource?: string; parentThreadId?: string }
   | { type: "threadStatusChanged"; threadId: string; status: "active" | "idle" | "notLoaded" | "systemError"; activeFlags: string[] }
   | { type: "turnStarted" | "turnCompleted"; threadId: string; turn: SessionTurn }
   | { type: "itemUpserted"; threadId: string; turnId: string; item: SessionItem; completed: boolean; startedAtMs?: number; completedAtMs?: number }
@@ -19,6 +20,17 @@ type ThreadStatus = Extract<AdapterEvent, { type: "threadStatusChanged" }>["stat
 
 export function projectAdapterEvent(notification: Notification): AdapterEvent | null {
   const params = (notification.params ?? {}) as Record<string, unknown>;
+  if (notification.method === "thread/started" && params.thread && typeof params.thread === "object") {
+    const thread = params.thread as Parameters<typeof projectThread>[0];
+    if (typeof thread.id !== "string") return null;
+    return {
+      type: "threadStarted",
+      threadId: thread.id,
+      thread: projectThread(thread),
+      ...(typeof thread.threadSource === "string" ? { threadSource: thread.threadSource } : {}),
+      ...(typeof thread.parentThreadId === "string" ? { parentThreadId: thread.parentThreadId } : {}),
+    };
+  }
   const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
   if (notification.method === "serverRequest/resolved") {
     const requestId = typeof params.requestId === "string" || typeof params.requestId === "number" ? String(params.requestId) : null;

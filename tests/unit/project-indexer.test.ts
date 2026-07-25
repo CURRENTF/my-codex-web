@@ -66,6 +66,20 @@ describe("ProjectIndexer path matching", () => {
     expect(listSessions).toHaveBeenCalledTimes(3);
   });
 
+  it("appends after the maximum order index when earlier Projects were removed", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const added = path.join(root, "added"); mkdirSync(added);
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject({ ...project("first", path.join(root, "first")), orderIndex: 0 });
+    repositories.insertProject({ ...project("third", path.join(root, "third")), orderIndex: 2 });
+    const indexer = new ProjectIndexer(repositories, { listSessions: vi.fn(async () => ({ data: [], nextCursor: null })) } as unknown as CodexAdapter);
+
+    const created = await indexer.addProject(added);
+
+    expect(created.orderIndex).toBe(3);
+    expect(repositories.listProjects().map((candidate) => candidate.orderIndex)).toEqual([0, 2, 3]);
+  });
+
   it("reports background scan failures without leaving an unhandled rejection", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
     const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
@@ -92,6 +106,97 @@ describe("ProjectIndexer path matching", () => {
 
     expect(listSessions).toHaveBeenCalledTimes(2);
     expect(repositories.listProjectSessions().map((mapping) => mapping.thread_id).sort()).toEqual(["t1", "t2"]);
+  });
+
+  it("does not generically discover a child while its request-specific Thread source is unresolved", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    const target = project("project", root);
+    repositories.insertProject(target);
+    const threadSource = "codex-web-fork:parent:request-uncertain";
+    const listSessions = vi.fn(async () => ({
+      data: [{ id: "fork-child", cwd: root, sourceKind: "appServer", forkedFromId: "parent", threadSource }],
+      nextCursor: null,
+    }));
+    const indexer = new ProjectIndexer(repositories, { listSessions } as unknown as CodexAdapter);
+
+    indexer.markThreadSourcePending(threadSource);
+    await indexer.scanRoot(target);
+    await indexer.scanAll();
+
+    expect(repositories.getProjectSession("fork-child")).toBeNull();
+
+    indexer.restoreThreadSourceDiscovery(threadSource);
+    await indexer.scanAll();
+
+    expect(repositories.getProjectSession("fork-child")).toMatchObject({
+      project_id: "project",
+      origin: "discovered",
+    });
+  });
+
+  it("preserves created and Fork provenance during an exact-root rescan", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    const target = project("project", root);
+    repositories.insertProject(target);
+    repositories.upsertProjectSession({
+      thread_id: "fork-child",
+      project_id: target.id,
+      cwd_snapshot: root,
+      source_kind: "appServer",
+      origin: "forked",
+      parent_thread_id: "parent",
+      fork_turn_id: "boundary",
+      added_at: 123,
+      last_seen_at: 123,
+    });
+    const listSessions = vi.fn(async () => ({
+      data: [{ id: "fork-child", cwd: root, sourceKind: "appServer", forkedFromId: "parent" }],
+      nextCursor: null,
+    }));
+    const indexer = new ProjectIndexer(repositories, { listSessions } as unknown as CodexAdapter);
+
+    await indexer.scanRoot(target);
+
+    expect(repositories.getProjectSession("fork-child")).toMatchObject({
+      origin: "forked",
+      parent_thread_id: "parent",
+      fork_turn_id: "boundary",
+      added_at: 123,
+    });
+  });
+
+  it("does not undo a manual Project assignment during an exact-root rescan", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-indexer-"));
+    const other = path.join(root, "other"); mkdirSync(other);
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    const rootProject = project("root", root);
+    repositories.insertProject(rootProject);
+    repositories.insertProject({ ...project("other", other), orderIndex: 1 });
+    repositories.upsertProjectSession({
+      thread_id: "manual-thread",
+      project_id: "other",
+      cwd_snapshot: root,
+      source_kind: "appServer",
+      origin: "manual",
+      parent_thread_id: null,
+      fork_turn_id: null,
+      added_at: 123,
+      last_seen_at: 123,
+    });
+    const listSessions = vi.fn(async () => ({
+      data: [{ id: "manual-thread", cwd: root, sourceKind: "appServer", forkedFromId: null }],
+      nextCursor: null,
+    }));
+    const indexer = new ProjectIndexer(repositories, { listSessions } as unknown as CodexAdapter);
+
+    await indexer.scanRoot(rootProject);
+
+    expect(repositories.getProjectSession("manual-thread")).toMatchObject({
+      project_id: "other",
+      origin: "manual",
+    });
   });
 
   it("runs exact-root discovery for every available Project during startup", async () => {

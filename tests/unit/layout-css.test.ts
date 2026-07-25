@@ -23,5 +23,9 @@ describe("viewport layout CSS", () => {
     expect(rule(".sidebar-list")).toContain("overflow-y: auto");
     expect(rule(".timeline-static")).toContain("overflow-y: auto");
     expect(rule(".timeline-area")).toContain("overflow: hidden");
+    expect(rule(".composer textarea")).toContain("overflow-x: hidden");
+    expect(rule(".session-notices")).toContain("display: grid");
+    expect(rule(".full-access-notice")).not.toContain("grid-area");
+    expect(rule(".parallel-write-warning")).not.toContain("grid-area");
   });
 });

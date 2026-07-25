@@ -6,7 +6,7 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { CodexAdapter } from "@codex-web/codex-adapter";
+import { CodexAdapter, OperationUncertainError } from "@codex-web/codex-adapter";
 import { config } from "./config.js";
 import { Repositories } from "./database.js";
 import { EventGateway } from "./event-gateway.js";
@@ -14,10 +14,11 @@ import { pickDirectory, revealDirectory } from "./native-directory-picker.js";
 import { ProjectIndexer } from "./project-indexer.js";
 import { RequestDeduplicator } from "./request-deduplicator.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
-import { isAllowedSocketContext, localRequestError } from "./local-security.js";
-import { ActiveTurnConflictError, ForkBoundaryError, SessionService, SteerConflictError } from "./session-service.js";
+import { isAllowedSocketContext, localRequestError, localSecurityAllowLists, parseCookieHeader } from "./local-security.js";
+import { ActiveTurnConflictError, ActiveTurnIdentityError, ForkBoundaryError, ProjectUnavailableError, SessionDisconnectedError, SessionService, SideChatCloseTimeoutError, SteerConflictError, UncertainTurnAppliedError } from "./session-service.js";
 import { KeyedOperationLock } from "./keyed-operation-lock.js";
 import { ConnectionRecovery, type AppServerConnectionState } from "./connection-recovery.js";
+import { safeErrorForLog } from "./safe-error.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -26,15 +27,6 @@ const settingsSchema = z.object({
   reasoning: z.string().nullable().optional(),
   accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]).optional(),
 });
-
-function parseCookies(request: IncomingMessage): Record<string, string> {
-  const header = request.headers.cookie;
-  if (!header) return {};
-  return Object.fromEntries(header.split(";").map((part) => {
-    const [key = "", ...value] = part.trim().split("=");
-    return [decodeURIComponent(key), decodeURIComponent(value.join("="))];
-  }));
-}
 
 function secureEqual(left: string | undefined, right: string): boolean {
   if (!left) return false;
@@ -47,18 +39,7 @@ export async function createServer() {
   mkdirSync(path.join(config.dataDir, "logs"), { recursive: true, mode: 0o700 });
   const sessionToken = randomBytes(32).toString("base64url");
   const csrfToken = randomBytes(24).toString("base64url");
-  const allowedOrigins = new Set([
-    `http://${config.host}:${config.port}`,
-    `http://localhost:${config.port}`,
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-  ]);
-  const allowedHosts = new Set([
-    `${config.host}:${config.port}`,
-    `localhost:${config.port}`,
-    "127.0.0.1:5173",
-    "localhost:5173",
-  ]);
+  const { allowedHosts, allowedOrigins } = localSecurityAllowLists(config.host, config.port, config.allowViteOrigin);
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.cookie", "req.headers.x-csrf-token", "body.text"] },
     bodyLimit: 2 * 1024 * 1024,
@@ -74,7 +55,7 @@ export async function createServer() {
   });
   const authenticateSocket = (request: IncomingMessage) => {
     return isAllowedSocketContext({ host: request.headers.host, origin: request.headers.origin }, allowedHosts, allowedOrigins)
-      && secureEqual(parseCookies(request).codex_web_session, sessionToken);
+      && secureEqual(parseCookieHeader(request.headers.cookie).codex_web_session, sessionToken);
   };
   const events = new EventGateway(authenticateSocket);
   const runtimes = new ThreadRuntimeRegistry(events, repositories);
@@ -97,10 +78,10 @@ export async function createServer() {
       if (!startupPhase && adapter.account) {
         void indexer.scanStartupRoots()
           .then(() => indexer.scanAllInBackground())
-          .catch((error) => app.log.warn({ error }, "Failed to scan Projects after App Server reconnect"));
+          .catch((error) => app.log.warn({ error: safeErrorForLog(error) }, "Failed to scan Projects after App Server reconnect"));
       }
     },
-    onError: (error) => app.log.warn({ error }, "Failed to reconcile Runtime after App Server reconnect; retrying"),
+    onError: (error) => app.log.warn({ error: safeErrorForLog(error) }, "Failed to reconcile Runtime after App Server reconnect; retrying"),
   });
   adapter.on("connection", (event: { state: AppServerConnectionState }) => {
     void recovery.handle(event.state);
@@ -111,10 +92,18 @@ export async function createServer() {
   });
   adapter.on("pendingRequest", (request) => sessions.handlePendingRequest(request));
   adapter.on("stderr", (line: string) => app.log.debug({ source: "codex-app-server", bytes: Buffer.byteLength(line) }, "Codex App Server wrote to stderr"));
-  adapter.on("warning", (warning) => app.log.warn(warning));
-  adapter.on("error", (error) => app.log.error(error));
-  indexer.on("scanComplete", () => events.publish("sessions.rescanned", { completedAt: Date.now() }));
-  indexer.on("scanError", (error) => app.log.warn({ error }, "Background Project scan failed"));
+  adapter.on("warning", (warning) => app.log.warn({ warning: safeErrorForLog(warning) }, "Codex Adapter warning"));
+  adapter.on("error", (error) => app.log.error({ error: safeErrorForLog(error) }, "Codex Adapter error"));
+  indexer.on("scanComplete", () => {
+    events.publish("sessions.rescanned", { completedAt: Date.now() });
+    void sessions.recoverDeferredChildren()
+      .catch((error) => app.log.warn({ error: safeErrorForLog(error) }, "Deferred Codex child recovery failed; retrying after a later scan"));
+  });
+  indexer.on("scanError", (error) => app.log.warn({ error: safeErrorForLog(error) }, "Background Project scan failed"));
+  sessions.on("deferredRecoveryError", (error) => app.log.warn(
+    { error: safeErrorForLog(error) },
+    "Deferred Codex child recovery failed; retrying on its bounded background schedule",
+  ));
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;
@@ -154,7 +143,18 @@ export async function createServer() {
     if (error instanceof SteerConflictError) return reply.code(409).send({ error: "turn_finished", message: error.message });
     if (error instanceof ForkBoundaryError) return reply.code(409).send({ error: "invalid_fork_boundary", message: error.message });
     if (error instanceof ActiveTurnConflictError) return reply.code(409).send({ error: "active_turn", message: error.message });
-    app.log.error(error);
+    if (error instanceof ActiveTurnIdentityError) return reply.code(409).send({ error: "active_turn_unknown", message: error.message });
+    if (error instanceof ProjectUnavailableError) return reply.code(409).send({ error: "project_unavailable", message: error.message });
+    if (error instanceof SessionDisconnectedError) return reply.code(409).send({ error: "session_disconnected", message: error.message });
+    if (error instanceof UncertainTurnAppliedError) return reply.code(409).send({ error: "uncertain_turn_applied", message: error.message });
+    if (error instanceof SideChatCloseTimeoutError) return reply.code(409).send({ error: "side_chat_still_running", message: error.message });
+    if (error instanceof OperationUncertainError) {
+      return reply.code(503).send({
+        error: "operation_uncertain",
+        message: "Codex 未确认该操作结果；连接正在重启并重新同步。请先检查当前 Session，再决定是否重试。",
+      });
+    }
+    app.log.error({ error: safeErrorForLog(error) }, "Request failed");
     return reply.code(500).send({ error: error instanceof Error ? error.message : "Unknown server error" });
   });
 
@@ -173,6 +173,7 @@ export async function createServer() {
       runtimeStates: runtimes.list(),
       activeSideChats: runtimes.listSideChats(),
       itemDeltas: runtimes.listItemDeltas(),
+      sessionPrefills: sessions.listPrefills(),
       pendingRequests: runtimes.listPendingRequests(),
     };
   });
@@ -188,7 +189,10 @@ export async function createServer() {
     return once(request, clientRequestId, () => repositories.setPreferences(changes));
   });
 
-  app.post("/api/system/pick-directory", async () => ({ path: await pickDirectory() }));
+  app.post("/api/system/pick-directory", async (request) => {
+    const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
+    return once(request, clientRequestId, async () => ({ path: await pickDirectory() }));
+  });
   app.post("/api/projects", async (request) => {
     const body = z.object({ path: z.string().min(1), name: z.string().min(1).max(100).optional(), clientRequestId: requestIdSchema }).parse(request.body);
     return once(request, body.clientRequestId, () => indexer.addProject(body.path, body.name));
@@ -271,10 +275,15 @@ export async function createServer() {
     await once(request, clientRequestId, () => sessions.interrupt(idSchema.parse((request.params as { threadId: string }).threadId)));
     return { ok: true };
   });
+  app.post("/api/sessions/:threadId/resolve-uncertain-turn", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
+    return once(request, clientRequestId, () => sessions.resolveUncertainTurn(threadId));
+  });
   app.post("/api/sessions/:threadId/forks", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const body = z.object({ lastTurnId: z.string().nullable(), inheritGoal: z.boolean().default(false), empty: z.boolean().default(false), clientRequestId: requestIdSchema }).parse(request.body);
-    return once(request, body.clientRequestId, () => sessions.fork(threadId, body.lastTurnId, body.inheritGoal, body.clientRequestId, body.empty));
+    const body = z.object({ lastTurnId: z.string().nullable(), inheritGoal: z.boolean().default(false), empty: z.boolean().default(false), prefill: z.string().max(100_000).optional(), clientRequestId: requestIdSchema }).parse(request.body);
+    return once(request, body.clientRequestId, () => sessions.fork(threadId, body.lastTurnId, body.inheritGoal, body.clientRequestId, body.empty, body.prefill));
   });
   app.get("/api/sessions/:threadId/goal", async (request) => sessions.getGoal(idSchema.parse((request.params as { threadId: string }).threadId)));
   app.put("/api/sessions/:threadId/goal", async (request) => {
@@ -335,6 +344,7 @@ export async function createServer() {
     app, adapter, events, repositories,
     async close() {
       recovery.stop();
+      sessions.dispose();
       events.close();
       adapter.stop();
       repositories.close();

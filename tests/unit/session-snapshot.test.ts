@@ -179,4 +179,37 @@ describe("session snapshot merge", () => {
       aggregatedOutput: "started\n",
     });
   });
+
+  it("preserves a command that exits naturally after its Turn was interrupted", () => {
+    const interrupted = thread([{
+      id: "turn-1",
+      status: "interrupted",
+      itemsView: "full",
+      error: null,
+      startedAt: 1,
+      completedAt: 13,
+      durationMs: 12_000,
+      items: [{
+        type: "commandExecution",
+        id: "command-1",
+        command: "sleep 45",
+        cwd: "/tmp/project",
+        processId: null,
+        status: "completed",
+        commandActions: [],
+        aggregatedOutput: "",
+        exitCode: 0,
+        durationMs: 45_000,
+      }],
+    }]);
+
+    const merged = mergeSessionSnapshot(interrupted, interrupted);
+    expect(merged.turns[0]).toMatchObject({ status: "interrupted" });
+    expect(merged.turns[0]?.items[0]).toMatchObject({
+      type: "commandExecution",
+      status: "completed",
+      exitCode: 0,
+      durationMs: 45_000,
+    });
+  });
 });

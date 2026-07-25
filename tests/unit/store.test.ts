@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useAppStore } from "../../apps/web/src/store";
 
-beforeEach(() => useAppStore.getState().initialize([], [], {}, []));
+beforeEach(() => useAppStore.setState({
+  connectionState: "connecting",
+  lastEventSeq: 0,
+  runtimes: {},
+  sideChats: {},
+  deltas: {},
+  pendingRequests: {},
+  drafts: {},
+  pendingSubmissions: {},
+  injectedPrefills: {},
+}));
 
 describe("live delta lifecycle", () => {
   it("clears a completed Item delta even when completedAtMs is absent", () => {
@@ -43,5 +53,143 @@ describe("live delta lifecycle", () => {
 
     useAppStore.getState().initialize([], [], {}, [], "connected");
     expect(useAppStore.getState().connectionState).toBe("connected");
+  });
+
+  it("restores recovered Fork prefills from bootstrap without overwriting an edited draft", () => {
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {
+      "fork-empty": "original question",
+    });
+    expect(useAppStore.getState().drafts["fork-empty"]).toBe("original question");
+
+    useAppStore.getState().setDraft("fork-empty", "edited question");
+    useAppStore.getState().initialize([], [], {}, [], "connected", 8, {
+      "fork-empty": "original question",
+    });
+
+    expect(useAppStore.getState().drafts["fork-empty"]).toBe("edited question");
+  });
+
+  it("clears an unchanged recovered Fork prefill when another tab starts a Turn", () => {
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {
+      "fork-empty": "original question",
+    });
+
+    useAppStore.getState().consume({
+      seq: 8,
+      type: "turn.started",
+      threadId: "fork-empty",
+      emittedAt: 8,
+      payload: { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: 8, completedAt: null, durationMs: null } },
+    });
+
+    expect(useAppStore.getState().drafts["fork-empty"]).toBeUndefined();
+  });
+
+  it("clears only the submitted draft when a response-lost Turn is later proven applied", () => {
+    const store = useAppStore.getState();
+    store.setDraft("thread-1", "run the task");
+    store.beginSubmission("thread-1", "run the task", "message-1");
+    store.markSubmissionUncertain("thread-1");
+
+    store.consume({
+      seq: 8,
+      type: "uncertainTurn.applied",
+      threadId: "thread-1",
+      emittedAt: 8,
+      payload: { threadId: "thread-1" },
+    });
+
+    expect(useAppStore.getState().drafts["thread-1"]).toBeUndefined();
+    expect(useAppStore.getState().pendingSubmissions["thread-1"]).toBeUndefined();
+  });
+
+  it("does not clear an edited draft when an older response-lost Turn is proven applied", () => {
+    const store = useAppStore.getState();
+    store.setDraft("thread-1", "run the task");
+    store.beginSubmission("thread-1", "run the task", "message-1");
+    store.markSubmissionUncertain("thread-1");
+    store.setDraft("thread-1", "a different follow-up");
+
+    expect(useAppStore.getState().pendingSubmissions["thread-1"]).toMatchObject({
+      draft: "run the task",
+      clientUserMessageId: "message-1",
+      state: "uncertain",
+    });
+
+    store.consume({
+      seq: 8,
+      type: "uncertainTurn.applied",
+      threadId: "thread-1",
+      emittedAt: 8,
+      payload: { threadId: "thread-1" },
+    });
+
+    expect(useAppStore.getState().drafts["thread-1"]).toBe("a different follow-up");
+    expect(useAppStore.getState().pendingSubmissions["thread-1"]).toBeUndefined();
+  });
+
+  it("preserves an in-flight Steer draft when another tab starts an unrelated Turn", () => {
+    const store = useAppStore.getState();
+    store.setDraft("thread-1", "keep this steer");
+    store.beginSubmission("thread-1", "keep this steer", "steer-message-1");
+
+    store.consume({
+      seq: 8,
+      type: "turn.started",
+      threadId: "thread-1",
+      emittedAt: 8,
+      payload: { turn: { id: "other-tab-turn", status: "inProgress", items: [], startedAt: 8, completedAt: null, durationMs: null } },
+    });
+
+    expect(useAppStore.getState().drafts["thread-1"]).toBe("keep this steer");
+    expect(useAppStore.getState().pendingSubmissions["thread-1"]).toMatchObject({
+      draft: "keep this steer",
+      clientUserMessageId: "steer-message-1",
+      state: "sending",
+    });
+
+    store.finishSubmission("thread-1", false);
+    expect(useAppStore.getState().drafts["thread-1"]).toBe("keep this steer");
+    expect(useAppStore.getState().pendingSubmissions["thread-1"]).toBeUndefined();
+  });
+
+  it("preserves an edited recovered Fork draft when another tab starts a Turn", () => {
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {
+      "fork-empty": "original question",
+    });
+    useAppStore.getState().setDraft("fork-empty", "edited follow-up");
+
+    useAppStore.getState().consume({
+      seq: 8,
+      type: "turn.started",
+      threadId: "fork-empty",
+      emittedAt: 8,
+      payload: { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: 8, completedAt: null, durationMs: null } },
+    });
+
+    expect(useAppStore.getState().drafts["fork-empty"]).toBe("edited follow-up");
+  });
+
+  it("does not restore a recovered Fork prefill after the user intentionally clears it", () => {
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {
+      "fork-empty": "original question",
+    });
+    useAppStore.getState().setDraft("fork-empty", "");
+
+    useAppStore.getState().initialize([], [], {}, [], "connected", 8, {
+      "fork-empty": "original question",
+    });
+
+    expect(useAppStore.getState().drafts["fork-empty"]).toBe("");
+  });
+
+  it("clears an unchanged recovered Fork prefill when reconnect bootstrap proves it was accepted", () => {
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {
+      "fork-empty": "original question",
+    });
+
+    useAppStore.getState().initialize([], [], {}, [], "connected", 8, {});
+
+    expect(useAppStore.getState().drafts["fork-empty"]).toBeUndefined();
   });
 });
