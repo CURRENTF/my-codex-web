@@ -2,6 +2,17 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const dataDir = process.env.CODEX_WEB_DATA_DIR ?? path.join(homedir(), ".codex-web");
+const publicOrigins = (process.env.CODEX_WEB_PUBLIC_ORIGINS ?? process.env.CODEX_WEB_PUBLIC_ORIGIN ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((origin) => new URL(origin).origin);
+const sessionCookieName = process.env.CODEX_WEB_SESSION_COOKIE_NAME?.trim() || "my_codex_web_session";
+if (!/^[A-Za-z0-9_-]{1,64}$/.test(sessionCookieName)) throw new Error("CODEX_WEB_SESSION_COOKIE_NAME is invalid");
+const vscodeRemoteAuthority = process.env.CODEX_WEB_VSCODE_REMOTE_AUTHORITY?.trim() || null;
+if (vscodeRemoteAuthority && !/^ssh-remote\+[A-Za-z0-9._-]{1,128}$/.test(vscodeRemoteAuthority)) {
+  throw new Error("CODEX_WEB_VSCODE_REMOTE_AUTHORITY must use ssh-remote+<host-alias>");
+}
 
 export const config = {
   host: "127.0.0.1",
@@ -13,6 +24,12 @@ export const config = {
   projectRoot: process.env.CODEX_WEB_PROJECT_ROOT ?? path.resolve(import.meta.dirname, "../../.."),
   openBrowser: process.env.CODEX_WEB_OPEN_BROWSER === "1",
   allowViteOrigin: process.env.CODEX_WEB_DEV_VITE_ORIGIN === "1",
+  publicOrigins,
+  passwordHash: process.env.CODEX_WEB_PASSWORD_HASH?.trim() || null,
+  sessionCookieName,
+  cookieSecure: process.env.CODEX_WEB_COOKIE_SECURE === "1" || publicOrigins.some((origin) => origin.startsWith("https://")),
+  trustProxy: process.env.CODEX_WEB_TRUST_PROXY === "1",
+  vscodeRemoteAuthority,
   codexCommand: process.env.CODEX_WEB_CODEX_BIN ?? "codex",
   version: "0.1.0",
 };

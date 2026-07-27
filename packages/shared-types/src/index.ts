@@ -169,6 +169,7 @@ export interface BootstrapPayload {
   connection: { state: "connected" | "connecting" | "disconnected"; codexVersion: string | null };
   authReady: boolean;
   csrfToken: string;
+  vscodeRemoteAuthority: string | null;
   projects: Project[];
   preferences: Preferences;
   models: ModelOption[];

@@ -43,6 +43,12 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 | `CODEX_WEB_PORT` | `7373` | 本地端口 |
 | `CODEX_WEB_CODEX_BIN` | `codex` | Codex CLI 路径 |
 | `CODEX_WEB_OPEN_BROWSER` | `0`（`codex-web` 命令中为 `1`） | 启动后是否打开浏览器 |
+| `CODEX_WEB_PASSWORD_HASH` | 未设置 | 启用 Web UI 密码登录；值为 `scrypt-v1:<salt>:<hash>`，不要把明文密码写入仓库 |
+| `CODEX_WEB_PUBLIC_ORIGIN(S)` | 未设置 | 反向代理公开 Origin；多个 Origin 用逗号分隔 |
+| `CODEX_WEB_COOKIE_SECURE` | HTTPS Origin 自动启用 | 强制登录 Cookie 仅通过 HTTPS 发送 |
+| `CODEX_WEB_TRUST_PROXY` | `0` | 只在服务仍绑定回环地址且前方是可信反向代理时设为 `1` |
+| `CODEX_WEB_SESSION_COOKIE_NAME` | `my_codex_web_session` | 登录 Cookie 名；同一域名部署多个 Web UI 时应保持唯一 |
+| `CODEX_WEB_VSCODE_REMOTE_AUTHORITY` | 未设置 | 远程部署时使用的 VS Code Remote SSH authority，例如 `ssh-remote+hitsz-8h100-hq-server` |
 
 ## 开发
 
@@ -135,4 +141,6 @@ npm run schema:check
 
 ## 本地安全
 
-服务只绑定 `127.0.0.1`，校验 Origin、HttpOnly SameSite Cookie、CSRF Header 和 WebSocket 会话。HTTP API 不提供任意 Shell 或文件读取能力，日志默认不记录 Prompt、完整命令输出或文件内容。
+服务只绑定 `127.0.0.1`，校验 Origin、HttpOnly SameSite Cookie、CSRF Header 和 WebSocket 会话。HTTP API 不提供任意 Shell 或文件读取能力，日志默认不记录 Prompt、密码、完整命令输出或文件内容。
+
+如需通过 HTTPS 反向代理远程访问，必须显式配置公开 Origin，并建议同时设置 `CODEX_WEB_PASSWORD_HASH`。启用密码后，未认证浏览器无法读取 Bootstrap/API，也无法建立实时 WebSocket；登录失败会按来源 IP 限速。反向代理仍应只转发到服务的回环地址，不要把 Fastify 或 Codex App Server 直接绑定到公网。

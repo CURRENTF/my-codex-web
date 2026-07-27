@@ -26,6 +26,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const draft = useAppStore((state) => state.drafts[threadId] ?? ""); const setDraft = useAppStore((state) => state.setDraft);
   const pendingSubmission = useAppStore((state) => state.pendingSubmissions[threadId]);
   const beginSubmission = useAppStore((state) => state.beginSubmission);
+  const acceptSubmission = useAppStore((state) => state.acceptSubmission);
   const markSubmissionUncertain = useAppStore((state) => state.markSubmissionUncertain);
   const markSubmissionRetryReady = useAppStore((state) => state.markSubmissionRetryReady);
   const finishSubmission = useAppStore((state) => state.finishSubmission);
@@ -57,7 +58,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       return api(`/api/sessions/${threadId}/steer`, { method: "POST", body: JSON.stringify({ text, expectedTurnId, clientRequestId, clientUserMessageId }) });
     }
     return api(`/api/sessions/${threadId}/turns`, { method: "POST", body: JSON.stringify({ text, model, reasoning, accessMode, clientRequestId, clientUserMessageId }) });
-  }, onSuccess: () => { steerDraftTurnId.current = null; finishSubmission(threadId, true); setRace(false); setResolutionMessage(null); void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
+  }, onSuccess: () => { steerDraftTurnId.current = null; acceptSubmission(threadId); setRace(false); setResolutionMessage(null); void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
     void queryClient.invalidateQueries({ queryKey: ["session", threadId] });
     void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     if (apiErrorCode(error) === "operation_uncertain") {

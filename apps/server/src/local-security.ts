@@ -19,12 +19,17 @@ export function isAllowedSocketContext(
   return !!headers.host && allowedHosts.has(headers.host) && !!headers.origin && allowedOrigins.has(headers.origin);
 }
 
-export function localSecurityAllowLists(host: string, port: number, allowViteOrigin = false): {
+export function localSecurityAllowLists(host: string, port: number, allowViteOrigin = false, publicOrigins: readonly string[] = []): {
   allowedHosts: Set<string>;
   allowedOrigins: Set<string>;
 } {
   const allowedHosts = new Set([`${host}:${port}`, `localhost:${port}`]);
   const allowedOrigins = new Set([`http://${host}:${port}`, `http://localhost:${port}`]);
+  for (const origin of publicOrigins) {
+    const parsed = new URL(origin);
+    allowedHosts.add(parsed.host);
+    allowedOrigins.add(parsed.origin);
+  }
   if (allowViteOrigin) {
     allowedHosts.add("127.0.0.1:5173");
     allowedHosts.add("localhost:5173");

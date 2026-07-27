@@ -10,37 +10,95 @@ interface AppStore {
   pendingRequests: Record<string, PendingRequestSummary>;
   drafts: Record<string, string>;
   pendingSubmissions: Record<string, { draft: string; clientUserMessageId: string; state: "sending" | "uncertain" | "retryReady" }>;
+  optimisticUserMessages: Record<string, OptimisticUserMessage[]>;
   injectedPrefills: Record<string, string>;
   setDraft(threadId: string, text: string): void;
   beginSubmission(threadId: string, draft: string, clientUserMessageId: string): void;
+  acceptSubmission(threadId: string): void;
   markSubmissionUncertain(threadId: string): void;
   markSubmissionRetryReady(threadId: string, clientUserMessageId?: string): void;
   finishSubmission(threadId: string, clearDraft: boolean): void;
+  reconcileOptimisticUserMessages(threadId: string, confirmedClientIds: readonly string[]): void;
   restorePrefill(threadId: string, text: string): void;
   initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number, sessionPrefills?: Record<string, string>): void;
   markDisconnected(): void;
   consume(event: UiEvent): void;
 }
 
+export interface OptimisticUserMessage {
+  clientUserMessageId: string;
+  text: string;
+  state: "sending" | "queued" | "uncertain";
+}
+
+function withoutOptimisticMessages(
+  messagesByThread: Record<string, OptimisticUserMessage[]>,
+  threadId: string,
+  clientIds: readonly string[],
+): Record<string, OptimisticUserMessage[]> {
+  const messages = messagesByThread[threadId];
+  if (!messages?.length || !clientIds.length) return messagesByThread;
+  const confirmed = new Set(clientIds);
+  const remaining = messages.filter((message) => !confirmed.has(message.clientUserMessageId));
+  if (remaining.length === messages.length) return messagesByThread;
+  const next = { ...messagesByThread };
+  if (remaining.length) next[threadId] = remaining;
+  else delete next[threadId];
+  return next;
+}
+
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, injectedPrefills: {},
+  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: {}, injectedPrefills: {},
   setDraft: (threadId, text) => set((state) => {
     const injectedPrefills = { ...state.injectedPrefills };
     delete injectedPrefills[threadId];
     return { drafts: { ...state.drafts, [threadId]: text }, injectedPrefills };
   }),
-  beginSubmission: (threadId, draft, clientUserMessageId) => set((state) => ({
-    pendingSubmissions: {
-      ...state.pendingSubmissions,
-      [threadId]: { draft, clientUserMessageId, state: "sending" },
-    },
-  })),
+  beginSubmission: (threadId, draft, clientUserMessageId) => set((state) => {
+    const currentMessages = state.optimisticUserMessages[threadId] ?? [];
+    const optimisticMessage: OptimisticUserMessage = { clientUserMessageId, text: draft.trim(), state: "sending" };
+    const existingIndex = currentMessages.findIndex((message) => message.clientUserMessageId === clientUserMessageId);
+    const nextMessages = [...currentMessages];
+    if (existingIndex < 0) nextMessages.push(optimisticMessage);
+    else nextMessages[existingIndex] = optimisticMessage;
+    return {
+      pendingSubmissions: {
+        ...state.pendingSubmissions,
+        [threadId]: { draft, clientUserMessageId, state: "sending" },
+      },
+      optimisticUserMessages: { ...state.optimisticUserMessages, [threadId]: nextMessages },
+    };
+  }),
+  acceptSubmission: (threadId) => set((state) => {
+    const pending = state.pendingSubmissions[threadId];
+    if (!pending) return state;
+    const pendingSubmissions = { ...state.pendingSubmissions };
+    const drafts = { ...state.drafts };
+    delete pendingSubmissions[threadId];
+    if (drafts[threadId] === pending.draft) delete drafts[threadId];
+    const messages = state.optimisticUserMessages[threadId];
+    const optimisticUserMessages = messages?.some((message) => message.clientUserMessageId === pending.clientUserMessageId)
+      ? {
+          ...state.optimisticUserMessages,
+          [threadId]: messages.map((message) => message.clientUserMessageId === pending.clientUserMessageId
+            ? { ...message, state: "queued" as const }
+            : message),
+        }
+      : state.optimisticUserMessages;
+    return { pendingSubmissions, drafts, optimisticUserMessages };
+  }),
   markSubmissionUncertain: (threadId) => set((state) => {
     const pending = state.pendingSubmissions[threadId];
     return pending ? {
       pendingSubmissions: {
         ...state.pendingSubmissions,
         [threadId]: { ...pending, state: "uncertain" },
+      },
+      optimisticUserMessages: {
+        ...state.optimisticUserMessages,
+        [threadId]: (state.optimisticUserMessages[threadId] ?? []).map((message) => message.clientUserMessageId === pending.clientUserMessageId
+          ? { ...message, state: "uncertain" as const }
+          : message),
       },
     } : state;
   }),
@@ -56,6 +114,11 @@ export const useAppStore = create<AppStore>((set) => ({
           state: "retryReady",
         },
       },
+      optimisticUserMessages: withoutOptimisticMessages(
+        state.optimisticUserMessages,
+        threadId,
+        [pending.clientUserMessageId, ...(clientUserMessageId ? [clientUserMessageId] : [])],
+      ),
     };
   }),
   finishSubmission: (threadId, clearDraft) => set((state) => {
@@ -65,7 +128,15 @@ export const useAppStore = create<AppStore>((set) => ({
     const drafts = { ...state.drafts };
     delete pendingSubmissions[threadId];
     if (clearDraft && drafts[threadId] === pending.draft) delete drafts[threadId];
-    return { pendingSubmissions, drafts };
+    return {
+      pendingSubmissions,
+      drafts,
+      optimisticUserMessages: withoutOptimisticMessages(state.optimisticUserMessages, threadId, [pending.clientUserMessageId]),
+    };
+  }),
+  reconcileOptimisticUserMessages: (threadId, confirmedClientIds) => set((state) => {
+    const optimisticUserMessages = withoutOptimisticMessages(state.optimisticUserMessages, threadId, confirmedClientIds);
+    return optimisticUserMessages === state.optimisticUserMessages ? state : { optimisticUserMessages };
   }),
   restorePrefill: (threadId, text) => set((state) => {
     if (!text || Object.hasOwn(state.drafts, threadId)) return state;
@@ -135,7 +206,18 @@ export const useAppStore = create<AppStore>((set) => ({
       const pendingSubmissions = { ...state.pendingSubmissions };
       if (drafts[event.threadId] === pending.draft) delete drafts[event.threadId];
       delete pendingSubmissions[event.threadId];
-      return { ...sequenced, drafts, pendingSubmissions };
+      const messages = state.optimisticUserMessages[event.threadId] ?? [];
+      return {
+        ...sequenced,
+        drafts,
+        pendingSubmissions,
+        optimisticUserMessages: {
+          ...state.optimisticUserMessages,
+          [event.threadId]: messages.map((message) => message.clientUserMessageId === pending.clientUserMessageId
+            ? { ...message, state: "queued" as const }
+            : message),
+        },
+      };
     }
     if (event.type === "sideChat.created") {
       const sideChat = event.payload as SideChatRuntime;
@@ -150,10 +232,18 @@ export const useAppStore = create<AppStore>((set) => ({
       return { ...sequenced, deltas: { ...state.deltas, [payload.itemId]: (state.deltas[payload.itemId] ?? "") + payload.delta } };
     }
     if (event.type === "item.upserted") {
-      const payload = event.payload as { item?: { id?: string }; completedAtMs?: number; completed?: boolean };
+      const payload = event.payload as { item?: { id?: string; type?: string; clientId?: string | null }; completedAtMs?: number; completed?: boolean };
       const itemId = payload.item?.id;
-      if (!itemId || (!payload.completed && payload.completedAtMs === undefined) || state.deltas[itemId] === undefined) return sequenced;
-      const deltas = { ...state.deltas }; delete deltas[itemId]; return { ...sequenced, deltas };
+      const optimisticUserMessages = event.threadId && payload.item?.type === "userMessage" && payload.item.clientId
+        ? withoutOptimisticMessages(state.optimisticUserMessages, event.threadId, [payload.item.clientId])
+        : state.optimisticUserMessages;
+      if (!itemId || (!payload.completed && payload.completedAtMs === undefined) || state.deltas[itemId] === undefined) {
+        return optimisticUserMessages === state.optimisticUserMessages ? sequenced : { ...sequenced, optimisticUserMessages };
+      }
+      const deltas = { ...state.deltas }; delete deltas[itemId];
+      return optimisticUserMessages === state.optimisticUserMessages
+        ? { ...sequenced, deltas }
+        : { ...sequenced, deltas, optimisticUserMessages };
     }
     if (event.type === "pendingRequest.created") {
       const pending = event.payload as PendingRequestSummary;

@@ -8,6 +8,15 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly body: unknown) { super(message); }
 }
 
+export function isPasswordRequiredError(error: unknown): boolean {
+  return error instanceof ApiError
+    && error.status === 401
+    && typeof error.body === "object"
+    && error.body !== null
+    && "error" in error.body
+    && (error.body as { error?: unknown }).error === "password_required";
+}
+
 async function request<T>(path: string, init: RequestInit, allowSecurityRefresh: boolean): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
@@ -34,6 +43,13 @@ export async function bootstrap(): Promise<BootstrapPayload> {
   const payload = await api<BootstrapPayload>("/api/bootstrap", { cache: "no-store" });
   csrfToken = payload.csrfToken;
   return payload;
+}
+
+export async function authenticateWebUi(password: string): Promise<void> {
+  await request<{ ok: true }>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  }, false);
 }
 
 export const endpoints = {

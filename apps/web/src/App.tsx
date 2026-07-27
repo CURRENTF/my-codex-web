@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { FolderOpen, List, ShieldWarning, SpinnerGap, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import type { Preferences, Project, SessionSummary, UiEvent } from "@codex-web/shared-types";
-import { api, bootstrap, endpoints, newClientRequestId, type SessionPayload } from "./api";
+import { api, authenticateWebUi, bootstrap, endpoints, isPasswordRequiredError, newClientRequestId, type SessionPayload } from "./api";
 import { applySessionEvent } from "./live-session";
 import { COMPOSER_FOCUS_RETRY_DELAYS, shouldRestoreComposerFocus } from "./composer-focus";
 import { shouldWarnAboutParallelFullAccess } from "./parallel-write-warning";
@@ -26,6 +26,43 @@ function AuthGate() {
 
 function ConnectionGate() {
   return <main className="blocking-page"><div className="blocking-panel"><div className="blocking-icon"><WarningCircle size={28} weight="fill" /></div><h1>Codex App Server 连接中断</h1><p>本地服务正在尝试重新连接。恢复后刷新此页面；若持续失败，请检查服务日志和 Codex CLI。</p></div></main>;
+}
+
+function WebPasswordGate({ onAuthenticated }: { onAuthenticated(): Promise<void> }) {
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!password || submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await authenticateWebUi(password);
+      setPassword("");
+      await onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "登录失败，请重试。");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return <main className="blocking-page password-page">
+    <form className="blocking-panel password-panel" onSubmit={(event) => void submit(event)}>
+      <div className="blocking-icon password-icon"><LockKey size={27} weight="fill" /></div>
+      <div className="password-heading"><span>CODEX WEB</span><h1>进入工作区</h1></div>
+      <p>此服务可执行本机项目任务。请输入访问密码继续。</p>
+      <label className="password-field">
+        <span>访问密码</span>
+        <input autoFocus type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
+      </label>
+      {error && <p className="password-error" role="alert">{error}</p>}
+      <button className="button primary password-submit" type="submit" disabled={!password || submitting}>
+        {submitting ? <><SpinnerGap size={16} className="spinning" />正在验证</> : <>继续<LockKey size={15} /></>}
+      </button>
+      <p className="blocking-note">登录状态仅保存在当前浏览器的安全 Cookie 中。</p>
+    </form>
+  </main>;
 }
 
 function EmptyWorkspace({ onAdd }: { onAdd(): void }) {
@@ -58,7 +95,12 @@ export function App() {
       if (index === COMPOSER_FOCUS_RETRY_DELAYS.length - 1) { restoreMainComposerFocus.current = false; focusOrigin.current = null; }
     }, delay));
   }, []);
-  const bootstrapQuery = useQuery({ queryKey: ["bootstrap"], queryFn: bootstrap, staleTime: Infinity, retry: 2 });
+  const bootstrapQuery = useQuery({
+    queryKey: ["bootstrap"],
+    queryFn: bootstrap,
+    staleTime: Infinity,
+    retry: (failureCount, error) => !isPasswordRequiredError(error) && failureCount < 2,
+  });
   const bootstrapData = bootstrapQuery.data; const preferences = bootstrapData?.preferences;
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: endpoints.projects, enabled: !!bootstrapData });
   const allSessionsQuery = useQuery({ queryKey: ["sessions", "", preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions("", preferences?.sortDirection ?? "desc", signal), enabled: !!bootstrapData?.authReady });
@@ -316,6 +358,10 @@ export function App() {
   };
 
   if (bootstrapQuery.isLoading) return <main className="app-loading"><SpinnerGap size={26} className="spinning" /><span>正在连接 Codex App Server</span></main>;
+  if (isPasswordRequiredError(bootstrapQuery.error)) return <WebPasswordGate onAuthenticated={async () => {
+    const result = await bootstrapQuery.refetch();
+    if (result.error) throw result.error;
+  }} />;
   if (bootstrapQuery.isError || !bootstrapData) return <main className="blocking-page"><div className="blocking-panel"><TerminalWindow size={32} /><h1>服务初始化失败</h1><p>{bootstrapQuery.error?.message}</p><button className="button primary" onClick={() => bootstrapQuery.refetch()}>重试</button></div></main>;
   const gate = bootstrapGate(bootstrapData.connection.state, bootstrapData.authReady);
   if (gate === "disconnected") return <ConnectionGate />;
@@ -329,8 +375,8 @@ export function App() {
       </div>}
       <div className={`workspace-layout ${sideThreadId ? "with-side-chat" : ""} ${parallelWriteWarning ? "has-parallel-warning" : ""}`} style={sideThreadId ? { "--side-width": `${preferences?.sideChatWidth ?? 42}%` } as CSSProperties : undefined}>
         {sideThreadId && <div className="compact-workspace-header"><div className="mobile-pane-tabs"><button className={mobilePane === "main" ? "active" : ""} onClick={() => setMobilePane("main")}>Main Session</button><button className={mobilePane === "side" ? "active" : ""} onClick={() => setMobilePane("side")}>Side Chat</button></div>{parallelWriteWarning && <div className="compact-parallel-warning"><WarningCircle size={14} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}</div>}
-        <div className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><TerminalWindow size={30} /><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
-        {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
+        <div className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} vscodeRemoteAuthority={bootstrapData.vscodeRemoteAuthority} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><TerminalWindow size={30} /><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
+        {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} vscodeRemoteAuthority={bootstrapData.vscodeRemoteAuthority} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
     </main><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} />
   </div>;

@@ -10,8 +10,58 @@ beforeEach(() => useAppStore.setState({
   pendingRequests: {},
   drafts: {},
   pendingSubmissions: {},
+  optimisticUserMessages: {},
   injectedPrefills: {},
 }));
+
+describe("optimistic user-message lifecycle", () => {
+  it("keeps an accepted submission visible as queued until Codex materializes its client ID", () => {
+    const store = useAppStore.getState();
+    store.setDraft("thread-1", "follow up");
+    store.beginSubmission("thread-1", "follow up", "message-1");
+
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toEqual([
+      { clientUserMessageId: "message-1", text: "follow up", state: "sending" },
+    ]);
+
+    store.acceptSubmission("thread-1");
+    expect(useAppStore.getState().drafts["thread-1"]).toBeUndefined();
+    expect(useAppStore.getState().pendingSubmissions["thread-1"]).toBeUndefined();
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.[0]?.state).toBe("queued");
+
+    useAppStore.getState().consume({
+      seq: 1,
+      type: "item.upserted",
+      threadId: "thread-1",
+      emittedAt: 1,
+      payload: { turnId: "turn-1", item: { id: "user-1", type: "userMessage", clientId: "message-1", content: [{ type: "text", text: "follow up" }] } },
+    });
+
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toBeUndefined();
+  });
+
+  it("preserves multiple accepted messages and reconciles only the confirmed client ID", () => {
+    const store = useAppStore.getState();
+    store.beginSubmission("thread-1", "first", "message-1");
+    store.acceptSubmission("thread-1");
+    store.beginSubmission("thread-1", "second", "message-2");
+    store.acceptSubmission("thread-1");
+
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.map((message) => message.clientUserMessageId)).toEqual(["message-1", "message-2"]);
+    useAppStore.getState().reconcileOptimisticUserMessages("thread-1", ["message-1"]);
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.map((message) => message.clientUserMessageId)).toEqual(["message-2"]);
+  });
+
+  it("removes a failed optimistic message while preserving its draft", () => {
+    const store = useAppStore.getState();
+    store.setDraft("thread-1", "try again");
+    store.beginSubmission("thread-1", "try again", "message-1");
+    store.finishSubmission("thread-1", false);
+
+    expect(useAppStore.getState().drafts["thread-1"]).toBe("try again");
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toBeUndefined();
+  });
+});
 
 describe("live delta lifecycle", () => {
   it("clears a completed Item delta even when completedAtMs is absent", () => {

@@ -3,6 +3,7 @@ import { createReadStream, existsSync, mkdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import Fastify from "fastify";
+import type { FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
@@ -19,6 +20,7 @@ import { ActiveTurnConflictError, ActiveTurnIdentityError, ForkBoundaryError, Pr
 import { KeyedOperationLock } from "./keyed-operation-lock.js";
 import { ConnectionRecovery, type AppServerConnectionState } from "./connection-recovery.js";
 import { safeErrorForLog } from "./safe-error.js";
+import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -39,12 +41,25 @@ export async function createServer() {
   mkdirSync(path.join(config.dataDir, "logs"), { recursive: true, mode: 0o700 });
   const sessionToken = randomBytes(32).toString("base64url");
   const csrfToken = randomBytes(24).toString("base64url");
-  const { allowedHosts, allowedOrigins } = localSecurityAllowLists(config.host, config.port, config.allowViteOrigin);
+  const passwordRequired = config.passwordHash !== null;
+  const loginLimiter = new LoginAttemptLimiter();
+  const { allowedHosts, allowedOrigins } = localSecurityAllowLists(config.host, config.port, config.allowViteOrigin, config.publicOrigins);
   const app = Fastify({
-    logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.cookie", "req.headers.x-csrf-token", "body.text"] },
+    logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.cookie", "req.headers.x-csrf-token", "body.text", "body.password"] },
     bodyLimit: 2 * 1024 * 1024,
+    trustProxy: config.trustProxy,
   });
   await app.register(cookie);
+
+  const hasSession = (token: string | undefined) => secureEqual(token, sessionToken);
+  const setSessionCookie = (reply: FastifyReply) => {
+    reply.setCookie(config.sessionCookieName, sessionToken, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: config.cookieSecure,
+      path: "/",
+    });
+  };
 
   const repositories = new Repositories(config.databasePath);
   const adapter = new CodexAdapter({
@@ -55,7 +70,7 @@ export async function createServer() {
   });
   const authenticateSocket = (request: IncomingMessage) => {
     return isAllowedSocketContext({ host: request.headers.host, origin: request.headers.origin }, allowedHosts, allowedOrigins)
-      && secureEqual(parseCookieHeader(request.headers.cookie).codex_web_session, sessionToken);
+      && hasSession(parseCookieHeader(request.headers.cookie)[config.sessionCookieName]);
   };
   const events = new EventGateway(authenticateSocket);
   const runtimes = new ThreadRuntimeRegistry(events, repositories);
@@ -109,8 +124,12 @@ export async function createServer() {
     if (!request.url.startsWith("/api/")) return;
     const securityError = localRequestError(request.method, { host: request.headers.host, origin: request.headers.origin, fetchSite: request.headers["sec-fetch-site"] }, allowedHosts, allowedOrigins);
     if (securityError) return reply.code(403).send({ error: securityError });
-    if (request.url === "/api/health" || request.url === "/api/bootstrap") return;
-    if (!secureEqual(request.cookies.codex_web_session, sessionToken)) return reply.code(401).send({ error: "Invalid session" });
+    const pathname = request.url.split("?", 1)[0];
+    if (pathname === "/api/health" || pathname === "/api/auth/status" || pathname === "/api/auth/login") return;
+    if (pathname === "/api/bootstrap" && !passwordRequired) return;
+    if (!hasSession(request.cookies[config.sessionCookieName])) {
+      return reply.code(401).send({ error: passwordRequired ? "password_required" : "Invalid session" });
+    }
     if (request.method !== "GET" && request.method !== "HEAD" && !secureEqual(request.headers["x-csrf-token"] as string | undefined, csrfToken)) {
       return reply.code(403).send({ error: "Invalid CSRF token" });
     }
@@ -120,12 +139,13 @@ export async function createServer() {
   });
 
   app.addHook("onSend", async (_request, reply, payload) => {
+    const socketOrigins = [...allowedOrigins].map((origin) => origin.replace(/^http:/, "ws:").replace(/^https:/, "wss:"));
     reply.header("content-security-policy", [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
-      `connect-src 'self' ws://${config.host}:${config.port} ws://localhost:${config.port}`,
+      `connect-src 'self' ${socketOrigins.join(" ")}`,
       "font-src 'self'",
       "object-src 'none'",
       "base-uri 'none'",
@@ -158,15 +178,39 @@ export async function createServer() {
     return reply.code(500).send({ error: error instanceof Error ? error.message : "Unknown server error" });
   });
 
-  app.get("/api/health", async () => ({ ok: true, connection: connectionState, codexHome: config.codexHome }));
+  app.get("/api/health", async (request) => {
+    if (passwordRequired && !hasSession(request.cookies[config.sessionCookieName])) return { ok: true };
+    return { ok: true, connection: connectionState, codexHome: config.codexHome };
+  });
+  app.get("/api/auth/status", async (request) => ({
+    passwordRequired,
+    authenticated: !passwordRequired || hasSession(request.cookies[config.sessionCookieName]),
+  }));
+  app.post("/api/auth/login", async (request, reply) => {
+    const retryAfter = loginLimiter.retryAfterSeconds(request.ip);
+    if (retryAfter > 0) {
+      reply.header("retry-after", String(retryAfter));
+      return reply.code(429).send({ error: "too_many_attempts", message: "尝试次数过多，请稍后再试。" });
+    }
+    const { password } = z.object({ password: z.string().min(1).max(256) }).parse(request.body);
+    if (passwordRequired && !verifyPassword(password, config.passwordHash!)) {
+      const blockedFor = loginLimiter.recordFailure(request.ip);
+      if (blockedFor > 0) reply.header("retry-after", String(blockedFor));
+      return reply.code(401).send({ error: "invalid_password", message: "密码不正确。" });
+    }
+    loginLimiter.recordSuccess(request.ip);
+    setSessionCookie(reply);
+    return { ok: true };
+  });
   app.get("/api/bootstrap", async (_request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");
-    reply.setCookie("codex_web_session", sessionToken, { httpOnly: true, sameSite: "strict", secure: false, path: "/" });
+    if (!passwordRequired) setSessionCookie(reply);
     return {
       eventSeq: events.currentSeq,
       connection: { state: connectionState, codexVersion: null },
       authReady: adapter.account !== null,
       csrfToken,
+      vscodeRemoteAuthority: config.vscodeRemoteAuthority,
       projects: repositories.listProjects(),
       preferences: repositories.getPreferences(),
       models: adapter.models,

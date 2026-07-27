@@ -33,4 +33,15 @@ describe("local HTTP and WebSocket boundary", () => {
     expect(development.allowedHosts.has("127.0.0.1:5173")).toBe(true);
     expect(development.allowedOrigins.has("http://127.0.0.1:5173")).toBe(true);
   });
+
+  it("allows only explicitly configured public reverse-proxy origins", () => {
+    const production = localSecurityAllowLists("127.0.0.1", 12100, false, ["https://8.134.70.136:12100"]);
+    expect(production.allowedHosts.has("8.134.70.136:12100")).toBe(true);
+    expect(production.allowedOrigins.has("https://8.134.70.136:12100")).toBe(true);
+    expect(production.allowedOrigins.has("http://8.134.70.136:12100")).toBe(false);
+    expect(isAllowedSocketContext({
+      host: "8.134.70.136:12100",
+      origin: "https://8.134.70.136:12100",
+    }, production.allowedHosts, production.allowedOrigins)).toBe(true);
+  });
 });
