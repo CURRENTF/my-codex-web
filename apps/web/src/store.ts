@@ -12,6 +12,7 @@ interface AppStore {
   pendingSubmissions: Record<string, { draft: string; clientUserMessageId: string; state: "sending" | "uncertain" | "retryReady" }>;
   optimisticUserMessages: Record<string, OptimisticUserMessage[]>;
   injectedPrefills: Record<string, string>;
+  queuedSlashCommands: Record<string, QueuedSlashCommand>;
   setDraft(threadId: string, text: string): void;
   beginSubmission(threadId: string, draft: string, clientUserMessageId: string): void;
   acceptSubmission(threadId: string): void;
@@ -20,6 +21,8 @@ interface AppStore {
   finishSubmission(threadId: string, clearDraft: boolean): void;
   reconcileOptimisticUserMessages(threadId: string, confirmedClientIds: readonly string[]): void;
   restorePrefill(threadId: string, text: string): void;
+  queueSlashCommand(threadId: string, command: QueuedSlashCommand): void;
+  clearQueuedSlashCommand(threadId: string, clientRequestId?: string): void;
   initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number, sessionPrefills?: Record<string, string>): void;
   markDisconnected(): void;
   consume(event: UiEvent): void;
@@ -29,6 +32,36 @@ export interface OptimisticUserMessage {
   clientUserMessageId: string;
   text: string;
   state: "sending" | "queued" | "uncertain";
+}
+
+export interface QueuedSlashCommand {
+  raw: string;
+  clientRequestId: string;
+  createdAt: number;
+}
+
+const QUEUED_SLASH_STORAGE_KEY = "codex-web:queued-slash-commands:v1";
+
+function readQueuedSlashCommands(): Record<string, QueuedSlashCommand> {
+  if (typeof window === "undefined") return {};
+  try {
+    const value = JSON.parse(window.localStorage.getItem(QUEUED_SLASH_STORAGE_KEY) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).flatMap(([threadId, command]) => {
+      if (!command || typeof command !== "object") return [];
+      const candidate = command as Partial<QueuedSlashCommand>;
+      return typeof candidate.raw === "string" && typeof candidate.clientRequestId === "string" && typeof candidate.createdAt === "number"
+        ? [[threadId, candidate as QueuedSlashCommand]]
+        : [];
+    }));
+  } catch {
+    return {};
+  }
+}
+
+function persistQueuedSlashCommands(commands: Record<string, QueuedSlashCommand>): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(QUEUED_SLASH_STORAGE_KEY, JSON.stringify(commands)); } catch { /* storage can be unavailable in private contexts */ }
 }
 
 function withoutOptimisticMessages(
@@ -48,7 +81,7 @@ function withoutOptimisticMessages(
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: {}, injectedPrefills: {},
+  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: {}, injectedPrefills: {}, queuedSlashCommands: readQueuedSlashCommands(),
   setDraft: (threadId, text) => set((state) => {
     const injectedPrefills = { ...state.injectedPrefills };
     delete injectedPrefills[threadId];
@@ -144,6 +177,19 @@ export const useAppStore = create<AppStore>((set) => ({
       drafts: { ...state.drafts, [threadId]: text },
       injectedPrefills: { ...state.injectedPrefills, [threadId]: text },
     };
+  }),
+  queueSlashCommand: (threadId, command) => set((state) => {
+    const queuedSlashCommands = { ...state.queuedSlashCommands, [threadId]: command };
+    persistQueuedSlashCommands(queuedSlashCommands);
+    return { queuedSlashCommands };
+  }),
+  clearQueuedSlashCommand: (threadId, clientRequestId) => set((state) => {
+    const current = state.queuedSlashCommands[threadId];
+    if (!current || (clientRequestId && current.clientRequestId !== clientRequestId)) return state;
+    const queuedSlashCommands = { ...state.queuedSlashCommands };
+    delete queuedSlashCommands[threadId];
+    persistQueuedSlashCommands(queuedSlashCommands);
+    return { queuedSlashCommands };
   }),
   initialize: (runtimes, sideChats, deltas = {}, pendingRequests = [], connectionState = "connected", eventSeq = 0, sessionPrefills = {}) => set((state) => {
     const drafts = { ...state.drafts };

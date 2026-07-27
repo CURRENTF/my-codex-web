@@ -12,6 +12,7 @@ beforeEach(() => useAppStore.setState({
   pendingSubmissions: {},
   optimisticUserMessages: {},
   injectedPrefills: {},
+  queuedSlashCommands: {},
 }));
 
 describe("optimistic user-message lifecycle", () => {
@@ -60,6 +61,20 @@ describe("optimistic user-message lifecycle", () => {
 
     expect(useAppStore.getState().drafts["thread-1"]).toBe("try again");
     expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toBeUndefined();
+  });
+});
+
+describe("queued Slash command lifecycle", () => {
+  it("keeps one command per Session and clears only the matching request", () => {
+    const command = { raw: "/compact", clientRequestId: "request-compact", createdAt: 123 };
+    useAppStore.getState().queueSlashCommand("thread-1", command);
+    expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toEqual(command);
+
+    useAppStore.getState().clearQueuedSlashCommand("thread-1", "different-request");
+    expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toEqual(command);
+
+    useAppStore.getState().clearQueuedSlashCommand("thread-1", "request-compact");
+    expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toBeUndefined();
   });
 });
 

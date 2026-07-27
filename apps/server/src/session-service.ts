@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
-import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, OperationUncertainError, type AdapterEvent, type AdapterPendingRequest, type SessionSettings } from "@codex-web/codex-adapter";
+import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, OperationUncertainError, type AdapterEvent, type AdapterPendingRequest, type ReviewTarget, type SessionSettings, type SkillReference } from "@codex-web/codex-adapter";
 import { Repositories, type ProjectSessionRow } from "./database.js";
 import { ProjectIndexer } from "./project-indexer.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
@@ -43,6 +43,12 @@ export class ReconciliationPendingError extends Error {
   constructor() { super("Observed Codex children are still materializing; reconnect reconciliation will retry"); }
 }
 
+export class UnknownSkillError extends Error {
+  constructor(readonly skillNames: string[]) {
+    super(`Unknown or disabled Skill: ${skillNames.join(", ")}`);
+  }
+}
+
 export const SIDE_CHAT_ACTIVE_TURN_ID_WAIT_MS = 2_000;
 export const SIDE_CHAT_TERMINAL_WAIT_MS = 30_000;
 
@@ -71,6 +77,15 @@ type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
 type SnapshotItem = SnapshotTurn["items"][number];
 
+function removeSkillMentions(text: string, names: readonly string[]): string {
+  let next = text;
+  for (const name of [...names].sort((left, right) => right.length - left.length)) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    next = next.replace(new RegExp(`(?:^|\\s)\\$${escaped}(?=$|\\s|[.,;:!?，。；：！？])`, "g"), (match) => match.startsWith(" ") ? " " : "");
+  }
+  return next.replace(/[ \t]{2,}/g, " ").replace(/^[ \t]+/gm, "").trim();
+}
+
 function snapshotHasClientUserMessage(snapshot: SessionSnapshot, turnId: string, clientUserMessageId: string): boolean {
   return snapshot.turns.find((turn) => turn.id === turnId)?.items.some((item) => (
     item.type === "userMessage" && item.clientId === clientUserMessageId
@@ -89,6 +104,29 @@ function terminalizeSnapshotTurn(turn: SnapshotTurn): SnapshotTurn {
 
 function terminalizeSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
   return { ...snapshot, turns: snapshot.turns.map(terminalizeSnapshotTurn) };
+}
+
+export function restoreSnapshotSkillReferences(snapshot: SessionSnapshot, references: ReadonlyMap<string, readonly string[]>): SessionSnapshot {
+  return {
+    ...snapshot,
+    turns: snapshot.turns.map((turn) => ({
+      ...turn,
+      items: turn.items.map((item) => {
+        if (item.type !== "userMessage" || !item.clientId) return item;
+        const names = references.get(item.clientId);
+        if (!names?.length) return item;
+        const existingNames = item.content.flatMap((part) => part.type === "skill" && part.name ? [part.name] : []);
+        const orderedNames = [...new Set([...names, ...existingNames])];
+        return {
+          ...item,
+          content: [
+            ...orderedNames.map((name) => ({ type: "skill", name })),
+            ...item.content.filter((part) => part.type !== "skill"),
+          ],
+        };
+      }),
+    })),
+  };
 }
 
 export function assertValidForkBoundary(turns: SnapshotTurn[], lastTurnId: string | null): void {
@@ -388,6 +426,7 @@ export class SessionService extends EventEmitter {
     ]);
     const snapshot = this.sessionSnapshots.get(threadId);
     let thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : terminalizeSessionSnapshot(persistedThread);
+    thread = this.withPersistedSkillReferences(threadId, thread);
     this.sessionSnapshots.set(threadId, thread);
     this.clearPrefillAfterTurnStart(threadId, thread.turns);
     this.goalPresence.set(threadId, goal !== null);
@@ -534,6 +573,27 @@ export class SessionService extends EventEmitter {
     })));
   }
 
+  async listProjectSkills(projectId: string) {
+    const project = this.requireAvailableProject(projectId);
+    return this.adapter.listSkills(project.canonicalPath);
+  }
+
+  private async resolveSkills(cwd: string, skillNames: readonly string[]): Promise<{ skills: SkillReference[]; textNames: string[] }> {
+    const textNames = [...new Set(skillNames.map((name) => name.trim()).filter(Boolean))];
+    if (!textNames.length) return { skills: [], textNames: [] };
+    const available = await this.adapter.listSkills(cwd);
+    const byName = new Map(available.map((skill) => [skill.name, skill]));
+    const unknown = textNames.filter((name) => !byName.has(name));
+    if (unknown.length) throw new UnknownSkillError(unknown);
+    return {
+      textNames,
+      skills: textNames.map((name) => {
+        const skill = byName.get(name)!;
+        return { name: skill.name, path: skill.path };
+      }),
+    };
+  }
+
   private async finalizeCreatedSession(thread: SessionSnapshot, recovery: PendingSessionRecovery, rollbackOnFailure: boolean) {
     this.settings.set(thread.id, recovery.settings);
     this.sessionSnapshots.set(thread.id, thread);
@@ -556,18 +616,22 @@ export class SessionService extends EventEmitter {
     return { thread, settings: recovery.settings };
   }
 
-  async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string }, clientRequestId: string) {
+  async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string; skillNames?: string[] }, clientRequestId: string) {
     return this.idempotentUserMessage(threadId, "turn", input.clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
       this.assertNoActiveTurn(threadId, "Starting another Turn");
       const mapping = this.requireMapping(threadId);
       const project = this.requireAvailableProject(mapping.project_id);
       await this.ensureSessionSettings(threadId);
       const settings = this.resolveSettings(project.id, input, threadId);
+      const resolvedSkills = await this.resolveSkills(mapping.cwd_snapshot ?? project.canonicalPath, input.skillNames ?? []);
+      const promptText = removeSkillMentions(text, resolvedSkills.textNames);
+      this.persistSkillReferences(threadId, input.clientUserMessageId, resolvedSkills.textNames);
       const previousLastTurnId = this.sessionSnapshots.get(threadId)?.turns.at(-1)?.id;
       let response;
       try {
-        response = await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, text, settings, input.clientUserMessageId);
+        response = await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, promptText, settings, input.clientUserMessageId, resolvedSkills.skills);
       } catch (error) {
+        if (!(error instanceof OperationUncertainError)) this.removePersistedSkillReferences(threadId, input.clientUserMessageId);
         if (error instanceof OperationUncertainError) {
           this.uncertainTurnBaselines.set(threadId, previousLastTurnId);
           this.uncertainTurnMessageIds.set(threadId, input.clientUserMessageId);
@@ -587,14 +651,23 @@ export class SessionService extends EventEmitter {
     }));
   }
 
-  async steer(threadId: string, text: string, expectedTurnId: string, clientUserMessageId: string, clientRequestId: string) {
+  async steer(threadId: string, text: string, expectedTurnId: string, clientUserMessageId: string, clientRequestId: string, skillNames: string[] = []) {
     return this.idempotentUserMessage(threadId, "steer", clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
       if (this.uncertainSteers.has(threadId)) throw new SessionDisconnectedError("Steer");
       const runtime = this.runtimes.get(threadId);
       if (!runtime.activeTurnId || runtime.activeTurnId !== expectedTurnId) throw new SteerConflictError();
+      let resolvedSkills: { skills: SkillReference[]; textNames: string[] } = { skills: [], textNames: [] };
+      if (skillNames.length) {
+        const mapping = this.requireMapping(threadId);
+        const project = this.requireAvailableProject(mapping.project_id);
+        resolvedSkills = await this.resolveSkills(mapping.cwd_snapshot ?? project.canonicalPath, skillNames);
+      }
+      const promptText = removeSkillMentions(text, resolvedSkills.textNames);
+      this.persistSkillReferences(threadId, clientUserMessageId, resolvedSkills.textNames);
       try {
-        return await this.adapter.steerTurn(threadId, expectedTurnId, text, clientUserMessageId);
+        return await this.adapter.steerTurn(threadId, expectedTurnId, promptText, clientUserMessageId, resolvedSkills.skills);
       } catch (error) {
+        if (!(error instanceof OperationUncertainError)) this.removePersistedSkillReferences(threadId, clientUserMessageId);
         if (error instanceof OperationUncertainError) {
           this.uncertainSteers.set(threadId, { expectedTurnId, clientUserMessageId, draft: text });
           this.runtimes.markOperationUncertain(threadId, expectedTurnId);
@@ -620,6 +693,28 @@ export class SessionService extends EventEmitter {
         }
       }
       if (activeTurnId) await this.adapter.interruptTurn(threadId, activeTurnId);
+    });
+  }
+
+  async compact(threadId: string): Promise<void> {
+    this.assertPersistentSession(threadId, "Context compaction");
+    return this.withLock(threadId, async () => {
+      this.assertSessionReconciled(threadId, "Context compaction");
+      this.assertNoActiveTurn(threadId, "Context compaction");
+      await this.adapter.compactThread(threadId);
+    });
+  }
+
+  async startReview(threadId: string, target: ReviewTarget) {
+    this.assertPersistentSession(threadId, "Review");
+    return this.withLock(threadId, async () => {
+      this.assertSessionReconciled(threadId, "Review");
+      this.assertNoActiveTurn(threadId, "Review");
+      const response = await this.adapter.startReview(threadId, target);
+      if (response.reviewThreadId !== threadId) throw new Error("Inline Review started in an unexpected Session");
+      this.upsertSnapshotTurn(threadId, response.turn);
+      this.runtimes.setActiveTurn(threadId, response.turn.id);
+      return response;
     });
   }
 
@@ -1273,6 +1368,23 @@ export class SessionService extends EventEmitter {
     const current = this.settings.get(threadId);
     if (current) return current;
     return this.projectDefaults(threadId);
+  }
+
+  private withPersistedSkillReferences(threadId: string, snapshot: SessionSnapshot): SessionSnapshot {
+    if (this.runtimes.getSideChat(threadId)) return snapshot;
+    const references = new Map((this.repositories.listMessageSkillReferences?.(threadId) ?? [])
+      .map((row) => [row.client_user_message_id, row.skill_names] as const));
+    return references.size ? restoreSnapshotSkillReferences(snapshot, references) : snapshot;
+  }
+
+  private persistSkillReferences(threadId: string, clientUserMessageId: string, skillNames: readonly string[]): void {
+    if (!skillNames.length || this.runtimes.getSideChat(threadId)) return;
+    this.repositories.setMessageSkillReferences?.(threadId, clientUserMessageId, skillNames);
+  }
+
+  private removePersistedSkillReferences(threadId: string, clientUserMessageId: string): void {
+    if (this.runtimes.getSideChat(threadId)) return;
+    this.repositories.removeMessageSkillReferences?.(threadId, clientUserMessageId);
   }
 
   private async ensureSessionSettings(threadId: string): Promise<SessionSettings> {

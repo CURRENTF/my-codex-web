@@ -46,6 +46,11 @@ export interface ThreadUiStateRow {
   last_viewed_at: number | null;
 }
 
+export interface MessageSkillReferenceRow {
+  client_user_message_id: string;
+  skill_names: string[];
+}
+
 export class Repositories {
   readonly db: Database.Database;
 
@@ -156,6 +161,36 @@ export class Repositories {
     return mapping;
   }
 
+  setMessageSkillReferences(threadId: string, clientUserMessageId: string, skillNames: readonly string[]): void {
+    const uniqueNames = [...new Set(skillNames.map((name) => name.trim()).filter(Boolean))];
+    if (!uniqueNames.length) {
+      this.removeMessageSkillReferences(threadId, clientUserMessageId);
+      return;
+    }
+    this.db.prepare(`INSERT INTO message_skill_refs (
+      thread_id, client_user_message_id, skill_names_json, created_at
+    ) VALUES (?, ?, ?, ?) ON CONFLICT(thread_id, client_user_message_id) DO UPDATE SET
+      skill_names_json=excluded.skill_names_json`).run(threadId, clientUserMessageId, JSON.stringify(uniqueNames), Date.now());
+  }
+
+  listMessageSkillReferences(threadId: string): MessageSkillReferenceRow[] {
+    const rows = this.db.prepare(`SELECT client_user_message_id, skill_names_json
+      FROM message_skill_refs WHERE thread_id = ? ORDER BY created_at ASC`).all(threadId) as Array<{ client_user_message_id: string; skill_names_json: string }>;
+    return rows.flatMap((row) => {
+      try {
+        const parsed = JSON.parse(row.skill_names_json) as unknown;
+        if (!Array.isArray(parsed) || !parsed.every((name) => typeof name === "string")) return [];
+        return [{ client_user_message_id: row.client_user_message_id, skill_names: parsed }];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  removeMessageSkillReferences(threadId: string, clientUserMessageId: string): void {
+    this.db.prepare("DELETE FROM message_skill_refs WHERE thread_id = ? AND client_user_message_id = ?").run(threadId, clientUserMessageId);
+  }
+
   getPreferences(): Preferences {
     const result = { ...DEFAULT_PREFERENCES } as Record<string, unknown>;
     const rows = this.db.prepare("SELECT key, value_json FROM preferences").all() as Array<{ key: string; value_json: string }>;
@@ -230,6 +265,12 @@ export class Repositories {
       CREATE TABLE IF NOT EXISTS thread_ui_state (
         thread_id TEXT PRIMARY KEY, last_completed_at INTEGER,
         last_terminal_status TEXT, last_viewed_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS message_skill_refs (
+        thread_id TEXT NOT NULL, client_user_message_id TEXT NOT NULL,
+        skill_names_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY(thread_id, client_user_message_id),
+        FOREIGN KEY(thread_id) REFERENCES project_sessions(thread_id) ON DELETE CASCADE
       );
       CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `);

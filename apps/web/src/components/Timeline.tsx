@@ -9,7 +9,7 @@ import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfir
 import { AgentMessage } from "./AgentMessage";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
-function textFromUser(item: Extract<CodexItem, { type: "userMessage" }>): string { return item.content.map((part) => part.text ?? part.path ?? "").filter(Boolean).join("\n"); }
+function textFromUser(item: Extract<CodexItem, { type: "userMessage" }>): string { return item.content.map((part) => part.type === "skill" && part.name ? `$${part.name}` : part.text ?? part.path ?? "").filter(Boolean).join("\n"); }
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
   for (const line of diff.split("\n")) {

@@ -2,13 +2,36 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { Thread } from "@codex-web/codex-schema/v2/Thread";
 import { JsonRpcError, JsonRpcMutationResponseTimeoutError, OperationUncertainError, pendingRequestResponse, projectAdapterEvent, projectPendingRequest } from "@codex-web/codex-adapter";
-import { ActiveTurnConflictError, ActiveTurnIdentityError, assertValidForkBoundary, DEFERRED_CHILD_RECOVERY_DELAY_MS, ForkBoundaryError, isSteerTurnConflictError, isUnmaterializedSessionReadError, ProjectUnavailableError, ReconciliationPendingError, recoveryThreadSource, resolveSessionSettings, SessionDisconnectedError, SessionService, SideChatCloseTimeoutError, SIDE_CHAT_ACTIVE_TURN_ID_WAIT_MS, SIDE_CHAT_TERMINAL_WAIT_MS, UNCERTAIN_CHILD_BACKGROUND_TTL_MS, UncertainTurnAppliedError } from "../../apps/server/src/session-service.js";
+import { ActiveTurnConflictError, ActiveTurnIdentityError, assertValidForkBoundary, DEFERRED_CHILD_RECOVERY_DELAY_MS, ForkBoundaryError, isSteerTurnConflictError, isUnmaterializedSessionReadError, ProjectUnavailableError, ReconciliationPendingError, recoveryThreadSource, resolveSessionSettings, restoreSnapshotSkillReferences, SessionDisconnectedError, SessionService, SideChatCloseTimeoutError, SIDE_CHAT_ACTIVE_TURN_ID_WAIT_MS, SIDE_CHAT_TERMINAL_WAIT_MS, UNCERTAIN_CHILD_BACKGROUND_TTL_MS, UncertainTurnAppliedError, UnknownSkillError } from "../../apps/server/src/session-service.js";
 
 function turn(id: string, status: Thread["turns"][number]["status"]): Thread["turns"][number] {
   return { id, status, itemsView: "full", error: null, startedAt: 1, completedAt: status === "inProgress" ? null : 2, durationMs: status === "inProgress" ? null : 1_000, items: [] };
 }
 
 describe("session operation rules", () => {
+  it("restores Skill labels by client message ID without exposing paths or duplicating live Skill parts", () => {
+    const snapshot = {
+      id: "thread-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null,
+      turns: [{ ...turn("turn-1", "completed"), items: [{
+        type: "userMessage" as const,
+        id: "message-item",
+        clientId: "message-1",
+        content: [{ type: "skill", name: "caveman" }, { type: "text", text: "hello" }],
+      }] }],
+    };
+
+    const restored = restoreSnapshotSkillReferences(snapshot, new Map([
+      ["message-1", ["caveman", "Academic Figure Prompt"]],
+    ]));
+
+    expect(restored.turns[0]?.items[0]).toEqual(expect.objectContaining({ content: [
+      { type: "skill", name: "caveman" },
+      { type: "skill", name: "Academic Figure Prompt" },
+      { type: "text", text: "hello" },
+    ] }));
+    expect(JSON.stringify(restored)).not.toContain("SKILL.md");
+  });
+
   it("recognizes both empty-rollout variants as transient Session materialization races", () => {
     expect(isUnmaterializedSessionReadError(new JsonRpcError("no rollout found for thread id redacted", -32600))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not materialized yet"))).toBe(true);
@@ -157,6 +180,87 @@ describe("session operation rules", () => {
     await expect(Promise.all([first, retry])).resolves.toHaveLength(2);
     expect(adapter.startTurn).toHaveBeenCalledTimes(1);
     expect(runtimes.setActiveTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves, deduplicates, and sends enabled Skills as structured Turn input", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ settings: { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" as const } })),
+      listSkills: vi.fn(async () => [{ name: "design-taste-frontend", description: "Design", path: "/skills/design/SKILL.md", scope: "user" as const }]),
+      startTurn: vi.fn(async () => ({ turn: turn("turn-skill", "inProgress") })),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      setActiveTurn: vi.fn(), getSideChat: vi.fn(() => undefined), notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await service.startTurn("thread-1", "$design-taste-frontend redesign this", {
+      clientUserMessageId: "message-skill", skillNames: ["design-taste-frontend", "design-taste-frontend"],
+    }, "request-skill");
+
+    expect(adapter.listSkills).toHaveBeenCalledWith("/tmp/project");
+    expect(adapter.startTurn).toHaveBeenCalledWith(
+      "thread-1", "/tmp/project", "redesign this",
+      { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" }, "message-skill",
+      [{ name: "design-taste-frontend", path: "/skills/design/SKILL.md" }],
+    );
+  });
+
+  it("rejects unknown or disabled Skills before starting a Turn", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })),
+      listSkills: vi.fn(async () => []), startTurn: vi.fn(),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = { get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })), getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await expect(service.startTurn("thread-1", "$missing do it", { clientUserMessageId: "message-missing", skillNames: ["missing"] }, "request-missing"))
+      .rejects.toThrow(UnknownSkillError);
+    expect(adapter.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("sends structured Skills when steering an active Turn", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      listSkills: vi.fn(async () => [{ name: "review", description: "Review", path: "/skills/review/SKILL.md", scope: "repo" as const }]),
+      steerTurn: vi.fn(async () => ({ turnId: "active-turn" })),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+    };
+    const runtimes = { get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeTurnId: "active-turn", activeFlags: [], pendingRequestIds: [] })), getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    await service.steer("thread-1", "$review check this", "active-turn", "message-steer", "request-steer", ["review"]);
+    expect(adapter.steerTurn).toHaveBeenCalledWith("thread-1", "active-turn", "check this", "message-steer", [{ name: "review", path: "/skills/review/SKILL.md" }]);
+  });
+
+  it("starts compact and inline review only while the Session is idle", async () => {
+    const reviewTurn = turn("review-turn", "inProgress");
+    const adapter = Object.assign(new EventEmitter(), {
+      compactThread: vi.fn(async () => undefined),
+      startReview: vi.fn(async () => ({ reviewThreadId: "thread-1", turn: reviewTurn })),
+    });
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined), setActiveTurn: vi.fn(), notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService({} as never, adapter as never, {} as never, runtimes as never);
+
+    await service.compact("thread-1");
+    await service.startReview("thread-1", { type: "uncommittedChanges" });
+
+    expect(adapter.compactThread).toHaveBeenCalledWith("thread-1");
+    expect(adapter.startReview).toHaveBeenCalledWith("thread-1", { type: "uncommittedChanges" });
+    expect(runtimes.setActiveTurn).toHaveBeenCalledWith("thread-1", "review-turn");
   });
 
   it("does not start a second Turn when active status arrived without a Turn ID", async () => {

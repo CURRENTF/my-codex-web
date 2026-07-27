@@ -119,6 +119,55 @@ describe("Codex Adapter initialization", () => {
     ]);
   });
 
+  it("lists enabled skills for the project cwd and sends selected skills as structured input", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "skills/list") return {
+        data: [{
+          cwd: "/tmp/project",
+          errors: [],
+          skills: [
+            { name: "design-taste-frontend", description: "Frontend design workflow", path: "/skills/design/SKILL.md", scope: "user", enabled: true },
+            { name: "design-taste-frontend", description: "Shadowed duplicate", path: "/repo/skills/design/SKILL.md", scope: "repo", enabled: true },
+            { name: "disabled-skill", description: "Disabled", path: "/skills/disabled/SKILL.md", scope: "user", enabled: false },
+          ],
+        }],
+      };
+      if (method === "turn/start") return { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: null, completedAt: null, durationMs: null, error: null } };
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    const skills = await adapter.listSkills("/tmp/project");
+    expect(skills).toEqual([expect.objectContaining({ name: "design-taste-frontend", path: "/skills/design/SKILL.md" })]);
+
+    await adapter.startTurn("thread-1", "/tmp/project", "redesign this", { model: null, reasoning: null, accessMode: "fullAccess" }, "message-1", skills);
+    expect(request).toHaveBeenCalledWith("turn/start", expect.objectContaining({
+      input: [
+        { type: "skill", name: "design-taste-frontend", path: "/skills/design/SKILL.md" },
+        { type: "text", text: "redesign this", text_elements: [] },
+      ],
+    }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
+  });
+
+  it("uses dedicated App Server methods for compact and review commands", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "review/start") return {
+        reviewThreadId: "thread-1",
+        turn: { id: "review-turn", status: "inProgress", items: [], startedAt: null, completedAt: null, durationMs: null, error: null },
+      };
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await adapter.compactThread("thread-1");
+    await adapter.startReview("thread-1", { type: "uncommittedChanges" });
+
+    expect(request).toHaveBeenCalledWith("thread/compact/start", { threadId: "thread-1" }, NON_IDEMPOTENT_MUTATION_TIMEOUT);
+    expect(request).toHaveBeenCalledWith("review/start", { threadId: "thread-1", target: { type: "uncommittedChanges" }, delivery: "inline" }, NON_IDEMPOTENT_MUTATION_TIMEOUT);
+  });
+
   it("does not repeat a successful account check when model loading is retried", async () => {
     let modelAttempts = 0;
     const request = vi.fn(async (method: string) => {

@@ -56,6 +56,20 @@ describe("Codex UI projection", () => {
     });
   });
 
+  it("projects Skill names without leaking their absolute filesystem paths", () => {
+    expect(projectThreadItem({
+      type: "userMessage",
+      id: "user-skill",
+      clientId: "client-skill",
+      content: [{ type: "skill", name: "design-taste-frontend", path: "/private/skills/design/SKILL.md" }],
+    })).toEqual({
+      type: "userMessage",
+      id: "user-skill",
+      clientId: "client-skill",
+      content: [{ type: "skill", name: "design-taste-frontend" }],
+    });
+  });
+
   it("drops unknown protocol fields from turn and delta events", () => {
     const turn = projectTurn({ id: "turn-1", status: "inProgress", itemsView: "full", error: null, startedAt: 10, completedAt: null, durationMs: null, items: [
       { type: "agentMessage", id: "agent-1", text: "working", phase: "commentary", memoryCitation: null },

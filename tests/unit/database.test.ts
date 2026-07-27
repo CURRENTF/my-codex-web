@@ -47,4 +47,20 @@ describe("SQLite repositories", () => {
     expect(repositories.setSessionAccessModeOverride("t1", "readOnly").access_mode_override).toBe("readOnly");
     expect(repositories.getProject("p1")?.defaultAccessMode).toBe("fullAccess");
   });
+
+  it("persists Skill display metadata without storing Skill paths and removes it with the Session mapping", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({ thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1 });
+
+    repositories.setMessageSkillReferences("t1", "message-1", ["caveman", "caveman", "Academic Figure Prompt"]);
+    expect(repositories.listMessageSkillReferences("t1")).toEqual([{
+      client_user_message_id: "message-1",
+      skill_names: ["caveman", "Academic Figure Prompt"],
+    }]);
+
+    repositories.removeProjectSession("t1");
+    expect(repositories.listMessageSkillReferences("t1")).toEqual([]);
+  });
 });

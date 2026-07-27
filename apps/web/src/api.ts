@@ -1,4 +1,4 @@
-import type { BootstrapPayload, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn } from "@codex-web/shared-types";
+import type { BootstrapPayload, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption } from "@codex-web/shared-types";
 
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
@@ -54,6 +54,7 @@ export async function authenticateWebUi(password: string): Promise<void> {
 
 export const endpoints = {
   projects: () => api<Project[]>("/api/projects"),
+  skills: (projectId: string, signal?: AbortSignal) => api<SkillOption[]>(`/api/projects/${projectId}/skills`, { signal }),
   sessions: (search = "", sortDirection: "asc" | "desc" = "desc", signal?: AbortSignal) => api<SessionSummary[]>(`/api/sessions?sortDirection=${sortDirection}&search=${encodeURIComponent(search)}`, { signal }),
   session: (threadId: string, signal?: AbortSignal) => api<SessionPayload>(`/api/sessions/${threadId}`, { signal }),
   preferences: (changes: Partial<Preferences>) => api<Preferences>("/api/preferences", { method: "PATCH", body: JSON.stringify({ ...changes, clientRequestId: newClientRequestId() }) }),

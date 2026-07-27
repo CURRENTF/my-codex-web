@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isAllowedSocketContext, localRequestError, localSecurityAllowLists, parseCookieHeader } from "../../apps/server/src/local-security";
 
 const hosts = new Set(["127.0.0.1:7373"]);
 const origins = new Set(["http://127.0.0.1:7373"]);
+const serverSource = readFileSync(fileURLToPath(new URL("../../apps/server/src/server.ts", import.meta.url)), "utf8");
 
 describe("local HTTP and WebSocket boundary", () => {
   it("requires exact Host and Origin for writes", () => {
@@ -43,5 +46,11 @@ describe("local HTTP and WebSocket boundary", () => {
       host: "8.134.70.136:12100",
       origin: "https://8.134.70.136:12100",
     }, production.allowedHosts, production.allowedOrigins)).toBe(true);
+  });
+
+  it("allows bundled data fonts without weakening script or object CSP", () => {
+    expect(serverSource).toContain("font-src 'self' data:");
+    expect(serverSource).toContain("script-src 'self'");
+    expect(serverSource).toContain("object-src 'none'");
   });
 });

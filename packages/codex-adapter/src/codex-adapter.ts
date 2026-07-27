@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
-import type { AccessMode, Goal, ModelOption, SessionThread, SessionTurn } from "@codex-web/shared-types";
+import type { AccessMode, Goal, ModelOption, SessionThread, SessionTurn, SkillOption } from "@codex-web/shared-types";
 import type { Account } from "@codex-web/codex-schema/v2/Account";
 import type { GetAccountResponse } from "@codex-web/codex-schema/v2/GetAccountResponse";
 import type { ModelListResponse } from "@codex-web/codex-schema/v2/ModelListResponse";
+import type { ReviewStartResponse } from "@codex-web/codex-schema/v2/ReviewStartResponse";
+import type { ReviewTarget } from "@codex-web/codex-schema/v2/ReviewTarget";
+import type { SkillsListResponse } from "@codex-web/codex-schema/v2/SkillsListResponse";
 import type { ThreadForkResponse } from "@codex-web/codex-schema/v2/ThreadForkResponse";
 import type { ThreadGoal } from "@codex-web/codex-schema/v2/ThreadGoal";
 import type { ThreadGoalGetResponse } from "@codex-web/codex-schema/v2/ThreadGoalGetResponse";
@@ -19,6 +22,8 @@ import { projectAdapterEvent } from "./adapter-events.js";
 import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
 import { projectThread, projectTurn } from "./ui-projection.js";
+
+export type { ReviewTarget } from "@codex-web/codex-schema/v2/ReviewTarget";
 
 export interface AdapterOptions {
   cwd: string;
@@ -54,6 +59,11 @@ export interface ListedSession {
 
 export interface GoalUpdate {
   threadId: string; objective?: string; status?: "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete"; tokenBudget?: number | null;
+}
+
+export interface SkillReference {
+  name: string;
+  path: string;
 }
 
 export class OperationUncertainError extends Error {
@@ -102,6 +112,13 @@ function sandboxPolicy(accessMode: AccessMode, cwd: string) {
 
 function reasoningConfig(settings: Pick<SessionSettings, "reasoning">): { model_reasoning_effort: string } | undefined {
   return settings.reasoning ? { model_reasoning_effort: settings.reasoning } : undefined;
+}
+
+function promptInput(text: string, skills: readonly SkillReference[]) {
+  return [
+    ...skills.map((skill) => ({ type: "skill" as const, name: skill.name, path: skill.path })),
+    ...(text.trim() ? [{ type: "text" as const, text, text_elements: [] }] : []),
+  ];
 }
 
 export function isThreadMaterializationRace(error: unknown): boolean {
@@ -278,6 +295,16 @@ export class CodexAdapter extends EventEmitter {
     }));
   }
 
+  async listSkills(cwd: string): Promise<SkillOption[]> {
+    const response = await this.supervisor.transport.request<SkillsListResponse>("skills/list", { cwds: [cwd], forceReload: false });
+    const seen = new Set<string>();
+    return response.data.flatMap((entry) => entry.skills).flatMap((skill) => {
+      if (!skill.enabled || seen.has(skill.name)) return [];
+      seen.add(skill.name);
+      return [{ name: skill.name, description: skill.description, path: skill.path, scope: skill.scope }];
+    });
+  }
+
   async listSessions(input: ListSessionsInput = {}): Promise<{ data: ListedSession[]; nextCursor: string | null }> {
     const response = await this.supervisor.transport.request<ThreadListResponse>("thread/list", {
       cursor: input.cursor ?? null,
@@ -320,11 +347,11 @@ export class CodexAdapter extends EventEmitter {
     return { thread: projectThread(response.thread) };
   }
 
-  async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string): Promise<{ turn: SessionTurn }> {
+  async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string, skills: readonly SkillReference[] = []): Promise<{ turn: SessionTurn }> {
     const response = await this.nonIdempotentMutation<TurnStartResponse>("turn/start", {
       threadId,
       clientUserMessageId,
-      input: [{ type: "text", text, text_elements: [] }],
+      input: promptInput(text, skills),
       cwd,
       model: settings.model ?? null,
       effort: settings.reasoning ?? null,
@@ -334,12 +361,12 @@ export class CodexAdapter extends EventEmitter {
     return { turn: projectTurn(response.turn) };
   }
 
-  async steerTurn(threadId: string, expectedTurnId: string, text: string, clientUserMessageId: string): Promise<{ turnId: string }> {
+  async steerTurn(threadId: string, expectedTurnId: string, text: string, clientUserMessageId: string, skills: readonly SkillReference[] = []): Promise<{ turnId: string }> {
     return this.nonIdempotentMutation("turn/steer", {
       threadId,
       expectedTurnId,
       clientUserMessageId,
-      input: [{ type: "text", text, text_elements: [] }],
+      input: promptInput(text, skills),
     });
   }
 
@@ -480,6 +507,15 @@ export class CodexAdapter extends EventEmitter {
 
   async clearGoal(threadId: string): Promise<void> {
     await this.acknowledgedMutation("thread/goal/clear", { threadId });
+  }
+
+  async compactThread(threadId: string): Promise<void> {
+    await this.nonIdempotentMutation("thread/compact/start", { threadId });
+  }
+
+  async startReview(threadId: string, target: ReviewTarget): Promise<{ reviewThreadId: string; turn: SessionTurn }> {
+    const response = await this.nonIdempotentMutation<ReviewStartResponse>("review/start", { threadId, target, delivery: "inline" });
+    return { reviewThreadId: response.reviewThreadId, turn: projectTurn(response.turn) };
   }
 
   restartForRecovery(): boolean {

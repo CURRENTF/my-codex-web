@@ -65,6 +65,7 @@ export class JsonRpcMutationConnectionLostError extends Error {
 const retryableReadMethods = new Set([
   "account/read",
   "model/list",
+  "skills/list",
   "thread/list",
   "thread/read",
   "thread/goal/get",

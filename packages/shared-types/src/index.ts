@@ -116,7 +116,7 @@ export interface Goal {
 }
 
 export type SessionItem =
-  | { type: "userMessage"; id: string; clientId?: string | null; content: Array<{ type: string; text?: string; path?: string }> }
+  | { type: "userMessage"; id: string; clientId?: string | null; content: Array<{ type: string; text?: string; path?: string; name?: string }> }
   | { type: "agentMessage"; id: string; text: string; phase?: string }
   | { type: "reasoning"; id: string; summary: string[] }
   | { type: "plan"; id: string; text: string }
@@ -159,6 +159,13 @@ export interface ModelOption {
   defaultReasoning: string;
   supportedReasoning: Array<{ effort: string; description?: string }>;
   inputModalities: string[];
+}
+
+export interface SkillOption {
+  name: string;
+  description: string;
+  path: string;
+  scope: "user" | "repo" | "system" | "admin";
 }
 
 export interface Preferences {

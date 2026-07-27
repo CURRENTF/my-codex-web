@@ -6,7 +6,7 @@ import type { TurnPlanUpdatedNotification } from "@codex-web/codex-schema/v2/Tur
 import type { FileChangePatchUpdatedNotification } from "@codex-web/codex-schema/v2/FileChangePatchUpdatedNotification";
 
 export function projectThreadItem(item: ThreadItem): SessionItem | null {
-  if (item.type === "userMessage") return { type: "userMessage", id: item.id, clientId: item.clientId, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part ? { path: part.path } : {}) })) };
+  if (item.type === "userMessage") return { type: "userMessage", id: item.id, clientId: item.clientId, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part && part.type !== "skill" ? { path: part.path } : {}), ...("name" in part ? { name: part.name } : {}) })) };
   if (item.type === "agentMessage") return { type: "agentMessage", id: item.id, text: item.text, ...(item.phase ? { phase: item.phase } : {}) };
   if (item.type === "reasoning") return { type: "reasoning", id: item.id, summary: item.summary };
   if (item.type === "plan") return { type: "plan", id: item.id, text: item.text };

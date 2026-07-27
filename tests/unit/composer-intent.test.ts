@@ -34,4 +34,8 @@ describe("Composer submission intent", () => {
     expect(composerSource).toContain("const blocked = (disabled || disconnected) && !running");
     expect(composerSource).toContain("Session 尚未完成重同步");
   });
+
+  it("clears remembered Steer intent when a Slash command is queued for the next Turn", () => {
+    expect(composerSource).toMatch(/const queueCommand[\s\S]*steerDraftTurnId\.current = null;[\s\S]*queueSlashCommand/);
+  });
 });

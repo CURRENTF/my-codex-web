@@ -7,7 +7,7 @@ import type { FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { CodexAdapter, OperationUncertainError } from "@codex-web/codex-adapter";
+import { CodexAdapter, OperationUncertainError, type ReviewTarget } from "@codex-web/codex-adapter";
 import { config } from "./config.js";
 import { Repositories } from "./database.js";
 import { EventGateway } from "./event-gateway.js";
@@ -16,7 +16,7 @@ import { ProjectIndexer } from "./project-indexer.js";
 import { RequestDeduplicator } from "./request-deduplicator.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
 import { isAllowedSocketContext, localRequestError, localSecurityAllowLists, parseCookieHeader } from "./local-security.js";
-import { ActiveTurnConflictError, ActiveTurnIdentityError, ForkBoundaryError, ProjectUnavailableError, SessionDisconnectedError, SessionService, SideChatCloseTimeoutError, SteerConflictError, UncertainTurnAppliedError } from "./session-service.js";
+import { ActiveTurnConflictError, ActiveTurnIdentityError, ForkBoundaryError, ProjectUnavailableError, SessionDisconnectedError, SessionService, SideChatCloseTimeoutError, SteerConflictError, UncertainTurnAppliedError, UnknownSkillError } from "./session-service.js";
 import { KeyedOperationLock } from "./keyed-operation-lock.js";
 import { ConnectionRecovery, type AppServerConnectionState } from "./connection-recovery.js";
 import { safeErrorForLog } from "./safe-error.js";
@@ -29,6 +29,13 @@ const settingsSchema = z.object({
   reasoning: z.string().nullable().optional(),
   accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]).optional(),
 });
+const skillNamesSchema = z.array(z.string().trim().min(1).max(200)).max(20).default([]);
+const reviewTargetSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("uncommittedChanges") }),
+  z.object({ type: z.literal("baseBranch"), branch: z.string().trim().min(1).max(500) }),
+  z.object({ type: z.literal("commit"), sha: z.string().trim().min(1).max(200), title: z.string().max(500).nullable().default(null) }),
+  z.object({ type: z.literal("custom"), instructions: z.string().trim().min(1).max(10_000) }),
+]);
 
 function secureEqual(left: string | undefined, right: string): boolean {
   if (!left) return false;
@@ -146,7 +153,7 @@ export async function createServer() {
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       `connect-src 'self' ${socketOrigins.join(" ")}`,
-      "font-src 'self'",
+      "font-src 'self' data:",
       "object-src 'none'",
       "base-uri 'none'",
       "frame-ancestors 'none'",
@@ -168,6 +175,7 @@ export async function createServer() {
     if (error instanceof SessionDisconnectedError) return reply.code(409).send({ error: "session_disconnected", message: error.message });
     if (error instanceof UncertainTurnAppliedError) return reply.code(409).send({ error: "uncertain_turn_applied", message: error.message });
     if (error instanceof SideChatCloseTimeoutError) return reply.code(409).send({ error: "side_chat_still_running", message: error.message });
+    if (error instanceof UnknownSkillError) return reply.code(400).send({ error: "unknown_skill", message: error.message, skillNames: error.skillNames });
     if (error instanceof OperationUncertainError) {
       return reply.code(503).send({
         error: "operation_uncertain",
@@ -223,6 +231,7 @@ export async function createServer() {
   });
   app.get("/api/models", async () => adapter.models);
   app.get("/api/projects", async () => repositories.listProjects());
+  app.get("/api/projects/:projectId/skills", async (request) => sessions.listProjectSkills(idSchema.parse((request.params as { projectId: string }).projectId)));
   app.get("/api/preferences", async () => repositories.getPreferences());
   app.patch("/api/preferences", async (request) => {
     const { clientRequestId, ...changes } = z.object({
@@ -314,13 +323,24 @@ export async function createServer() {
   });
   app.post("/api/sessions/:threadId/turns", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const body = settingsSchema.extend({ text: z.string().trim().min(1).max(100_000), clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema }).parse(request.body);
+    const body = settingsSchema.extend({ text: z.string().trim().min(1).max(100_000), skillNames: skillNamesSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema }).parse(request.body);
     return once(request, body.clientRequestId, () => sessions.startTurn(threadId, body.text, body, body.clientRequestId));
   });
   app.post("/api/sessions/:threadId/steer", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const body = z.object({ text: z.string().trim().min(1), expectedTurnId: idSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema }).parse(request.body);
-    return once(request, body.clientRequestId, () => sessions.steer(threadId, body.text, body.expectedTurnId, body.clientUserMessageId, body.clientRequestId));
+    const body = z.object({ text: z.string().trim().min(1).max(100_000), skillNames: skillNamesSchema, expectedTurnId: idSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema }).parse(request.body);
+    return once(request, body.clientRequestId, () => sessions.steer(threadId, body.text, body.expectedTurnId, body.clientUserMessageId, body.clientRequestId, body.skillNames));
+  });
+  app.post("/api/sessions/:threadId/compact", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
+    await once(request, clientRequestId, () => sessions.compact(threadId));
+    return { ok: true };
+  });
+  app.post("/api/sessions/:threadId/review", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const { target, clientRequestId } = z.object({ target: reviewTargetSchema, clientRequestId: requestIdSchema }).parse(request.body);
+    return once(request, clientRequestId, () => sessions.startReview(threadId, target as ReviewTarget));
   });
   app.post("/api/sessions/:threadId/interrupt", async (request) => {
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
