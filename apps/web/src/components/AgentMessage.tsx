@@ -4,7 +4,7 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
-import { parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
+import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
 import { vscodeFileUri } from "../editor-uri";
 
 function MarkdownMessage({ text, vscodeRemoteAuthority }: { text: string; vscodeRemoteAuthority: string | null }) {
@@ -22,7 +22,7 @@ function MarkdownMessage({ text, vscodeRemoteAuthority }: { text: string; vscode
         return <span>{children}</span>;
       },
     }}
-  >{text}</ReactMarkdown>;
+  >{normalizeLooseDisplayMath(text)}</ReactMarkdown>;
 }
 
 function CodeCommentCard({ comment, vscodeRemoteAuthority }: { comment: CodeCommentBlock; vscodeRemoteAuthority: string | null }) {

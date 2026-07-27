@@ -33,6 +33,9 @@ interface ParsedDirective {
 }
 
 const gitReceiptActions = new Set(["stage", "commit", "push", "create-branch", "create-pr"]);
+const displayMathCommand = /\\(?:frac|dfrac|tfrac|text|mathrm|mathbf|mathit|operatorname|sqrt|sum|prod|int|begin|left|right|mathbb|mathcal|bm|cdot|times|top|infty)(?:\b|(?=[{[]))/;
+const maxLooseDisplayMathLines = 24;
+const maxLooseDisplayMathCharacters = 4_000;
 
 function parseFiniteNumber(value: string | undefined): number | null {
   if (value === undefined || value === "") return null;
@@ -113,6 +116,82 @@ function directiveBlock(line: string): CodeCommentBlock | GitReceiptBlock | null
     };
   }
   return null;
+}
+
+function isEscaped(value: string, index: number): boolean {
+  let slashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) slashes += 1;
+  return slashes % 2 === 1;
+}
+
+export function normalizeLooseDisplayMath(text: string): string {
+  const lines = text.split("\n");
+  const normalized: string[] = [];
+  let fence: string | null = null;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]!;
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      normalized.push(line);
+      if (fenceMatch && fenceMatch[1]![0] === fence[0] && fenceMatch[1]!.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fenceMatch) {
+      fence = fenceMatch[1]!;
+      normalized.push(line);
+      continue;
+    }
+
+    const opening = /^( {0,3})\[\s*/.exec(line);
+    if (!opening) {
+      normalized.push(line);
+      continue;
+    }
+    const indent = opening[1]!;
+    const openColumn = line.indexOf("[", indent.length);
+    let depth = 0;
+    let closingLine = -1;
+    let closingColumn = -1;
+    let candidateCharacters = 0;
+    const lastCandidateLine = Math.min(lines.length - 1, lineIndex + maxLooseDisplayMathLines - 1);
+    for (let candidateLine = lineIndex; candidateLine <= lastCandidateLine; candidateLine += 1) {
+      const candidate = lines[candidateLine]!;
+      candidateCharacters += candidate.length + 1;
+      if (candidateCharacters > maxLooseDisplayMathCharacters) break;
+      const firstColumn = candidateLine === lineIndex ? openColumn : 0;
+      for (let column = firstColumn; column < candidate.length; column += 1) {
+        if (isEscaped(candidate, column)) continue;
+        if (candidate[column] === "[") depth += 1;
+        else if (candidate[column] === "]") {
+          depth -= 1;
+          if (depth === 0) {
+            if (!candidate.slice(column + 1).trim()) {
+              closingLine = candidateLine;
+              closingColumn = column;
+            }
+            break;
+          }
+        }
+      }
+      if (depth <= 0) break;
+    }
+    if (closingLine < 0) {
+      normalized.push(line);
+      continue;
+    }
+
+    const contentLines = lines.slice(lineIndex, closingLine + 1);
+    contentLines[0] = contentLines[0]!.slice(openColumn + 1);
+    contentLines[contentLines.length - 1] = contentLines.at(-1)!.slice(0, closingLine === lineIndex ? closingColumn - openColumn - 1 : closingColumn);
+    const content = contentLines.join("\n").trim();
+    if (!displayMathCommand.test(content)) {
+      normalized.push(line);
+      continue;
+    }
+    normalized.push(`${indent}$$`, content, `${indent}$$`);
+    lineIndex = closingLine;
+  }
+  return normalized.join("\n");
 }
 
 export function parseAgentMessage(text: string): AgentMessageBlock[] {

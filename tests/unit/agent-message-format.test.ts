@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAgentMessage, parseInlineMessageLinks } from "../../apps/web/src/agent-message-format";
+import { normalizeLooseDisplayMath, parseAgentMessage, parseInlineMessageLinks } from "../../apps/web/src/agent-message-format";
 
 describe("Agent message Codex directives", () => {
   it("parses code comments with quoted text and numeric metadata", () => {
@@ -49,5 +49,12 @@ describe("Agent message Codex directives", () => {
       { kind: "text", text: "[脚本](javascript:alert)" },
       { kind: "text", text: "。" },
     ]);
+  });
+
+  it("normalizes standalone bracketed LaTeX without touching ordinary brackets or code", () => {
+    expect(normalizeLooseDisplayMath("[ \\text{replay amplification}\n\\frac{\\text{所有请求的 input tokens 总和}} {\\text{该 session 实际新增的 token 总和}} ]")).toBe(
+      "$$\n\\text{replay amplification}\n\\frac{\\text{所有请求的 input tokens 总和}} {\\text{该 session 实际新增的 token 总和}}\n$$",
+    );
+    expect(normalizeLooseDisplayMath("[普通说明]\n\n```text\n[ \\frac{a}{b} ]\n```")).toBe("[普通说明]\n\n```text\n[ \\frac{a}{b} ]\n```");
   });
 });

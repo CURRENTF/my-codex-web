@@ -24,6 +24,14 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain("operatorname");
   });
 
+  it("renders standalone bracketed LaTeX emitted without math delimiters", () => {
+    const html = render("[ \\text{replay amplification}\n\\frac{\\text{所有请求的 input tokens 总和}} {\\text{该 session 实际新增的 token 总和}} ]");
+    expect(html).toContain("katex-display");
+    expect(html).toContain("replay amplification");
+    expect(html).toContain("mfrac");
+    expect(html).not.toContain("[ ");
+  });
+
   it("does not render raw HTML from an agent message", () => {
     const html = render('<script>alert("owned")</script><img src=x onerror=alert(1)>');
     expect(html).not.toContain("<script");
