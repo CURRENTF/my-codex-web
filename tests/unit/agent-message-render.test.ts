@@ -32,6 +32,13 @@ describe("Agent message Markdown rendering", () => {
     expect(html).not.toContain("[ ");
   });
 
+  it("renders standard LaTeX display delimiters stored by Codex", () => {
+    const html = render("\\[\n\\text{replay amplification}\n=\n\\frac{\\text{所有请求的 input tokens 总和}}\n{\\text{该 session 实际新增的 token 总和}}\n\\]");
+    expect(html).toContain("katex-display");
+    expect(html).toContain("replay amplification");
+    expect(html).toContain("mfrac");
+  });
+
   it("does not render raw HTML from an agent message", () => {
     const html = render('<script>alert("owned")</script><img src=x onerror=alert(1)>');
     expect(html).not.toContain("<script");

@@ -142,6 +142,42 @@ export function normalizeLooseDisplayMath(text: string): string {
       continue;
     }
 
+    const texOpening = /^( {0,3})\\\[\s*/.exec(line);
+    if (texOpening) {
+      const indent = texOpening[1]!;
+      const openColumn = line.indexOf("\\[", indent.length);
+      let closingLine = -1;
+      let closingColumn = -1;
+      let candidateCharacters = 0;
+      const lastCandidateLine = Math.min(lines.length - 1, lineIndex + maxLooseDisplayMathLines - 1);
+      for (let candidateLine = lineIndex; candidateLine <= lastCandidateLine; candidateLine += 1) {
+        const candidate = lines[candidateLine]!;
+        candidateCharacters += candidate.length + 1;
+        if (candidateCharacters > maxLooseDisplayMathCharacters) break;
+        const firstColumn = candidateLine === lineIndex ? openColumn + 2 : 0;
+        for (let column = firstColumn; column < candidate.length - 1; column += 1) {
+          if (candidate[column] !== "\\" || candidate[column + 1] !== "]" || isEscaped(candidate, column)) continue;
+          if (!candidate.slice(column + 2).trim()) {
+            closingLine = candidateLine;
+            closingColumn = column;
+          }
+          break;
+        }
+        if (closingLine >= 0) break;
+      }
+      if (closingLine >= 0) {
+        const contentLines = lines.slice(lineIndex, closingLine + 1);
+        contentLines[0] = contentLines[0]!.slice(openColumn + 2);
+        contentLines[contentLines.length - 1] = contentLines.at(-1)!.slice(0, closingLine === lineIndex ? closingColumn - openColumn - 2 : closingColumn);
+        const content = contentLines.join("\n").trim();
+        if (content) {
+          normalized.push(`${indent}$$`, content, `${indent}$$`);
+          lineIndex = closingLine;
+          continue;
+        }
+      }
+    }
+
     const opening = /^( {0,3})\[\s*/.exec(line);
     if (!opening) {
       normalized.push(line);

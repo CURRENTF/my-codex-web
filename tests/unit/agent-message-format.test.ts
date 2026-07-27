@@ -57,4 +57,13 @@ describe("Agent message Codex directives", () => {
     );
     expect(normalizeLooseDisplayMath("[普通说明]\n\n```text\n[ \\frac{a}{b} ]\n```")).toBe("[普通说明]\n\n```text\n[ \\frac{a}{b} ]\n```");
   });
+
+  it("normalizes standard LaTeX display delimiters from stored Codex messages", () => {
+    const storedMessage = "\\[\n\\text{replay amplification}\n=\n\\frac{\\text{所有请求的 input tokens 总和}}\n{\\text{该 session 实际新增的 token 总和}}\n\\]";
+    expect(normalizeLooseDisplayMath(storedMessage)).toBe(
+      "$$\n\\text{replay amplification}\n=\n\\frac{\\text{所有请求的 input tokens 总和}}\n{\\text{该 session 实际新增的 token 总和}}\n$$",
+    );
+    expect(normalizeLooseDisplayMath("```text\n\\[\n\\frac{a}{b}\n\\]\n```")).toBe("```text\n\\[\n\\frac{a}{b}\n\\]\n```");
+    expect(normalizeLooseDisplayMath("\\\\[ordinary escaped text\\\\]")).toBe("\\\\[ordinary escaped text\\\\]");
+  });
 });
