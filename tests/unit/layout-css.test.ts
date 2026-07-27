@@ -33,6 +33,17 @@ describe("viewport layout CSS", () => {
     expect(rule(".delivery-mode-toggle")).toContain("height: 27px");
     expect(rule(".delivery-mode-track")).toContain("width: 22px");
     expect(rule(".delivery-mode-toggle.queue")).toContain("color: var(--accent)");
-    expect(styles).toMatch(/@container session-pane \(max-width: 430px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
+    expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
+  });
+
+  it("lets the running Composer toolbar shrink without widening its pane", () => {
+    expect(rule(".composer-wrap")).toContain("max-width: 100%");
+    expect(rule(".composer-wrap")).toContain("min-width: 0");
+    expect(rule(".composer-toolbar")).toContain("min-width: 0");
+    expect(rule(".composer-toolbar")).toContain("overflow: hidden");
+    expect(rule(".access-control, .inline-select")).toContain("min-width: 0");
+    expect(rule(".access-control select, .inline-select select")).toContain("width: 100%");
+    expect(rule(".access-control select, .inline-select select")).toContain("min-width: 0");
+    expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 29px");
   });
 });
