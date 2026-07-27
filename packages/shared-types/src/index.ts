@@ -47,8 +47,14 @@ export interface ThreadRuntime {
   state: RuntimeState;
   activeFlags: string[];
   pendingRequestIds: string[];
+  contextUsage?: ContextUsage;
   lastCompletedAt?: number;
   lastTerminalStatus?: "completed" | "interrupted" | "failed";
+}
+
+export interface ContextUsage {
+  usedTokens: number;
+  maxTokens: number | null;
 }
 
 export interface SideChatRuntime extends ThreadRuntime {

@@ -380,6 +380,9 @@ export class ThreadRuntimeRegistry {
         this.events.publish("goal.cleared", { threadId }, this.ids(threadId));
         this.events.publish("session.summary.updated", { reason: "goal-cleared" }, { threadId });
         break;
+      case "tokenUsageUpdated":
+        this.setRuntime(threadId, { contextUsage: event.contextUsage });
+        break;
       case "settingsUpdated":
         this.events.publish("session.settings.updated", { settings: event.settings }, this.ids(threadId));
         break;

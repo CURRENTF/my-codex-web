@@ -128,6 +128,14 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .breadcrumb { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--text-faint); font-size: 12px; }
 .breadcrumb strong { overflow: hidden; max-width: 280px; color: var(--text); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .header-status { display: flex; align-items: center; gap: 5px; color: var(--text-soft); font-size: 11px; white-space: nowrap; }
+.context-usage { --context-usage-color: var(--accent); display: grid; min-width: 150px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 2px 6px; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--context-usage-color) 18%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--context-usage-color) 5%, transparent); color: var(--text-faint); font-size: 9px; line-height: 1; white-space: nowrap; }
+.context-usage.warning { --context-usage-color: var(--warning); }
+.context-usage.danger { --context-usage-color: var(--danger); }
+.context-usage-label { font-weight: 650; }
+.context-usage-value { overflow: hidden; color: var(--text-soft); font-variant-numeric: tabular-nums; text-overflow: ellipsis; }
+.context-usage strong { color: var(--context-usage-color); font-size: 10px; font-variant-numeric: tabular-nums; }
+.context-usage-track { height: 2px; overflow: hidden; grid-column: 1 / -1; border-radius: 999px; background: color-mix(in srgb, var(--context-usage-color) 15%, var(--line)); }
+.context-usage-track i { display: block; height: 100%; border-radius: inherit; background: var(--context-usage-color); transition: width .2s ease; }
 .header-spacer { flex: 1; }
 .header-button { display: inline-flex; height: 32px; align-items: center; gap: 6px; padding: 0 9px; border-radius: 8px; background: transparent; color: var(--text-soft); font-size: 12px; text-decoration: none; white-space: nowrap; cursor: pointer; }
 .header-button:hover { background: var(--surface-hover); color: var(--text); }
@@ -423,6 +431,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 
 @container session-pane (max-width: 760px) {
   .session-header { padding: 0 12px; }
+  .context-usage { min-width: 52px; grid-template-columns: 1fr; justify-items: center; padding-right: 6px; padding-left: 6px; }
+  .context-usage-label, .context-usage-value { display: none; }
+  .context-usage-track { width: 100%; grid-column: 1; }
   .header-button { width: 32px; padding: 0; justify-content: center; font-size: 0; }
   .goal-stats { display: none; }
   .breadcrumb strong { max-width: 34cqw; }

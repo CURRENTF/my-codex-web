@@ -1,4 +1,4 @@
-import type { Goal, ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn } from "@codex-web/shared-types";
+import type { ContextUsage, Goal, ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn } from "@codex-web/shared-types";
 import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
 import { projectFileChangePatch, projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnPlan } from "./ui-projection.js";
 import type { SessionSettings } from "./codex-adapter.js";
@@ -11,6 +11,7 @@ export type AdapterEvent =
   | { type: "itemDelta"; threadId: string; turnId?: string; delta: ItemDeltaUiEventPayload }
   | { type: "goalUpdated"; threadId: string; goal: Goal }
   | { type: "goalCleared"; threadId: string }
+  | { type: "tokenUsageUpdated"; threadId: string; contextUsage: ContextUsage }
   | { type: "settingsUpdated"; threadId: string; settings: SessionSettings }
   | { type: "nameUpdated"; threadId: string; name?: string }
   | { type: "serverRequestResolved"; requestId: string };
@@ -68,6 +69,18 @@ export function projectAdapterEvent(notification: Notification): AdapterEvent | 
     return goal && typeof goal === "object" ? { type: "goalUpdated", threadId, goal: goal as Goal } : null;
   }
   if (notification.method === "thread/goal/cleared") return { type: "goalCleared", threadId };
+  if (notification.method === "thread/tokenUsage/updated") {
+    const tokenUsage = params.tokenUsage;
+    if (!tokenUsage || typeof tokenUsage !== "object") return null;
+    const { last, modelContextWindow } = tokenUsage as { last?: unknown; modelContextWindow?: unknown };
+    if (!last || typeof last !== "object") return null;
+    const usedTokens = (last as { totalTokens?: unknown }).totalTokens;
+    const validUsedTokens = typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
+    const validContextWindow = modelContextWindow === null
+      || (typeof modelContextWindow === "number" && Number.isFinite(modelContextWindow) && modelContextWindow >= 0);
+    if (!validUsedTokens || !validContextWindow) return null;
+    return { type: "tokenUsageUpdated", threadId, contextUsage: { usedTokens, maxTokens: modelContextWindow } };
+  }
   if (notification.method === "thread/settings/updated") {
     const settings = params.threadSettings;
     return isThreadSettings(settings) ? { type: "settingsUpdated", threadId, settings: projectSettings(settings) } : null;

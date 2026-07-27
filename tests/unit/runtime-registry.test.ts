@@ -23,6 +23,26 @@ function pending(registry: ThreadRuntimeRegistry, request: { id: number; method:
 }
 
 describe("runtime projection", () => {
+  it("publishes current context usage through runtime.changed", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const runtimeEvents: Array<{ type: string; payload: unknown }> = [];
+    events.on("event", (event) => runtimeEvents.push(event));
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+
+    notify(registry, { method: "thread/tokenUsage/updated", params: {
+      threadId: "t1",
+      turnId: "turn-1",
+      tokenUsage: { total: { totalTokens: 800_000 }, last: { totalTokens: 28_400 }, modelContextWindow: 258_000 },
+    } });
+
+    expect(registry.get("t1").contextUsage).toEqual({ usedTokens: 28_400, maxTokens: 258_000 });
+    expect(runtimeEvents.at(-1)).toMatchObject({
+      type: "runtime.changed",
+      payload: { threadId: "t1", contextUsage: { usedTokens: 28_400, maxTokens: 258_000 } },
+    });
+  });
+
   it("projects turn lifecycle and clears justFinished after 20 seconds", () => {
     vi.useFakeTimers();
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));

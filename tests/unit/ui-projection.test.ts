@@ -80,6 +80,36 @@ describe("Codex UI projection", () => {
     });
   });
 
+  it("projects current context usage from the last token-usage breakdown", () => {
+    expect(projectAdapterEvent({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        tokenUsage: {
+          total: { totalTokens: 900_000 },
+          last: { totalTokens: 28_400 },
+          modelContextWindow: 258_000,
+        },
+      },
+    })).toEqual({
+      type: "tokenUsageUpdated",
+      threadId: "thread-1",
+      contextUsage: { usedTokens: 28_400, maxTokens: 258_000 },
+    });
+  });
+
+  it("rejects malformed context usage instead of publishing misleading values", () => {
+    expect(projectAdapterEvent({
+      method: "thread/tokenUsage/updated",
+      params: { threadId: "thread-1", tokenUsage: { last: { totalTokens: Number.NaN }, modelContextWindow: 258_000 } },
+    })).toBeNull();
+    expect(projectAdapterEvent({
+      method: "thread/tokenUsage/updated",
+      params: { threadId: "thread-1", tokenUsage: { last: { totalTokens: 10 }, modelContextWindow: -1 } },
+    })).toBeNull();
+  });
+
   it("exposes reasoning summaries but drops full reasoning content and deltas", () => {
     expect(projectThreadItem({
       type: "reasoning",
