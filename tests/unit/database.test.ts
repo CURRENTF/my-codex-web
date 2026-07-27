@@ -36,4 +36,15 @@ describe("SQLite repositories", () => {
     repositories.upsertProjectSession({ thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "cli", origin: "discovered", parent_thread_id: null, fork_turn_id: null, added_at: 2, last_seen_at: 2 });
     expect(repositories.getProjectSession("t1")).toMatchObject({ project_id: "p2", origin: "manual", last_seen_at: 2 });
   });
+
+  it("persists a per-Session access override independently from the Project default", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({ thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1 });
+
+    expect(repositories.getProjectSession("t1")?.access_mode_override).toBeNull();
+    expect(repositories.setSessionAccessModeOverride("t1", "readOnly").access_mode_override).toBe("readOnly");
+    expect(repositories.getProject("p1")?.defaultAccessMode).toBe("fullAccess");
+  });
 });

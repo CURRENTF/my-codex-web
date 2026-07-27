@@ -402,6 +402,24 @@ export class SessionService extends EventEmitter {
     });
   }
 
+  async setAccessModeOverride(threadId: string, accessMode: AccessMode): Promise<SessionSettings> {
+    return this.withLock(threadId, async () => {
+      const sideChat = this.runtimes.getSideChat(threadId);
+      if (sideChat) {
+        const current = this.settings.get(threadId) ?? this.getSettings(sideChat.parentThreadId);
+        const settings = { ...current, accessMode };
+        this.settings.set(threadId, settings);
+        return settings;
+      }
+      const mapping = this.requireMapping(threadId);
+      this.repositories.setSessionAccessModeOverride(threadId, accessMode);
+      const current = this.settings.get(threadId) ?? resolveSessionSettings(this.requireProject(mapping.project_id), {});
+      const settings = { ...current, accessMode };
+      this.settings.set(threadId, settings);
+      return settings;
+    });
+  }
+
   async rename(threadId: string, name: string): Promise<void> {
     this.assertPersistentSession(threadId, "rename");
     return this.withLock(threadId, async () => {
@@ -896,7 +914,10 @@ export class SessionService extends EventEmitter {
     await this.recoverChildren();
   }
 
-  handleEvent(event: AdapterEvent): void {
+  handleEvent(event: AdapterEvent): AdapterEvent {
+    const eventThreadId = "threadId" in event ? event.threadId : undefined;
+    if (eventThreadId && this.removedThreads.has(eventThreadId)) return event;
+    event = this.withPreferredAccessMode(event);
     if (event.type === "threadStarted" && event.threadSource) {
       const sessionRecovery = this.uncertainSessions.get(event.threadSource);
       if (sessionRecovery) this.observedSessions.set(event.threadSource, event.thread);
@@ -909,6 +930,7 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnDrafts.delete(event.threadId);
     }
     this.updateSessionSnapshot(event);
+    return event;
   }
 
   async reconcileAfterReconnect(): Promise<void> {
@@ -1266,18 +1288,20 @@ export class SessionService extends EventEmitter {
 
   private async resumeWithPreferredSettings(threadId: string) {
     const current = this.settings.get(threadId);
+    const mapping = this.requireMapping(threadId);
+    const project = this.requireProject(mapping.project_id);
+    const coldAccessMode = mapping.access_mode_override ?? project.defaultAccessMode;
     let resumed;
     try {
       resumed = current
         ? await this.adapter.resumeSession(threadId, current)
-        : await this.adapter.resumeSession(threadId);
+        : await this.adapter.resumeSession(threadId, { accessMode: coldAccessMode });
     } catch (error) {
       const snapshot = this.sessionSnapshots.get(threadId);
       if (!current || !snapshot || !isUnmaterializedSessionReadError(error)) throw error;
       return { thread: snapshot, settings: current };
     }
-    const mapping = this.requireMapping(threadId);
-    const settings = resolveSessionSettings(this.requireProject(mapping.project_id), {}, current ?? resumed.settings);
+    const settings = resolveSessionSettings(project, {}, current ?? { ...resumed.settings, accessMode: coldAccessMode });
     const cachedSnapshot = this.sessionSnapshots.get(threadId);
     const thread = cachedSnapshot ? mergeSessionSnapshot(resumed.thread, cachedSnapshot) : resumed.thread;
     this.settings.set(threadId, settings);
@@ -1456,6 +1480,18 @@ export class SessionService extends EventEmitter {
     if (event.type === "itemDelta" && event.delta.kind === "commandOutput" && event.turnId) {
       this.appendSnapshotCommandDelta(threadId, event.turnId, event.delta.itemId, event.delta.delta);
     }
+  }
+
+  private withPreferredAccessMode(event: AdapterEvent): AdapterEvent {
+    if (event.type !== "settingsUpdated") return event;
+    const current = this.settings.get(event.threadId);
+    const mapping = this.repositories.getProjectSession(event.threadId);
+    if (!mapping) {
+      return current ? { ...event, settings: { ...event.settings, accessMode: current.accessMode } } : event;
+    }
+    const project = this.repositories.getProject(mapping.project_id);
+    const accessMode = mapping.access_mode_override ?? project?.defaultAccessMode ?? current?.accessMode ?? event.settings.accessMode;
+    return { ...event, settings: { ...event.settings, accessMode } };
   }
 
   private upsertSnapshotTurn(threadId: string, turn: SnapshotTurn): void {

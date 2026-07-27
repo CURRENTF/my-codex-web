@@ -102,8 +102,8 @@ export async function createServer() {
     void recovery.handle(event.state);
   });
   adapter.on("event", (event) => {
-    runtimes.handleEvent(event);
-    sessions.handleEvent(event);
+    const normalized = sessions.handleEvent(event);
+    runtimes.handleEvent(normalized);
   });
   adapter.on("pendingRequest", (request) => sessions.handlePendingRequest(request));
   adapter.on("stderr", (line: string) => app.log.debug({ source: "codex-app-server", bytes: Buffer.byteLength(line) }, "Codex App Server wrote to stderr"));
@@ -282,6 +282,14 @@ export async function createServer() {
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
     await once(request, clientRequestId, () => sessions.markViewed(threadId));
     return { ok: true };
+  });
+  app.patch("/api/sessions/:threadId/settings", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const { accessMode, clientRequestId } = z.object({
+      accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]),
+      clientRequestId: requestIdSchema,
+    }).parse(request.body);
+    return once(request, clientRequestId, () => sessions.setAccessModeOverride(threadId, accessMode));
   });
   app.patch("/api/sessions/:threadId/name", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);

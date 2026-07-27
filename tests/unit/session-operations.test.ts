@@ -931,7 +931,7 @@ describe("session operation rules", () => {
     expect(resolveSessionSettings(project, {})).toEqual({ model: "project-model", reasoning: "medium", accessMode: "fullAccess" });
   });
 
-  it("preserves a cold Session's current settings before Project defaults", async () => {
+  it("applies the Project access default to a cold Session while preserving its model and reasoning", async () => {
     const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
     const projectSettings = { model: "project-model", reasoning: "high", accessMode: "fullAccess" as const };
     const adapter = Object.assign(new EventEmitter(), {
@@ -951,8 +951,31 @@ describe("session operation rules", () => {
 
     const result = await service.readSession("thread-1");
 
-    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1");
-    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "workspaceWrite" });
+    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", { accessMode: "fullAccess" });
+    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "fullAccess" });
+  });
+
+  it("applies a persisted Session access override before the Project default", async () => {
+    const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "app-default", reasoning: "low", accessMode: "workspaceWrite" as const } })),
+      readSession: vi.fn(async () => snapshot),
+      getGoal: vi.fn(async () => null),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project", access_mode_override: "readOnly" as const })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" as const })),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const result = await service.readSession("thread-1");
+
+    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", { accessMode: "readOnly" });
+    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "readOnly" });
   });
 
   it("serves the live snapshot while a newly started Session rollout is still materializing", async () => {
@@ -1880,7 +1903,7 @@ describe("session operation rules", () => {
     expect(repositories.deleteProject).not.toHaveBeenCalled();
 
     releaseRead();
-    await expect(reading).resolves.toMatchObject({ thread: { id: "thread-1" }, settings: { accessMode: "readOnly" } });
+    await expect(reading).resolves.toMatchObject({ thread: { id: "thread-1" }, settings: { accessMode: "fullAccess" } });
     await removing;
 
     expect(repositories.deleteProject).toHaveBeenCalledWith("project-1");
@@ -2246,8 +2269,8 @@ describe("session operation rules", () => {
 
     await service.createSideChat("parent", null);
 
-    expect(adapter.resumeSession).toHaveBeenCalledWith("parent");
-    expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, protocolSettings, "/tmp/project");
+    expect(adapter.resumeSession).toHaveBeenCalledWith("parent", { accessMode: "fullAccess" });
+    expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, { ...protocolSettings, accessMode: "fullAccess" }, "/tmp/project");
   });
 
   it("falls back to an empty ephemeral Thread only when the parent is proven empty", async () => {
@@ -2302,7 +2325,7 @@ describe("session operation rules", () => {
     expect(adapter.createEmptySideChat).not.toHaveBeenCalled();
   });
 
-  it("updates cached Session settings from thread/settings/updated", async () => {
+  it("updates model and reasoning from thread/settings/updated without overriding the preferred access mode", async () => {
     const parent = { id: "parent", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
     const child = { ...parent, id: "side-1", ephemeral: true, forkedFromId: "parent" };
     const adapter = Object.assign(new EventEmitter(), {
@@ -2323,13 +2346,31 @@ describe("session operation rules", () => {
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
     await service.readSession("parent");
-    service.handleEvent(projectAdapterEvent({ method: "thread/settings/updated", params: { threadId: "parent", threadSettings: {
+    const normalized = service.handleEvent(projectAdapterEvent({ method: "thread/settings/updated", params: { threadId: "parent", threadSettings: {
       model: "new-model", effort: "low", approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly", networkAccess: false },
     } } })!);
 
     await service.createSideChat("parent", null);
 
-    expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, { model: "new-model", reasoning: "low", accessMode: "readOnly" }, "/tmp/project");
+    expect(normalized).toMatchObject({ type: "settingsUpdated", settings: { model: "new-model", reasoning: "low", accessMode: "fullAccess" } });
+    expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, { model: "new-model", reasoning: "low", accessMode: "fullAccess" }, "/tmp/project");
+  });
+
+  it("updates an ephemeral Side Chat access mode without requiring a persistent mapping", async () => {
+    const sideChat = { threadId: "side-1", parentThreadId: "parent", state: "idle", activeFlags: [], pendingRequestIds: [], createdAt: 1 };
+    const repositories = {
+      getProjectSession: vi.fn((threadId: string) => threadId === "parent" ? { thread_id: "parent", project_id: "project-1", cwd_snapshot: "/tmp/project" } : null),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+      setSessionAccessModeOverride: vi.fn(),
+    };
+    const runtimes = {
+      getSideChat: vi.fn((threadId: string) => threadId === "side-1" ? sideChat : undefined),
+    };
+    const service = new SessionService(repositories as never, new EventEmitter() as never, {} as never, runtimes as never);
+    (service as unknown as { settings: Map<string, unknown> }).settings.set("side-1", { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" });
+
+    await expect(service.setAccessModeOverride("side-1", "readOnly")).resolves.toEqual({ model: "gpt-test", reasoning: "high", accessMode: "readOnly" });
+    expect(repositories.setSessionAccessModeOverride).not.toHaveBeenCalled();
   });
 
   it("enforces Side Chat capability restrictions in the service layer", async () => {

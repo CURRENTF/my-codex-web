@@ -511,6 +511,10 @@ test("discovers an existing App Server Session, applies Project defaults, and re
       expect.objectContaining({ threadId: existingThreadId, sourceKind: expect.stringMatching(/^(cli|vscode|appServer)$/) }),
     ]));
 
+    await page.goto(`/sessions/${existingThreadId}`);
+    await expect(page.locator(".composer")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".access-control select")).toHaveValue("workspaceWrite");
+
     await page.goto(`/sessions/${setup.threadId}`);
     await page.reload();
     await expect(page.locator(".composer")).toBeVisible({ timeout: 30_000 });
@@ -524,6 +528,13 @@ test("discovers an existing App Server Session, applies Project defaults, and re
       return response.json() as Promise<{ settings: { model: string | null; reasoning: string | null; accessMode: string } }>;
     }, setup.threadId);
     expect(persisted.settings).toEqual({ model: setup.model, reasoning: setup.reasoning, accessMode: "workspaceWrite" });
+
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith(`/api/sessions/${setup.threadId}/settings`) && response.request().method() === "PATCH" && response.ok()),
+      page.locator(".access-control select").selectOption("readOnly"),
+    ]);
+    await page.reload();
+    await expect(page.locator(".access-control select")).toHaveValue("readOnly");
 
     await page.getByRole("button", { name: "项目", exact: true }).click();
     page.once("dialog", (dialog) => dialog.accept());

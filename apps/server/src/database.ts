@@ -33,6 +33,7 @@ export interface ProjectSessionRow {
   origin: "discovered" | "created" | "forked" | "manual";
   parent_thread_id: string | null;
   fork_turn_id: string | null;
+  access_mode_override: AccessMode | null;
   added_at: number;
   last_seen_at: number;
   hidden: number;
@@ -104,7 +105,7 @@ export class Repositories {
     })();
   }
 
-  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden"> & { hidden?: number }): void {
+  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden" | "access_mode_override"> & { hidden?: number }): void {
     this.db.prepare(`INSERT INTO project_sessions (
       thread_id, project_id, cwd_snapshot, source_kind, origin, parent_thread_id,
       fork_turn_id, added_at, last_seen_at, hidden
@@ -141,6 +142,14 @@ export class Repositories {
 
   moveProjectSession(threadId: string, projectId: string): ProjectSessionRow {
     const result = this.db.prepare("UPDATE project_sessions SET project_id = ?, origin = 'manual' WHERE thread_id = ?").run(projectId, threadId);
+    if (!result.changes) throw new Error("Session mapping not found");
+    const mapping = this.getProjectSession(threadId);
+    if (!mapping) throw new Error("Session mapping not found");
+    return mapping;
+  }
+
+  setSessionAccessModeOverride(threadId: string, accessMode: AccessMode): ProjectSessionRow {
+    const result = this.db.prepare("UPDATE project_sessions SET access_mode_override = ? WHERE thread_id = ?").run(accessMode, threadId);
     if (!result.changes) throw new Error("Session mapping not found");
     const mapping = this.getProjectSession(threadId);
     if (!mapping) throw new Error("Session mapping not found");
@@ -214,6 +223,7 @@ export class Repositories {
       CREATE TABLE IF NOT EXISTS project_sessions (
         thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, cwd_snapshot TEXT,
         source_kind TEXT, origin TEXT NOT NULL, parent_thread_id TEXT, fork_turn_id TEXT,
+        access_mode_override TEXT CHECK (access_mode_override IN ('fullAccess', 'workspaceWrite', 'readOnly')),
         added_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, hidden INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
@@ -223,5 +233,9 @@ export class Repositories {
       );
       CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `);
+    const projectSessionColumns = this.db.prepare("PRAGMA table_info(project_sessions)").all() as Array<{ name: string }>;
+    if (!projectSessionColumns.some((column) => column.name === "access_mode_override")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN access_mode_override TEXT CHECK (access_mode_override IN ('fullAccess', 'workspaceWrite', 'readOnly'))");
+    }
   }
 }
