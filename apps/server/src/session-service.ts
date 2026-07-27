@@ -139,7 +139,7 @@ export function assertValidForkBoundary(turns: SnapshotTurn[], lastTurnId: strin
 export function resolveSessionSettings(project: ProjectSettings, input: TurnSettings, current?: { model: string | null; reasoning: string | null; accessMode: AccessMode }) {
   return {
     model: input.model ?? current?.model ?? project.defaultModel,
-    reasoning: input.reasoning ?? current?.reasoning ?? project.defaultReasoning,
+    reasoning: input.reasoning ?? current?.reasoning ?? project.defaultReasoning ?? "high",
     accessMode: input.accessMode ?? current?.accessMode ?? project.defaultAccessMode,
   };
 }
@@ -463,7 +463,6 @@ export class SessionService extends EventEmitter {
     this.assertPersistentSession(threadId, "rename");
     return this.withLock(threadId, async () => {
       this.requireMapping(threadId);
-      this.assertNoActiveTurn(threadId, "Rename");
       await this.adapter.renameSession(threadId, name);
     });
   }
@@ -1319,7 +1318,7 @@ export class SessionService extends EventEmitter {
     this.assertPersistentSession(params.threadId, "Goal");
     return this.withLock(params.threadId, async () => {
       this.requireMapping(params.threadId);
-      this.assertNoActiveTurn(params.threadId, "Goal update");
+      this.assertSessionReconciled(params.threadId, "Goal update");
       return this.adapter.setGoal(params);
     });
   }
@@ -1328,7 +1327,7 @@ export class SessionService extends EventEmitter {
     this.assertPersistentSession(threadId, "Goal");
     return this.withLock(threadId, async () => {
       this.requireMapping(threadId);
-      this.assertNoActiveTurn(threadId, "Goal clear");
+      this.assertSessionReconciled(threadId, "Goal clear");
       await this.adapter.clearGoal(threadId);
     });
   }

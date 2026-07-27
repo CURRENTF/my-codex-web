@@ -38,4 +38,25 @@ describe("Composer submission intent", () => {
   it("clears remembered Steer intent when a Slash command is queued for the next Turn", () => {
     expect(composerSource).toMatch(/const queueCommand[\s\S]*steerDraftTurnId\.current = null;[\s\S]*queueSlashCommand/);
   });
+
+  it("offers an explicit Steer or queue choice while a Turn is running", () => {
+    expect(composerSource).toContain('role="switch" aria-checked={deliveryMode === "queue"}');
+    expect(composerSource).toContain('className={`delivery-mode-toggle ${deliveryMode}`}');
+    expect(composerSource).toMatch(/reasoning-select[\s\S]*delivery-mode-toggle[\s\S]*stop-button[\s\S]*send-button/);
+    expect(composerSource).toContain('running && deliveryMode === "queue"');
+  });
+
+  it("queues a normal requirement with its Skill and Turn settings", () => {
+    expect(composerSource).toMatch(/const queueMessage[\s\S]*skillNames: referencedSkillNames[\s\S]*model,[\s\S]*reasoning,[\s\S]*accessMode,[\s\S]*queueUserMessage/);
+    expect(composerSource).toContain("sendQueuedMessage.mutate(queuedUserMessage)");
+  });
+
+  it("prefers high reasoning for models that support it", () => {
+    expect(composerSource).toMatch(/function preferredReasoningForModel[\s\S]*item\.effort === "high"[\s\S]*model\?\.defaultReasoning/);
+    expect(composerSource).toContain("setReasoning(preferredReasoningForModel(option))");
+  });
+
+  it("applies Goal commands immediately while a Turn is running", () => {
+    expect(composerSource).toContain('if (running && parsed.name !== "goal") { queueCommand(draft); return; }');
+  });
 });

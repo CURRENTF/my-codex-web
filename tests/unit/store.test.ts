@@ -13,6 +13,7 @@ beforeEach(() => useAppStore.setState({
   optimisticUserMessages: {},
   injectedPrefills: {},
   queuedSlashCommands: {},
+  queuedUserMessages: {},
 }));
 
 describe("optimistic user-message lifecycle", () => {
@@ -75,6 +76,68 @@ describe("queued Slash command lifecycle", () => {
 
     useAppStore.getState().clearQueuedSlashCommand("thread-1", "request-compact");
     expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toBeUndefined();
+  });
+});
+
+describe("queued user-message lifecycle", () => {
+  it("persists one next-Turn requirement and renders it optimistically as queued", () => {
+    const message = {
+      text: "do this next",
+      skillNames: ["diagnose"],
+      model: "gpt-5.6-sol",
+      reasoning: "high",
+      accessMode: "fullAccess" as const,
+      clientRequestId: "request-next",
+      clientUserMessageId: "message-next",
+      createdAt: 456,
+    };
+
+    useAppStore.getState().queueUserMessage("thread-1", message);
+
+    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toEqual(message);
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toEqual([
+      { clientUserMessageId: "message-next", text: "do this next", state: "queued" },
+    ]);
+  });
+
+  it("cancels only a matching queued requirement and removes its optimistic bubble", () => {
+    const message = {
+      text: "do this next",
+      skillNames: [],
+      model: "gpt-5.6-sol",
+      reasoning: "high",
+      accessMode: "workspaceWrite" as const,
+      clientRequestId: "request-next",
+      clientUserMessageId: "message-next",
+      createdAt: 456,
+    };
+    useAppStore.getState().queueUserMessage("thread-1", message);
+
+    useAppStore.getState().clearQueuedUserMessage("thread-1", "different-request");
+    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toEqual(message);
+
+    useAppStore.getState().clearQueuedUserMessage("thread-1", "request-next");
+    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toBeUndefined();
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toBeUndefined();
+  });
+
+  it("keeps the optimistic bubble after handing a queued requirement to the App Server", () => {
+    const message = {
+      text: "do this next",
+      skillNames: [],
+      model: "gpt-5.6-sol",
+      reasoning: "high",
+      accessMode: "readOnly" as const,
+      clientRequestId: "request-next",
+      clientUserMessageId: "message-next",
+      createdAt: 456,
+    };
+    useAppStore.getState().queueUserMessage("thread-1", message);
+
+    useAppStore.getState().clearQueuedUserMessage("thread-1", "request-next", true);
+
+    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toBeUndefined();
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.[0]?.state).toBe("queued");
   });
 });
 

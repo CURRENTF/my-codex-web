@@ -28,4 +28,11 @@ describe("viewport layout CSS", () => {
     expect(rule(".full-access-notice")).not.toContain("grid-area");
     expect(rule(".parallel-write-warning")).not.toContain("grid-area");
   });
+
+  it("keeps the delivery-mode switch compact and visibly stateful", () => {
+    expect(rule(".delivery-mode-toggle")).toContain("height: 27px");
+    expect(rule(".delivery-mode-track")).toContain("width: 22px");
+    expect(rule(".delivery-mode-toggle.queue")).toContain("color: var(--accent)");
+    expect(styles).toMatch(/@container session-pane \(max-width: 430px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
+  });
 });

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PendingRequestSummary, SideChatRuntime, ThreadRuntime, UiEvent } from "@codex-web/shared-types";
+import type { AccessMode, PendingRequestSummary, SideChatRuntime, ThreadRuntime, UiEvent } from "@codex-web/shared-types";
 
 interface AppStore {
   connectionState: "connected" | "connecting" | "disconnected";
@@ -13,6 +13,7 @@ interface AppStore {
   optimisticUserMessages: Record<string, OptimisticUserMessage[]>;
   injectedPrefills: Record<string, string>;
   queuedSlashCommands: Record<string, QueuedSlashCommand>;
+  queuedUserMessages: Record<string, QueuedUserMessage>;
   setDraft(threadId: string, text: string): void;
   beginSubmission(threadId: string, draft: string, clientUserMessageId: string): void;
   acceptSubmission(threadId: string): void;
@@ -23,6 +24,8 @@ interface AppStore {
   restorePrefill(threadId: string, text: string): void;
   queueSlashCommand(threadId: string, command: QueuedSlashCommand): void;
   clearQueuedSlashCommand(threadId: string, clientRequestId?: string): void;
+  queueUserMessage(threadId: string, message: QueuedUserMessage): void;
+  clearQueuedUserMessage(threadId: string, clientRequestId?: string, preserveOptimistic?: boolean): void;
   initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number, sessionPrefills?: Record<string, string>): void;
   markDisconnected(): void;
   consume(event: UiEvent): void;
@@ -40,7 +43,19 @@ export interface QueuedSlashCommand {
   createdAt: number;
 }
 
+export interface QueuedUserMessage {
+  text: string;
+  skillNames: string[];
+  model: string;
+  reasoning: string;
+  accessMode: AccessMode;
+  clientRequestId: string;
+  clientUserMessageId: string;
+  createdAt: number;
+}
+
 const QUEUED_SLASH_STORAGE_KEY = "codex-web:queued-slash-commands:v1";
+const QUEUED_USER_MESSAGE_STORAGE_KEY = "codex-web:queued-user-messages:v1";
 
 function readQueuedSlashCommands(): Record<string, QueuedSlashCommand> {
   if (typeof window === "undefined") return {};
@@ -64,6 +79,38 @@ function persistQueuedSlashCommands(commands: Record<string, QueuedSlashCommand>
   try { window.localStorage.setItem(QUEUED_SLASH_STORAGE_KEY, JSON.stringify(commands)); } catch { /* storage can be unavailable in private contexts */ }
 }
 
+function readQueuedUserMessages(): Record<string, QueuedUserMessage> {
+  if (typeof window === "undefined") return {};
+  try {
+    const value = JSON.parse(window.localStorage.getItem(QUEUED_USER_MESSAGE_STORAGE_KEY) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).flatMap(([threadId, message]) => {
+      if (!message || typeof message !== "object") return [];
+      const candidate = message as Partial<QueuedUserMessage>;
+      const validAccessMode = candidate.accessMode === "fullAccess" || candidate.accessMode === "workspaceWrite" || candidate.accessMode === "readOnly";
+      return typeof candidate.text === "string" && Array.isArray(candidate.skillNames) && candidate.skillNames.every((name) => typeof name === "string")
+        && typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validAccessMode
+        && typeof candidate.clientRequestId === "string" && typeof candidate.clientUserMessageId === "string" && typeof candidate.createdAt === "number"
+        ? [[threadId, candidate as QueuedUserMessage]]
+        : [];
+    }));
+  } catch {
+    return {};
+  }
+}
+
+function persistQueuedUserMessages(messages: Record<string, QueuedUserMessage>): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(QUEUED_USER_MESSAGE_STORAGE_KEY, JSON.stringify(messages)); } catch { /* storage can be unavailable in private contexts */ }
+}
+
+const initialQueuedUserMessages = readQueuedUserMessages();
+const initialQueuedOptimisticMessages = Object.fromEntries(Object.entries(initialQueuedUserMessages).map(([threadId, message]) => [threadId, [{
+  clientUserMessageId: message.clientUserMessageId,
+  text: message.text,
+  state: "queued" as const,
+}]]));
+
 function withoutOptimisticMessages(
   messagesByThread: Record<string, OptimisticUserMessage[]>,
   threadId: string,
@@ -81,7 +128,7 @@ function withoutOptimisticMessages(
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: {}, injectedPrefills: {}, queuedSlashCommands: readQueuedSlashCommands(),
+  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSlashCommands: readQueuedSlashCommands(), queuedUserMessages: initialQueuedUserMessages,
   setDraft: (threadId, text) => set((state) => {
     const injectedPrefills = { ...state.injectedPrefills };
     delete injectedPrefills[threadId];
@@ -190,6 +237,37 @@ export const useAppStore = create<AppStore>((set) => ({
     delete queuedSlashCommands[threadId];
     persistQueuedSlashCommands(queuedSlashCommands);
     return { queuedSlashCommands };
+  }),
+  queueUserMessage: (threadId, message) => set((state) => {
+    const queuedUserMessages = { ...state.queuedUserMessages, [threadId]: message };
+    const currentMessages = state.optimisticUserMessages[threadId] ?? [];
+    const queuedOptimisticMessage: OptimisticUserMessage = {
+      clientUserMessageId: message.clientUserMessageId,
+      text: message.text,
+      state: "queued",
+    };
+    const existingIndex = currentMessages.findIndex((candidate) => candidate.clientUserMessageId === message.clientUserMessageId);
+    const nextMessages = [...currentMessages];
+    if (existingIndex < 0) nextMessages.push(queuedOptimisticMessage);
+    else nextMessages[existingIndex] = queuedOptimisticMessage;
+    persistQueuedUserMessages(queuedUserMessages);
+    return {
+      queuedUserMessages,
+      optimisticUserMessages: { ...state.optimisticUserMessages, [threadId]: nextMessages },
+    };
+  }),
+  clearQueuedUserMessage: (threadId, clientRequestId, preserveOptimistic = false) => set((state) => {
+    const current = state.queuedUserMessages[threadId];
+    if (!current || (clientRequestId && current.clientRequestId !== clientRequestId)) return state;
+    const queuedUserMessages = { ...state.queuedUserMessages };
+    delete queuedUserMessages[threadId];
+    persistQueuedUserMessages(queuedUserMessages);
+    return {
+      queuedUserMessages,
+      optimisticUserMessages: preserveOptimistic
+        ? state.optimisticUserMessages
+        : withoutOptimisticMessages(state.optimisticUserMessages, threadId, [current.clientUserMessageId]),
+    };
   }),
   initialize: (runtimes, sideChats, deltas = {}, pendingRequests = [], connectionState = "connected", eventSeq = 0, sessionPrefills = {}) => set((state) => {
     const drafts = { ...state.drafts };

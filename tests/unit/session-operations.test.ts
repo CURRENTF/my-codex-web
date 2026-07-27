@@ -468,7 +468,7 @@ describe("session operation rules", () => {
 
     expect(adapter.startSession).toHaveBeenCalledWith(
       "/tmp/project",
-      { model: null, reasoning: null, accessMode: "fullAccess" },
+      { model: null, reasoning: "high", accessMode: "fullAccess" },
       false,
       "codex-web-session:project-1:create-request",
     );
@@ -1033,6 +1033,11 @@ describe("session operation rules", () => {
     expect(resolveSessionSettings(project, {}, current)).toEqual(current);
     expect(resolveSessionSettings(project, { model: "turn-model", reasoning: "low", accessMode: "readOnly" }, current)).toEqual({ model: "turn-model", reasoning: "low", accessMode: "readOnly" });
     expect(resolveSessionSettings(project, {})).toEqual({ model: "project-model", reasoning: "medium", accessMode: "fullAccess" });
+  });
+
+  it("defaults reasoning to high when no Turn, Session, or Project setting exists", () => {
+    const project = { defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" as const };
+    expect(resolveSessionSettings(project, {})).toEqual({ model: null, reasoning: "high", accessMode: "fullAccess" });
   });
 
   it("applies the Project access default to a cold Session while preserving its model and reasoning", async () => {
@@ -2673,7 +2678,7 @@ describe("session operation rules", () => {
     expect(calls).toEqual(["unsubscribe-side", "remove-side-runtime", "archive-parent", "remove-parent-mapping"]);
   });
 
-  it("rejects non-whitelisted mutations while a Turn is active", async () => {
+  it("allows human metadata and Goal controls but rejects structural mutations while a Turn is active", async () => {
     const adapter = Object.assign(new EventEmitter(), {
       renameSession: vi.fn(), archiveSession: vi.fn(), setGoal: vi.fn(), clearGoal: vi.fn(),
     });
@@ -2684,16 +2689,16 @@ describe("session operation rules", () => {
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
 
-    await expect(service.rename("thread-1", "new name")).rejects.toThrow(ActiveTurnConflictError);
+    await expect(service.rename("thread-1", "new name")).resolves.toBeUndefined();
+    await expect(service.setGoal({ threadId: "thread-1", status: "paused" })).resolves.toBeUndefined();
+    await expect(service.clearGoal("thread-1")).resolves.toBeUndefined();
     await expect(service.archive("thread-1")).rejects.toThrow(ActiveTurnConflictError);
     await expect(service.moveToProject("thread-1", "project-2")).rejects.toThrow(ActiveTurnConflictError);
-    await expect(service.setGoal({ threadId: "thread-1", status: "paused" })).rejects.toThrow(ActiveTurnConflictError);
-    await expect(service.clearGoal("thread-1")).rejects.toThrow(ActiveTurnConflictError);
-    expect(adapter.renameSession).not.toHaveBeenCalled();
+    expect(adapter.renameSession).toHaveBeenCalledWith("thread-1", "new name");
     expect(adapter.archiveSession).not.toHaveBeenCalled();
     expect(repositories.moveProjectSession).not.toHaveBeenCalled();
-    expect(adapter.setGoal).not.toHaveBeenCalled();
-    expect(adapter.clearGoal).not.toHaveBeenCalled();
+    expect(adapter.setGoal).toHaveBeenCalledWith({ threadId: "thread-1", status: "paused" });
+    expect(adapter.clearGoal).toHaveBeenCalledWith("thread-1");
   });
 
   it("rejects Project removal while a mapped Session is active", async () => {
