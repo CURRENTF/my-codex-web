@@ -100,7 +100,7 @@ test("streams model tool activity into the timeline without a refresh", async ({
   ]);
 
   const prompt = "请务必调用 shell 工具执行：printf 'CODEX_WEB_TOOL_STEP_1\\n'; sleep 5; printf 'CODEX_WEB_TOOL_STEP_2\\n'。不要修改文件。命令完成后只回复 CODEX_WEB_TOOL_DONE。";
-  await page.getByRole("textbox", { name: "要求后续变更" }).fill(prompt);
+  await page.locator(".composer textarea").fill(prompt);
   await page.getByRole("button", { name: "发送" }).click();
 
   await expect(page.locator(".user-message").filter({ hasText: "CODEX_WEB_TOOL_STEP_1" })).toBeVisible({ timeout: 30_000 });
@@ -116,7 +116,7 @@ test("streams model tool activity into the timeline without a refresh", async ({
   }).first();
   await expect(commandCard).toBeVisible({ timeout: 90_000 });
   await expect(commandCard.locator(".tool-result")).toHaveText("inProgress");
-  await page.getByRole("textbox", { name: "向当前执行追加指令" }).fill("请在当前 Turn 的最终回复中同时包含 CODEX_WEB_STEER_RECEIVED。");
+  await page.locator(".composer textarea").fill("请在当前 Turn 的最终回复中同时包含 CODEX_WEB_STEER_RECEIVED。");
   await page.getByRole("button", { name: "Steer 当前 Turn" }).click();
   const optimisticSteer = page.locator(".pending-user-message").filter({ hasText: "CODEX_WEB_STEER_RECEIVED" });
   await expect(optimisticSteer).toBeVisible();
@@ -129,7 +129,7 @@ test("streams model tool activity into the timeline without a refresh", async ({
   await expect(page.locator(".agent-message").filter({ hasText: "CODEX_WEB_STEER_RECEIVED" })).toBeVisible();
   await expect(page.locator(".turn-block")).toHaveCount(1);
 
-  await page.getByRole("textbox", { name: "要求后续变更" }).fill("请调用 shell 工具执行 sleep 4，然后只回复 CODEX_WEB_RACE_TURN_DONE。不要修改文件。");
+  await page.locator(".composer textarea").fill("请调用 shell 工具执行 sleep 4，然后只回复 CODEX_WEB_RACE_TURN_DONE。不要修改文件。");
   await page.getByRole("button", { name: "发送" }).click();
   const raceActivityGroup = page.locator(".activity-group", { has: page.locator(".tool-title", { hasText: "sleep 4" }) }).last();
   await expect(raceActivityGroup.locator(":scope > summary")).toBeVisible({ timeout: 90_000 });
@@ -138,12 +138,13 @@ test("streams model tool activity into the timeline without a refresh", async ({
   const raceCard = raceActivityGroup.locator(".tool-card", { has: page.locator(".tool-title", { hasText: "sleep 4" }) }).last();
   await expect(raceCard.locator(".tool-result")).toHaveText("inProgress", { timeout: 90_000 });
   const retainedSteer = "CODEX_WEB_RACE_STEER_DRAFT";
-  await page.getByRole("textbox", { name: "向当前执行追加指令" }).fill(retainedSteer);
+  await page.locator(".composer textarea").fill(retainedSteer);
   await expect(page.locator(".agent-message").filter({ hasText: "CODEX_WEB_RACE_TURN_DONE" })).toBeVisible({ timeout: 90_000 });
   await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByText("当前执行刚刚结束", { exact: true })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "要求后续变更" })).toHaveValue(retainedSteer);
-  await expect(page.locator(".turn-block")).toHaveCount(2);
+  await expect(page.getByText("当前执行刚刚结束", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".user-message").filter({ hasText: retainedSteer })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".composer textarea")).toHaveValue("");
+  await expect(page.locator(".turn-block")).toHaveCount(3);
 });
 
 test("renders and resolves a model request_user_input server request", async ({ page }) => {

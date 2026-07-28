@@ -66,7 +66,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const selectedModel = useMemo(() => models.find((item) => item.model === model || item.id === model), [models, model]);
   const [reasoning, setReasoning] = useState(initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(selectedModel));
   const [accessMode, setAccessMode] = useState<AccessMode>(initialSettings.accessMode ?? project.defaultAccessMode);
-  const [race, setRace] = useState(false); const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
+  const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null); const [cursor, setCursor] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("steer");
   const [menuIndex, setMenuIndex] = useState(0); const [dismissedMenuDraft, setDismissedMenuDraft] = useState<string | null>(null);
@@ -82,7 +82,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     setReasoning(initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(option));
     setAccessMode(initialSettings.accessMode ?? project.defaultAccessMode);
     steerDraftTurnId.current = null;
-    setRace(false); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer");
+    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer");
   }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
   useEffect(() => { if (selectedModel && !selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) setReasoning(selectedModel.defaultReasoning); }, [selectedModel, reasoning]);
 
@@ -202,22 +202,26 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     updateDraft("$", 1); setFeedback(null);
   }, [accessMode, contextUsage, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
 
-  const send = useMutation({ mutationFn: async ({ forceTurn = false, expectedTurnId }: { forceTurn?: boolean; expectedTurnId?: string | null } = {}) => {
+  const send = useMutation({ mutationFn: async ({ expectedTurnId }: { expectedTurnId?: string | null } = {}) => {
     const submittedDraft = draft; const text = submittedDraft.trim(); if (!text) return;
     const clientRequestId = requestId();
-    const retry = !forceTurn && !expectedTurnId && pendingSubmission?.state === "retryReady" && pendingSubmission.draft === submittedDraft;
+    const retry = !expectedTurnId && pendingSubmission?.state === "retryReady" && pendingSubmission.draft === submittedDraft;
     const clientUserMessageId = retry ? pendingSubmission.clientUserMessageId : requestId();
     const skillNames = referencedSkillNames(text, skills.data ?? []);
     beginSubmission(threadId, submittedDraft, clientUserMessageId);
-    if (expectedTurnId && !forceTurn) {
-      return api(`/api/sessions/${threadId}/steer`, { method: "POST", body: JSON.stringify({ text, skillNames, expectedTurnId, clientRequestId, clientUserMessageId }) });
+    if (expectedTurnId) {
+      try {
+        return await api(`/api/sessions/${threadId}/steer`, { method: "POST", body: JSON.stringify({ text, skillNames, expectedTurnId, clientRequestId, clientUserMessageId }) });
+      } catch (error) {
+        if (!isTurnFinishedConflict(error)) throw error;
+        steerDraftTurnId.current = null;
+      }
     }
-    return api(`/api/sessions/${threadId}/turns`, { method: "POST", body: JSON.stringify({ text, skillNames, model, reasoning, accessMode, clientRequestId, clientUserMessageId }) });
-  }, onSuccess: () => { steerDraftTurnId.current = null; acceptSubmission(threadId); setRace(false); setResolutionMessage(null); setFeedback(null); void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
+    return api(`/api/sessions/${threadId}/turns`, { method: "POST", body: JSON.stringify({ text, skillNames, model, reasoning, accessMode, clientRequestId: expectedTurnId ? requestId() : clientRequestId, clientUserMessageId }) });
+  }, onSuccess: () => { steerDraftTurnId.current = null; acceptSubmission(threadId); setResolutionMessage(null); setFeedback(null); void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
     void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     if (apiErrorCode(error) === "operation_uncertain") { markSubmissionUncertain(threadId); return; }
     finishSubmission(threadId, false);
-    if (isTurnFinishedConflict(error)) { setRace(true); return; }
     void refreshProjectAvailabilityAfterError(error, (queryKey) => queryClient.invalidateQueries({ queryKey }));
   } });
 
@@ -378,8 +382,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   };
 
   return <div className={`composer-wrap ${compact ? "compact" : ""}`}>
-    {race && <div className="composer-race"><WarningCircle size={16} weight="fill" /><span>当前执行刚刚结束</span><button onClick={() => send.mutate({ forceTurn: true })}>作为下一条消息发送</button><button onClick={() => { steerDraftTurnId.current = null; setRace(false); textarea.current?.focus(); }}>继续编辑</button></div>}
-    {uncertainTurnStart && <div className="composer-race uncertain-turn"><WarningCircle size={16} weight="fill" /><span>Codex 未确认上一条消息是否开始执行。为避免重复任务，请先显式核实；当前草稿不会丢失。</span><button disabled={resolveUncertainTurn.isPending} onClick={() => resolveUncertainTurn.mutate()}>{resolveUncertainTurn.isPending ? "正在核实…" : "确认未执行，恢复输入"}</button></div>}
+    {uncertainTurnStart && <div className="uncertain-turn"><WarningCircle size={16} weight="fill" /><span>Codex 未确认上一条消息是否开始执行。为避免重复任务，请先显式核实；当前草稿不会丢失。</span><button disabled={resolveUncertainTurn.isPending} onClick={() => resolveUncertainTurn.mutate()}>{resolveUncertainTurn.isPending ? "正在核实…" : "确认未执行，恢复输入"}</button></div>}
     {queuedSlashCommand && <div className="queued-command-banner"><ClockCounterClockwise size={15} weight="fill" /><span><strong>{queuedSlashCommand.raw}</strong>{running ? "将在当前 Turn 完成后自动执行" : "正在等待执行"}</span>{!running && <button onClick={() => { lastAttemptedQueuedId.current = null; void runQueuedCommand(); }}>重试</button>}<button className="icon-only" aria-label="取消排队命令" onClick={() => clearQueuedSlashCommand(threadId, queuedSlashCommand.clientRequestId)}><X size={13} /></button></div>}
     {queuedUserMessage && <div className="queued-command-banner queued-message-banner"><ClockCounterClockwise size={15} weight="fill" /><span><strong>{queuedUserMessage.text}</strong>{running ? "将在当前 Turn 完成后自动发送" : sendQueuedMessage.isPending ? "正在发送下一 Turn" : sendQueuedMessage.isError ? "发送失败，可重试" : "正在等待发送"}</span>{!running && !sendQueuedMessage.isPending && <button onClick={() => { lastAttemptedQueuedMessageId.current = null; sendQueuedMessage.reset(); runQueuedMessage(); }}>重试</button>}<button className="icon-only" aria-label="取消排队需求" disabled={sendQueuedMessage.isPending} onClick={() => clearQueuedUserMessage(threadId, queuedUserMessage.clientRequestId)}><X size={13} /></button></div>}
     <div className="composer-shell">
@@ -395,7 +398,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
             </div>
             <div className="composer-actions">
               <div className={`composer-running-controls ${running ? "is-active" : "is-idle"}`}>
-                <button type="button" className={`delivery-mode-toggle ${deliveryMode}`} role="switch" aria-checked={deliveryMode === "queue"} aria-label={running ? `需求发送方式：${deliveryMode === "queue" ? "排队" : "Steer"}` : "需求发送方式当前不可用，没有正在运行的 Turn"} title={running ? deliveryMode === "queue" ? "当前 Turn 完成后自动发送" : "立即追加到当前 Turn" : "当前没有正在运行的 Turn"} disabled={!running} onClick={() => { const next = deliveryMode === "steer" ? "queue" : "steer"; setDeliveryMode(next); if (next === "queue") steerDraftTurnId.current = null; setRace(false); }}><span className="delivery-mode-track" aria-hidden="true"><span /></span><span className="delivery-mode-label">{deliveryMode === "queue" ? "排队" : "Steer"}</span></button>
+                <button type="button" className={`delivery-mode-toggle ${deliveryMode}`} role="switch" aria-checked={deliveryMode === "queue"} aria-label={running ? `需求发送方式：${deliveryMode === "queue" ? "排队" : "Steer"}` : "需求发送方式当前不可用，没有正在运行的 Turn"} title={running ? deliveryMode === "queue" ? "当前 Turn 完成后自动发送" : "立即追加到当前 Turn" : "当前没有正在运行的 Turn"} disabled={!running} onClick={() => { const next = deliveryMode === "steer" ? "queue" : "steer"; setDeliveryMode(next); if (next === "queue") steerDraftTurnId.current = null; }}><span className="delivery-mode-track" aria-hidden="true"><span /></span><span className="delivery-mode-label">{deliveryMode === "queue" ? "排队" : "Steer"}</span></button>
               </div>
               <button className={stopPrimaryAction ? "stop-button" : "send-button"} onPointerDown={() => { if (!stopPrimaryAction) rememberSteerIntent(); }} onClick={runPrimaryAction} disabled={primaryActionDisabled} aria-label={stopPrimaryAction ? "停止当前 Turn" : running && deliveryMode === "queue" ? "排到下一 Turn" : running ? "Steer 当前 Turn 或排队 Slash 命令" : "发送或执行命令"} title={stopPrimaryAction ? "停止当前 Turn" : undefined}>{stopPrimaryAction ? <Square size={13} weight="fill" /> : running && deliveryMode === "queue" ? <ClockCounterClockwise size={16} weight="bold" /> : <ArrowUp size={17} weight="bold" />}</button>
             </div>
@@ -408,6 +411,6 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     {feedback && <p className={`composer-feedback ${feedback.tone}`}>{feedback.text}</p>}
     {skills.isError && trigger?.kind === "skill" && <p className="composer-error">Skills 加载失败：{skills.error.message}</p>}
     {persistAccessMode.error && <p className="composer-error">权限设置保存失败：{persistAccessMode.error.message}</p>}
-    {send.error && !race && !uncertainTurnStart && !resolutionMessage && <p className="composer-error">{send.error.message}</p>}{interrupt.error && <p className="composer-error">{interrupt.error.message}</p>}
+    {send.error && !uncertainTurnStart && !resolutionMessage && <p className="composer-error">{send.error.message}</p>}{interrupt.error && <p className="composer-error">{interrupt.error.message}</p>}
   </div>;
 }

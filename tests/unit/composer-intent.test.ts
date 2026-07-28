@@ -18,11 +18,14 @@ describe("Composer submission intent", () => {
     expect(expectedSteerTurnId(null, false, undefined)).toBeNull();
   });
 
-  it("shows the Steer race recovery only for the turn_finished 409", () => {
+  it("recognizes only the turn_finished 409 for automatic next-Turn fallback", () => {
     expect(isTurnFinishedConflict({ status: 409, body: { error: "turn_finished" } })).toBe(true);
     expect(isTurnFinishedConflict({ status: 409, body: { error: "project_unavailable" } })).toBe(false);
     expect(isTurnFinishedConflict({ status: 409, body: { error: "active_turn" } })).toBe(false);
     expect(apiErrorCode({ status: 409, body: { error: "project_unavailable" } })).toBe("project_unavailable");
+    expect(composerSource).toMatch(/if \(!isTurnFinishedConflict\(error\)\) throw error;[\s\S]*clientUserMessageId/);
+    expect(composerSource).not.toContain("当前执行刚刚结束");
+    expect(composerSource).not.toContain("forceTurn");
   });
 
   it("renders an Interrupt failure instead of silently leaving the Turn running", () => {

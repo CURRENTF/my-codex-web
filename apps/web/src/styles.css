@@ -344,9 +344,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .stop-button { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
 .composer-running-controls.is-idle .delivery-mode-toggle { opacity: .68; }
 .send-button:active:not(:disabled), .stop-button:active:not(:disabled) { transform: translateY(1px); }
-.composer-race { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--warning) 36%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--warning) 9%, var(--surface)); color: var(--warning); font-size: 11px; }
-.composer-race span { flex: 1; color: var(--text); }
-.composer-race button { padding: 4px 7px; border-radius: 6px; background: var(--surface-strong); color: var(--text-soft); cursor: pointer; }
+.uncertain-turn { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--warning) 36%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--warning) 9%, var(--surface)); color: var(--warning); font-size: 11px; }
+.uncertain-turn span { flex: 1; color: var(--text); }
+.uncertain-turn button { padding: 4px 7px; border-radius: 6px; background: var(--surface-strong); color: var(--text-soft); cursor: pointer; }
 .composer-error { margin: 5px 5px 0; color: var(--danger); font-size: 11px; }
 .composer-resolution { margin: 5px 5px 0; color: var(--success); font-size: 11px; }
 .composer-feedback { margin: 6px 5px 0; font-size: 11px; line-height: 1.45; }
@@ -551,8 +551,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .composer-running-controls { gap: 2px; }
   .delivery-mode-toggle { width: 29px; flex: 0 0 29px; justify-content: center; padding: 0; }
   .delivery-mode-label { display: none; }
-  .composer-race { align-items: flex-start; flex-wrap: wrap; }
-  .composer-race span { flex-basis: calc(100% - 24px); }
+  .uncertain-turn { align-items: flex-start; flex-wrap: wrap; }
+  .uncertain-turn span { flex-basis: calc(100% - 24px); }
   .queued-command-banner > span { display: grid; gap: 2px; }
   .composer-suggestion-list > button { min-height: 46px; }
   .composer-suggestion-list code { display: none; }
