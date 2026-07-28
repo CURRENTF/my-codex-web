@@ -14,6 +14,7 @@ import { refreshProjectAvailability, refreshProjectAvailabilityAfterError } from
 import { recentSessionToAutoOpen, sessionCreationProjectId } from "./session-selection";
 import { queryClient } from "./main";
 import { useAppStore } from "./store";
+import { ProjectDirectoryDialog } from "./components/ProjectDirectoryDialog";
 import { SessionPane } from "./components/SessionPane";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -73,6 +74,7 @@ export function App() {
   const navigate = useNavigate(); const location = useLocation(); const client = useQueryClient();
   const selectedThreadId = threadIdFromPath(location.pathname); const [search, setSearch] = useState(""); const [mobilePane, setMobilePane] = useState<"main" | "side">("main"); const [sidebarOpen, setSidebarOpen] = useState(false); const [autoOpenSuppressed, setAutoOpenSuppressed] = useState(false);
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [sideCloseError, setSideCloseError] = useState<string | null>(null);
   const [sessionCreateError, setSessionCreateError] = useState<string | null>(null);
   const initialized = useRef(false); const lastFocusScan = useRef(0); const modalFocusSuppressed = useRef(false); const autoOpenSuppressedRef = useRef(false); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
@@ -257,19 +259,11 @@ export function App() {
     });
   };
   const suppressAutoOpen = (suppressed: boolean) => { autoOpenSuppressedRef.current = suppressed; setAutoOpenSuppressed(suppressed); };
-  const addProject = async () => {
-    modalFocusSuppressed.current = true;
-    let root: string | null;
-    try {
-      const picked = await api<{ path: string | null }>("/api/system/pick-directory", {
-        method: "POST",
-        body: JSON.stringify({ clientRequestId: newClientRequestId() }),
-      });
-      root = picked.path ?? window.prompt("输入本地文件夹的绝对路径");
-    } finally {
-      window.setTimeout(() => { modalFocusSuppressed.current = false; }, 0);
-    }
-    if (!root?.trim()) return;
+  const addProject = () => {
+    setSessionCreateError(null);
+    setProjectPickerOpen(true);
+  };
+  const addProjectAtPath = async (root: string) => {
     const project = await api<Project>("/api/projects", { method: "POST", body: JSON.stringify({ path: root.trim(), clientRequestId: newClientRequestId() }) });
     const updatedPreferences = await endpoints.preferences({ lastProjectId: project.id });
     client.setQueryData(["bootstrap"], bootstrapData ? { ...bootstrapData, preferences: updatedPreferences } : bootstrapData);
@@ -283,7 +277,7 @@ export function App() {
     sessionCreationInFlight.current = true;
     setSessionCreateError(null);
     try {
-      const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { await addProject(); return; }
+      const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
       const result = await api<{ thread: { id: string } }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ clientRequestId: crypto.randomUUID() }) });
       await client.invalidateQueries({ queryKey: ["sessions"] }); navigate(`/sessions/${result.thread.id}`);
     } catch (error) {
@@ -366,7 +360,7 @@ export function App() {
   const gate = bootstrapGate(bootstrapData.connection.state, bootstrapData.authReady);
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
-  if (!projects.length) return <EmptyWorkspace onAdd={() => void addProject()} />;
+  if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
   return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRevealProject={(id) => void api(`/api/projects/${id}/reveal`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) })} onRenameProject={setSettingsProject} onRemoveProject={(project) => void removeProject(project)} />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
@@ -378,6 +372,6 @@ export function App() {
         <div className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} vscodeRemoteAuthority={bootstrapData.vscodeRemoteAuthority} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><TerminalWindow size={30} /><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
         {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} vscodeRemoteAuthority={bootstrapData.vscodeRemoteAuthority} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
-    </main><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} />
+    </main><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} />
   </div>;
 }

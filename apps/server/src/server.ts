@@ -10,6 +10,7 @@ import { z } from "zod";
 import { CodexAdapter, OperationUncertainError, type ReviewTarget } from "@codex-web/codex-adapter";
 import { config } from "./config.js";
 import { Repositories } from "./database.js";
+import { DirectoryBrowserError, listDirectories } from "./directory-browser.js";
 import { EventGateway } from "./event-gateway.js";
 import { pickDirectory, revealDirectory } from "./native-directory-picker.js";
 import { ProjectIndexer } from "./project-indexer.js";
@@ -167,6 +168,7 @@ export async function createServer() {
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({ error: "Invalid request", details: z.treeifyError(error) });
+    if (error instanceof DirectoryBrowserError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
     if (error instanceof SteerConflictError) return reply.code(409).send({ error: "turn_finished", message: error.message });
     if (error instanceof ForkBoundaryError) return reply.code(409).send({ error: "invalid_fork_boundary", message: error.message });
     if (error instanceof ActiveTurnConflictError) return reply.code(409).send({ error: "active_turn", message: error.message });
@@ -245,6 +247,10 @@ export async function createServer() {
   app.post("/api/system/pick-directory", async (request) => {
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
     return once(request, clientRequestId, async () => ({ path: await pickDirectory() }));
+  });
+  app.get("/api/system/directories", async (request) => {
+    const { path: directoryPath } = z.object({ path: z.string().trim().max(4_096).optional() }).parse(request.query);
+    return listDirectories(directoryPath);
   });
   app.post("/api/projects", async (request) => {
     const body = z.object({ path: z.string().min(1), name: z.string().min(1).max(100).optional(), clientRequestId: requestIdSchema }).parse(request.body);

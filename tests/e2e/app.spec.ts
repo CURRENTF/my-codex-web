@@ -31,6 +31,39 @@ test("loads the local app and exposes a single-sidebar workspace", async ({ page
   }
 });
 
+test("browses server folders in the Add Project dialog", async ({ page }) => {
+  await ensureProject(page);
+  const sidebar = page.locator(".sidebar");
+  test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
+  const homePath = "/home/haojitai";
+  const projectsPath = `${homePath}/projects`;
+  await page.route("**/api/system/directories*", (route) => {
+    const requestedPath = new URL(route.request().url()).searchParams.get("path");
+    return route.fulfill({ json: requestedPath === projectsPath ? {
+      currentPath: projectsPath,
+      parentPath: homePath,
+      homePath,
+      entries: [],
+    } : {
+      currentPath: homePath,
+      parentPath: "/home",
+      homePath,
+      entries: [{ name: "projects", path: projectsPath, hidden: false, symbolicLink: false }],
+    } });
+  });
+
+  await page.getByRole("button", { name: "添加 Project" }).click();
+  const dialog = page.getByRole("dialog", { name: "添加 Project" });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByLabel("文件夹路径")).toHaveValue(homePath);
+  await page.getByRole("button", { name: "projects", exact: true }).click();
+  await expect(page.getByLabel("文件夹路径")).toHaveValue(projectsPath);
+  await expect(dialog.getByText("没有子文件夹")).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加此文件夹" })).toBeEnabled();
+  await page.getByRole("button", { name: "取消" }).click();
+  await expect(dialog).not.toBeVisible();
+});
+
 test("leaves an archived current Session instead of keeping a stale Composer open", async ({ page }) => {
   test.setTimeout(60_000);
   await ensureProject(page);
@@ -471,13 +504,21 @@ test("discovers an existing App Server Session, applies Project defaults, and re
       if (!remove.ok) throw new Error(`Preseed mapping removal failed: ${remove.status}`);
       return session.thread.id;
     }, projectRoot);
-    await page.route("**/api/system/pick-directory", (route) => route.fulfill({ json: { path: projectRoot } }));
+    await page.route("**/api/system/directories*", (route) => route.fulfill({ json: {
+      currentPath: projectRoot,
+      parentPath: path.dirname(projectRoot),
+      homePath: projectRoot,
+      entries: [],
+    } }));
+    await page.getByRole("button", { name: "添加 Project" }).click();
+    await expect(page.getByRole("dialog", { name: "添加 Project" })).toBeVisible();
+    await expect(page.getByLabel("文件夹路径")).toHaveValue(projectRoot);
     await Promise.all([
       page.waitForResponse((response) => response.url().endsWith("/api/projects") && response.request().method() === "POST" && response.ok()),
       page.waitForResponse((response) => response.url().endsWith("/api/preferences") && response.request().method() === "PATCH" && response.ok()),
-      page.getByRole("button", { name: "添加 Project" }).click(),
+      page.getByRole("button", { name: "添加此文件夹" }).click(),
     ]);
-    await page.unroute("**/api/system/pick-directory");
+    await page.unroute("**/api/system/directories*");
     const setup = await page.evaluate(async (root) => {
       const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" }).then((response) => response.json()) as {
         csrfToken: string;
