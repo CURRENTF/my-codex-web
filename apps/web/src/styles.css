@@ -309,20 +309,22 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .composer textarea { display: block; width: 100%; min-height: 64px; max-height: 180px; overflow-x: hidden; overflow-y: auto; resize: none; border: 0; outline: 0; background: transparent; padding: 13px 14px 4px; color: var(--text); font-size: 13px; line-height: 1.5; }
 .composer textarea::placeholder { color: var(--text-faint); }
 .composer textarea:disabled { cursor: not-allowed; color: var(--text-faint); }
-.composer-toolbar { display: grid; min-width: 0; min-height: 39px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; overflow: hidden; padding: 3px 7px 7px; }
-.composer-settings { display: flex; min-width: 0; align-items: center; gap: 1px; overflow: hidden; }
+.composer-toolbar { display: flex; min-width: 0; min-height: 39px; flex-wrap: wrap; align-items: center; gap: 3px 8px; overflow: hidden; padding: 3px 7px 7px; }
+.composer-controls { display: flex; min-width: min(100%, 270px); flex: 1 1 270px; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1px 5px; margin-left: auto; }
+.composer-settings { display: flex; min-width: 0; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 1px; overflow: hidden; }
 .composer-actions { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; gap: 5px; }
 .access-control, .inline-select { position: relative; display: flex; min-width: 0; height: 28px; align-items: center; gap: 3px; padding: 0 7px; border-radius: 7px; color: var(--text-soft); }
-.access-control { flex: 0 1 108px; }
-.model-select { flex: 0 1 124px; }
-.reasoning-select { flex: 0 1 64px; }
+.access-control { max-width: 118px; flex: 0 1 max-content; }
+.model-select { max-width: 176px; flex: 0 1 max-content; }
+.reasoning-select { max-width: 88px; flex: 0 1 max-content; }
 .access-control:hover, .inline-select:hover, .access-control:focus-within, .inline-select:focus-within { background: var(--surface-hover); color: var(--text); }
 .access-control:focus-within, .inline-select:focus-within { outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent); outline-offset: -1px; }
-.access-control select, .inline-select select { width: 100%; min-width: 0; max-width: none; appearance: none; overflow: hidden; border: 0; outline: 0; background: transparent; padding-right: 0; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.access-control > span, .inline-select > span { display: block; min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.access-control > span { padding-left: 19px; }
+.access-control select, .inline-select select { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; appearance: none; border: 0; outline: 0; background: transparent; opacity: 0; cursor: pointer; }
 .access-control select:disabled, .inline-select select:disabled { cursor: default; }
-.access-control select { padding-right: 0; padding-left: 19px; }
 .access-control > svg:first-child { position: absolute; left: 7px; color: var(--accent); }
-.reasoning-select select { text-transform: capitalize; }
+.reasoning-select > span { text-transform: capitalize; }
 .composer-running-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .composer-running-controls.is-reserved { visibility: hidden; pointer-events: none; }
 .delivery-mode-toggle { display: inline-flex; width: 64px; height: 27px; flex: 0 0 64px; align-items: center; justify-content: center; gap: 5px; padding: 0 6px 0 5px; border-radius: 7px; background: transparent; color: var(--text-faint); font-size: 10px; font-weight: 680; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
@@ -536,12 +538,13 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .goal-bar, .pending-banner, .session-action-error { margin-right: 10px; margin-left: 10px; }
   .goal-objective strong { display: none; }
   .composer-toolbar { gap: 3px; }
+  .composer-controls { gap: 0 2px; }
   .composer-settings { gap: 0; }
   .composer-actions { gap: 2px; }
-  .access-control { flex: 0 1 96px; padding-right: 4px; }
+  .access-control { max-width: 104px; padding-right: 4px; }
   .inline-select { padding-right: 4px; padding-left: 4px; }
-  .model-select { flex: 1 1 84px; }
-  .reasoning-select { flex: 0 1 58px; }
+  .model-select { max-width: 156px; }
+  .reasoning-select { max-width: 76px; }
   .composer-running-controls { gap: 2px; }
   .delivery-mode-toggle { width: 29px; flex: 0 0 29px; justify-content: center; padding: 0; }
   .delivery-mode-label { display: none; }
