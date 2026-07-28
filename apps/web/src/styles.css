@@ -319,7 +319,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .access-control > svg:first-child { position: absolute; left: 7px; color: var(--accent); }
 .reasoning-select select { text-transform: capitalize; }
 .toolbar-spacer { min-width: 0; flex: 1 1 0; }
-.delivery-mode-toggle { display: inline-flex; height: 27px; align-items: center; gap: 5px; padding: 0 6px 0 5px; border-radius: 7px; background: transparent; color: var(--text-faint); font-size: 10px; font-weight: 680; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
+.composer-running-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+.composer-running-controls.is-reserved { visibility: hidden; pointer-events: none; }
+.delivery-mode-toggle { display: inline-flex; width: 64px; height: 27px; flex: 0 0 64px; align-items: center; justify-content: center; gap: 5px; padding: 0 6px 0 5px; border-radius: 7px; background: transparent; color: var(--text-faint); font-size: 10px; font-weight: 680; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
 .delivery-mode-toggle:hover { background: var(--surface-hover); color: var(--text); }
 .delivery-mode-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); outline-offset: 1px; }
 .delivery-mode-toggle:active { transform: translateY(1px); }
@@ -492,6 +494,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .inline-select { padding-right: 4px; padding-left: 4px; }
   .inline-select { flex-basis: 82px; }
   .reasoning-select { flex-basis: 62px; }
+  .composer-running-controls { gap: 2px; }
   .delivery-mode-toggle { width: 29px; flex: 0 0 29px; justify-content: center; padding: 0; }
   .delivery-mode-label { display: none; }
   .composer-race { align-items: flex-start; flex-wrap: wrap; }
