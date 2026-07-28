@@ -17,6 +17,7 @@ describe("viewport layout CSS", () => {
     expect(rule(".sidebar")).toContain("min-height: 0");
     expect(rule(".main-pane, .side-pane")).toContain("min-height: 0");
     expect(rule(".session-pane")).toContain("min-height: 0");
+    expect(rule(".session-pane")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".timeline-shell")).toContain("min-height: 0");
   });
 
@@ -49,13 +50,19 @@ describe("viewport layout CSS", () => {
   it("lets the running Composer toolbar shrink without widening its pane", () => {
     expect(rule(".composer-wrap")).toContain("max-width: 100%");
     expect(rule(".composer-wrap")).toContain("min-width: 0");
+    expect(rule(".composer-toolbar")).toContain("display: grid");
+    expect(rule(".composer-toolbar")).toContain("grid-template-columns: minmax(0, 1fr) auto");
     expect(rule(".composer-toolbar")).toContain("min-width: 0");
     expect(rule(".composer-toolbar")).toContain("overflow: hidden");
+    expect(rule(".composer-settings")).toContain("min-width: 0");
+    expect(rule(".composer-settings")).toContain("overflow: hidden");
+    expect(rule(".composer-actions")).toContain("flex: 0 0 auto");
     expect(rule(".access-control, .inline-select")).toContain("min-width: 0");
     expect(rule(".access-control select, .inline-select select")).toContain("width: 100%");
     expect(rule(".access-control select, .inline-select select")).toContain("min-width: 0");
     expect(rule(".access-control select, .inline-select select")).toContain("padding-right: 0");
     expect(composerSource).not.toContain("CaretDown");
+    expect(composerSource).toMatch(/composer-settings[\s\S]*access-control[\s\S]*model-select[\s\S]*reasoning-select[\s\S]*composer-actions[\s\S]*composer-running-controls[\s\S]*send-button/);
     expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 29px");
   });
 });
