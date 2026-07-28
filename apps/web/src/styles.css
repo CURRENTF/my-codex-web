@@ -326,13 +326,15 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .access-control > svg:first-child { position: absolute; left: 7px; color: var(--accent); }
 .reasoning-select > span { text-transform: capitalize; }
 .composer-running-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
-.composer-running-controls.is-reserved { visibility: hidden; pointer-events: none; }
 .delivery-mode-toggle { display: inline-flex; width: 64px; height: 27px; flex: 0 0 64px; align-items: center; justify-content: center; gap: 5px; padding: 0 6px 0 5px; border-radius: 7px; background: transparent; color: var(--text-faint); font-size: 10px; font-weight: 680; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
-.delivery-mode-toggle:hover { background: var(--surface-hover); color: var(--text); }
+.delivery-mode-toggle:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
 .delivery-mode-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); outline-offset: 1px; }
-.delivery-mode-toggle:active { transform: translateY(1px); }
+.delivery-mode-toggle:active:not(:disabled) { transform: translateY(1px); }
 .delivery-mode-track { position: relative; display: block; width: 22px; height: 13px; flex: 0 0 auto; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-hover); transition: border-color 120ms ease, background-color 120ms ease; }
 .delivery-mode-track > span { position: absolute; top: 2px; left: 2px; width: 7px; height: 7px; border-radius: 999px; background: var(--text-faint); transition: transform 140ms ease, background-color 120ms ease; }
+.composer-running-controls.is-active .delivery-mode-toggle { color: var(--accent); }
+.composer-running-controls.is-active .delivery-mode-track { border-color: color-mix(in srgb, var(--accent) 46%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.composer-running-controls.is-active .delivery-mode-track > span { background: var(--accent); }
 .delivery-mode-toggle.queue { color: var(--accent); }
 .delivery-mode-toggle.queue .delivery-mode-track { border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); background: color-mix(in srgb, var(--accent) 15%, var(--surface)); }
 .delivery-mode-toggle.queue .delivery-mode-track > span { background: var(--accent); transform: translateX(9px); }
@@ -340,6 +342,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .send-button { background: var(--text); color: var(--surface-strong); }
 @media (prefers-color-scheme: dark) { .send-button { color: #171a1f; } }
 .stop-button { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
+.composer-running-controls.is-idle .delivery-mode-toggle,
+.composer-running-controls.is-idle .stop-button { opacity: .68; }
+.composer-running-controls.is-idle .stop-button { background: var(--surface-hover); color: var(--text-faint); }
 .send-button:active:not(:disabled), .stop-button:active:not(:disabled) { transform: translateY(1px); }
 .composer-race { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--warning) 36%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--warning) 9%, var(--surface)); color: var(--warning); font-size: 11px; }
 .composer-race span { flex: 1; color: var(--text); }

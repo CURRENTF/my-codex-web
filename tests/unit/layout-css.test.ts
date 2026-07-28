@@ -33,18 +33,22 @@ describe("viewport layout CSS", () => {
 
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
     expect(rule(".composer-running-controls")).toContain("flex: 0 0 auto");
-    expect(rule(".composer-running-controls.is-reserved")).toContain("visibility: hidden");
+    expect(styles).not.toContain(".composer-running-controls.is-reserved");
     expect(rule(".delivery-mode-toggle")).toContain("height: 27px");
     expect(rule(".delivery-mode-toggle")).toContain("flex: 0 0 64px");
     expect(rule(".delivery-mode-track")).toContain("width: 22px");
+    expect(rule(".composer-running-controls.is-active .delivery-mode-toggle")).toContain("color: var(--accent)");
+    expect(styles).toMatch(/\.composer-running-controls\.is-idle \.stop-button \{[^}]*color: var\(--text-faint\)/);
     expect(rule(".delivery-mode-toggle.queue")).toContain("color: var(--accent)");
     expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
   });
 
-  it("reserves the running controls before a Turn starts so sending cannot reflow the toolbar", () => {
-    expect(composerSource).toContain('className={`composer-running-controls ${running ? "is-active" : "is-reserved"}`}');
-    expect(composerSource).toContain("aria-hidden={!running}");
+  it("keeps the running controls visible before a Turn starts so sending cannot reflow the toolbar", () => {
+    expect(composerSource).toContain('className={`composer-running-controls ${running ? "is-active" : "is-idle"}`}');
+    expect(composerSource).not.toContain("aria-hidden={!running}");
     expect(composerSource).not.toContain('{running && <button type="button" className={`delivery-mode-toggle');
+    expect(composerSource).toContain('disabled={!running}');
+    expect(composerSource).toContain('"当前没有正在运行的 Turn"');
   });
 
   it("lets the running Composer toolbar shrink without widening its pane", () => {
