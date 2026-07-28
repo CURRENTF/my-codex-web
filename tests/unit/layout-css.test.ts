@@ -59,15 +59,16 @@ describe("viewport layout CSS", () => {
     expect(composerSource).not.toMatch(/className="send-button"/);
   });
 
-  it("lets the running Composer toolbar shrink without widening its pane", () => {
+  it("keeps the Composer toolbar on one line while its labels shrink to fit", () => {
     expect(rule(".composer-wrap")).toContain("max-width: 100%");
     expect(rule(".composer-wrap")).toContain("min-width: 0");
     expect(rule(".composer-toolbar")).toContain("display: flex");
-    expect(rule(".composer-toolbar")).toContain("flex-wrap: wrap");
+    expect(rule(".composer-toolbar")).toContain("flex-wrap: nowrap");
     expect(rule(".composer-toolbar")).toContain("min-width: 0");
     expect(rule(".composer-toolbar")).toContain("overflow: hidden");
-    expect(rule(".composer-controls")).toContain("flex: 1 1 270px");
-    expect(rule(".composer-controls")).toContain("flex-wrap: wrap");
+    expect(rule(".composer-controls")).toContain("min-width: 0");
+    expect(rule(".composer-controls")).toContain("flex: 1 1 0");
+    expect(rule(".composer-controls")).toContain("flex-wrap: nowrap");
     expect(rule(".composer-controls")).toContain("justify-content: flex-end");
     expect(rule(".composer-controls")).toContain("margin-left: auto");
     expect(rule(".composer-settings")).toContain("min-width: 0");

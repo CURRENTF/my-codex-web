@@ -309,8 +309,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .composer textarea { display: block; width: 100%; min-height: 64px; max-height: 180px; overflow-x: hidden; overflow-y: auto; resize: none; border: 0; outline: 0; background: transparent; padding: 13px 14px 4px; color: var(--text); font-size: 13px; line-height: 1.5; }
 .composer textarea::placeholder { color: var(--text-faint); }
 .composer textarea:disabled { cursor: not-allowed; color: var(--text-faint); }
-.composer-toolbar { display: flex; min-width: 0; min-height: 39px; flex-wrap: wrap; align-items: center; gap: 3px 8px; overflow: hidden; padding: 3px 7px 7px; }
-.composer-controls { display: flex; min-width: min(100%, 270px); flex: 1 1 270px; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1px 5px; margin-left: auto; }
+.composer-toolbar { display: flex; min-width: 0; min-height: 39px; flex-wrap: nowrap; align-items: center; gap: 3px 8px; overflow: hidden; padding: 3px 7px 7px; }
+.composer-controls { display: flex; min-width: 0; flex: 1 1 0; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 1px 5px; margin-left: auto; }
 .composer-settings { display: flex; min-width: 0; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 1px; overflow: hidden; }
 .composer-actions { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; gap: 5px; }
 .access-control, .inline-select { position: relative; display: flex; min-width: 0; height: 28px; align-items: center; gap: 3px; padding: 0 7px; border-radius: 7px; color: var(--text-soft); }

@@ -342,6 +342,15 @@ test("adapts the workspace controls and navigation to the available width", asyn
     await expect(page.locator(".inline-select select").first()).toBeVisible();
     await expect(page.locator(".reasoning-select select")).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (size.width === 390) {
+      const [toolbarBox, accessBox, controlsBox] = await Promise.all([
+        page.locator(".composer-toolbar").boundingBox(),
+        page.locator(".access-control").boundingBox(),
+        page.locator(".composer-controls").boundingBox(),
+      ]);
+      expect(toolbarBox?.height).toBeLessThanOrEqual(40);
+      expect(Math.abs((accessBox?.y ?? 0) - (controlsBox?.y ?? 0))).toBeLessThan(2);
+    }
     await page.screenshot({ path: path.join(outputDir, `${size.name}.png`), fullPage: true });
   }
 
