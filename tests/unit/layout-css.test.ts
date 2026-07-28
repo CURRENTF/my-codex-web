@@ -38,7 +38,7 @@ describe("viewport layout CSS", () => {
     expect(rule(".delivery-mode-toggle")).toContain("flex: 0 0 64px");
     expect(rule(".delivery-mode-track")).toContain("width: 22px");
     expect(rule(".composer-running-controls.is-active .delivery-mode-toggle")).toContain("color: var(--accent)");
-    expect(styles).toMatch(/\.composer-running-controls\.is-idle \.stop-button \{[^}]*color: var\(--text-faint\)/);
+    expect(rule(".composer-running-controls.is-idle .delivery-mode-toggle")).toContain("opacity: .68");
     expect(rule(".delivery-mode-toggle.queue")).toContain("color: var(--accent)");
     expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
   });
@@ -49,6 +49,14 @@ describe("viewport layout CSS", () => {
     expect(composerSource).not.toContain('{running && <button type="button" className={`delivery-mode-toggle');
     expect(composerSource).toContain('disabled={!running}');
     expect(composerSource).toContain('"当前没有正在运行的 Turn"');
+  });
+
+  it("uses one primary button for sending and stopping", () => {
+    expect(composerSource).toContain("const stopPrimaryAction = running && !draft.trim()");
+    expect(composerSource).toContain('className={stopPrimaryAction ? "stop-button" : "send-button"}');
+    expect(composerSource).toContain("if (stopPrimaryAction) interrupt.mutate()");
+    expect(composerSource).not.toMatch(/className="stop-button"/);
+    expect(composerSource).not.toMatch(/className="send-button"/);
   });
 
   it("lets the running Composer toolbar shrink without widening its pane", () => {

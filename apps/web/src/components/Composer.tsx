@@ -368,6 +368,15 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); rememberSteerIntent(); submit(); }
   };
 
+  const stopPrimaryAction = running && !draft.trim();
+  const primaryActionDisabled = stopPrimaryAction
+    ? interrupt.isPending
+    : blocked || !draft.trim() || send.isPending || sendQueuedMessage.isPending || (running && deliveryMode === "steer" && !activeTurnId && !parseSlashCommand(draft));
+  const runPrimaryAction = () => {
+    if (stopPrimaryAction) interrupt.mutate();
+    else submit();
+  };
+
   return <div className={`composer-wrap ${compact ? "compact" : ""}`}>
     {race && <div className="composer-race"><WarningCircle size={16} weight="fill" /><span>当前执行刚刚结束</span><button onClick={() => send.mutate({ forceTurn: true })}>作为下一条消息发送</button><button onClick={() => { steerDraftTurnId.current = null; setRace(false); textarea.current?.focus(); }}>继续编辑</button></div>}
     {uncertainTurnStart && <div className="composer-race uncertain-turn"><WarningCircle size={16} weight="fill" /><span>Codex 未确认上一条消息是否开始执行。为避免重复任务，请先显式核实；当前草稿不会丢失。</span><button disabled={resolveUncertainTurn.isPending} onClick={() => resolveUncertainTurn.mutate()}>{resolveUncertainTurn.isPending ? "正在核实…" : "确认未执行，恢复输入"}</button></div>}
@@ -387,9 +396,8 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
             <div className="composer-actions">
               <div className={`composer-running-controls ${running ? "is-active" : "is-idle"}`}>
                 <button type="button" className={`delivery-mode-toggle ${deliveryMode}`} role="switch" aria-checked={deliveryMode === "queue"} aria-label={running ? `需求发送方式：${deliveryMode === "queue" ? "排队" : "Steer"}` : "需求发送方式当前不可用，没有正在运行的 Turn"} title={running ? deliveryMode === "queue" ? "当前 Turn 完成后自动发送" : "立即追加到当前 Turn" : "当前没有正在运行的 Turn"} disabled={!running} onClick={() => { const next = deliveryMode === "steer" ? "queue" : "steer"; setDeliveryMode(next); if (next === "queue") steerDraftTurnId.current = null; setRace(false); }}><span className="delivery-mode-track" aria-hidden="true"><span /></span><span className="delivery-mode-label">{deliveryMode === "queue" ? "排队" : "Steer"}</span></button>
-                <button className="stop-button" onClick={() => interrupt.mutate()} disabled={!running || interrupt.isPending} aria-label={running ? "停止当前 Turn" : "停止当前 Turn 当前不可用"} title={running ? "停止当前 Turn" : "当前没有正在运行的 Turn"}><Square size={13} weight="fill" /></button>
               </div>
-              <button className="send-button" onPointerDown={rememberSteerIntent} onClick={submit} disabled={blocked || !draft.trim() || send.isPending || sendQueuedMessage.isPending || (running && deliveryMode === "steer" && !activeTurnId && !parseSlashCommand(draft))} aria-label={running && deliveryMode === "queue" ? "排到下一 Turn" : running ? "Steer 当前 Turn 或排队 Slash 命令" : "发送或执行命令"}>{running && deliveryMode === "queue" ? <ClockCounterClockwise size={16} weight="bold" /> : <ArrowUp size={17} weight="bold" />}</button>
+              <button className={stopPrimaryAction ? "stop-button" : "send-button"} onPointerDown={() => { if (!stopPrimaryAction) rememberSteerIntent(); }} onClick={runPrimaryAction} disabled={primaryActionDisabled} aria-label={stopPrimaryAction ? "停止当前 Turn" : running && deliveryMode === "queue" ? "排到下一 Turn" : running ? "Steer 当前 Turn 或排队 Slash 命令" : "发送或执行命令"} title={stopPrimaryAction ? "停止当前 Turn" : undefined}>{stopPrimaryAction ? <Square size={13} weight="fill" /> : running && deliveryMode === "queue" ? <ClockCounterClockwise size={16} weight="bold" /> : <ArrowUp size={17} weight="bold" />}</button>
             </div>
           </div>
         </div>

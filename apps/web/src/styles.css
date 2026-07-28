@@ -342,9 +342,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .send-button { background: var(--text); color: var(--surface-strong); }
 @media (prefers-color-scheme: dark) { .send-button { color: #171a1f; } }
 .stop-button { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
-.composer-running-controls.is-idle .delivery-mode-toggle,
-.composer-running-controls.is-idle .stop-button { opacity: .68; }
-.composer-running-controls.is-idle .stop-button { background: var(--surface-hover); color: var(--text-faint); }
+.composer-running-controls.is-idle .delivery-mode-toggle { opacity: .68; }
 .send-button:active:not(:disabled), .stop-button:active:not(:disabled) { transform: translateY(1px); }
 .composer-race { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--warning) 36%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--warning) 9%, var(--surface)); color: var(--warning); font-size: 11px; }
 .composer-race span { flex: 1; color: var(--text); }
