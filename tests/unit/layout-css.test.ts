@@ -54,6 +54,8 @@ describe("viewport layout CSS", () => {
     expect(rule(".access-control, .inline-select")).toContain("min-width: 0");
     expect(rule(".access-control select, .inline-select select")).toContain("width: 100%");
     expect(rule(".access-control select, .inline-select select")).toContain("min-width: 0");
+    expect(rule(".access-control select, .inline-select select")).toContain("padding-right: 0");
+    expect(composerSource).not.toContain("CaretDown");
     expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 29px");
   });
 });

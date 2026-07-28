@@ -193,6 +193,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .pending-user-status { display: inline-flex; align-items: center; justify-self: end; gap: 4px; color: var(--text-faint); font-size: 10px; line-height: 1; }
 .pending-user-message[data-state="uncertain"] .pending-user-status { color: var(--warning); }
 .agent-message { display: grid; gap: 9px; margin: 12px 0 14px; color: var(--text); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.agent-message-text { min-width: 0; }
 .agent-message-text > :first-child { margin-top: 0; }
 .agent-message-text > :last-child { margin-bottom: 0; }
 .agent-message-text p { margin: .65em 0; }
@@ -313,8 +314,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .access-control { flex-basis: 126px; }
 .reasoning-select { flex-basis: 82px; }
 .access-control:hover, .inline-select:hover { background: var(--surface-hover); color: var(--text); }
-.access-control select, .inline-select select { width: 100%; min-width: 0; max-width: none; appearance: none; overflow: hidden; border: 0; outline: 0; background: transparent; padding-right: 12px; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.inline-select > svg { position: absolute; right: 6px; pointer-events: none; }
+.access-control select, .inline-select select { width: 100%; min-width: 0; max-width: none; appearance: none; overflow: hidden; border: 0; outline: 0; background: transparent; padding-right: 0; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .access-control select { padding-right: 0; padding-left: 19px; }
 .access-control > svg:first-child { position: absolute; left: 7px; color: var(--accent); }
 .reasoning-select select { text-transform: capitalize; }
