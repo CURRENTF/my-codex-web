@@ -186,7 +186,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .turn-block { width: min(92%, 780px); margin: 0 auto; padding: clamp(16px, 3cqw, 24px) 0 12px; }
 .user-message, .pending-user-message { display: flex; justify-content: flex-end; margin-bottom: 22px; }
 .user-message > div, .pending-user-message > div { max-width: min(650px, 86%); padding: 10px 13px; border-radius: 14px 14px 4px 14px; background: var(--surface-hover); color: var(--text); line-height: 1.55; white-space: pre-wrap; }
-.user-message > div { display: grid; min-width: min(220px, 86%); gap: 9px; }
+.user-message > div { display: grid; gap: 9px; }
+.message-with-attachments { min-width: min(220px, 86%); }
 .user-message-text { overflow-wrap: anywhere; }
 .message-image-grid { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .message-image-grid > a { display: block; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }

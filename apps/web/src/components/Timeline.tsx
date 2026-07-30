@@ -36,7 +36,7 @@ function UserMessage({ item }: { item: Extract<CodexItem, { type: "userMessage" 
     }
     return [];
   });
-  return <div className="user-message"><div>{text && <span className="user-message-text">{text}</span>}<AttachmentList attachments={attachments} /></div></div>;
+  return <div className="user-message"><div className={attachments.length ? "message-with-attachments" : undefined}>{text && <span className="user-message-text">{text}</span>}<AttachmentList attachments={attachments} /></div></div>;
 }
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
@@ -106,7 +106,7 @@ function OptimisticMessages({ messages }: { messages: OptimisticUserMessage[] })
   return <section className="turn-block optimistic-message-block" aria-live="polite">{messages.map((message) => {
     const label = message.state === "sending" ? "发送中" : message.state === "uncertain" ? "正在确认" : "排队中";
     return <div className="pending-user-message" data-state={message.state} data-client-user-message-id={message.clientUserMessageId} key={message.clientUserMessageId}>
-      <div>{message.text && <span className="pending-user-text">{message.text}</span>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
+      <div className={message.attachments?.length ? "message-with-attachments" : undefined}>{message.text && <span className="pending-user-text">{message.text}</span>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
     </div>;
   })}</section>;
 }

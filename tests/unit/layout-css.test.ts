@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const styles = readFileSync(fileURLToPath(new URL("../../apps/web/src/styles.css", import.meta.url)), "utf8");
 const composerSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Composer.tsx", import.meta.url)), "utf8");
+const timelineSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Timeline.tsx", import.meta.url)), "utf8");
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,6 +30,12 @@ describe("viewport layout CSS", () => {
     expect(rule(".session-notices")).toContain("display: grid");
     expect(rule(".full-access-notice")).not.toContain("grid-area");
     expect(rule(".parallel-write-warning")).not.toContain("grid-area");
+  });
+
+  it("keeps short text messages content-sized while reserving preview width for attachments", () => {
+    expect(rule(".user-message > div")).not.toContain("min-width");
+    expect(rule(".message-with-attachments")).toContain("min-width: min(220px, 86%)");
+    expect(timelineSource.match(/message-with-attachments/g)).toHaveLength(2);
   });
 
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
