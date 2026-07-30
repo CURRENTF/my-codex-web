@@ -26,6 +26,61 @@ describe("applySessionEvent", () => {
     expect(completed.thread.turns[0]?.items[1]).toMatchObject({ type: "agentMessage", text: "world" });
   });
 
+  it("preserves the user-message client ID and restored attachment metadata across sparse live snapshots", () => {
+    const withRestoredAttachment: SessionPayload = {
+      ...session,
+      thread: {
+        ...session.thread,
+        turns: [{
+          id: "turn-1",
+          status: "inProgress",
+          startedAt: 10,
+          completedAt: null,
+          durationMs: null,
+          items: [{
+            type: "userMessage",
+            id: "user-1",
+            clientId: "message-1",
+            content: [
+              { type: "text", text: "inspect this" },
+              { type: "mention", path: "/server/attachment.txt", name: "attachment.txt", downloadUrl: "/api/attachments/attachment-1/content?download=1" },
+            ],
+          }],
+        }],
+      },
+    };
+
+    const afterItemEvent = applySessionEvent(withRestoredAttachment, event("item.upserted", {
+      turnId: "turn-1",
+      item: { type: "userMessage", id: "user-live", clientId: "message-1", content: [{ type: "text", text: "inspect this" }] },
+    }))!;
+    expect(afterItemEvent.thread.turns[0]?.items[0]).toMatchObject({
+      clientId: "message-1",
+      content: [
+        { type: "text", text: "inspect this" },
+        { type: "mention", name: "attachment.txt", downloadUrl: "/api/attachments/attachment-1/content?download=1" },
+      ],
+    });
+
+    const completed = applySessionEvent(afterItemEvent, event("turn.completed", {
+      turn: {
+        id: "turn-1",
+        status: "completed",
+        startedAt: 10,
+        completedAt: 12,
+        durationMs: 2_000,
+        items: [{ type: "userMessage", id: "user-completed", clientId: "message-1", content: [{ type: "text", text: "inspect this" }] }],
+      },
+    }))!;
+    expect(completed.thread.turns[0]?.items[0]).toMatchObject({
+      clientId: "message-1",
+      content: [
+        { type: "text", text: "inspect this" },
+        { type: "mention", name: "attachment.txt", downloadUrl: "/api/attachments/attachment-1/content?download=1" },
+      ],
+    });
+  });
+
   it("updates Goal state without requiring a Session refetch", () => {
     const withGoal = applySessionEvent(session, event("goal.updated", { goal: { threadId: "thread-1", objective: "ship", status: "active", tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0, createdAt: 1, updatedAt: 1 } }))!;
     expect(withGoal.goal?.objective).toBe("ship");

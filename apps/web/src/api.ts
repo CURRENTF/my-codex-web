@@ -1,4 +1,4 @@
-import type { BootstrapPayload, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption } from "@codex-web/shared-types";
+import type { BootstrapPayload, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
@@ -19,7 +19,7 @@ export function isPasswordRequiredError(error: unknown): boolean {
 
 async function request<T>(path: string, init: RequestInit, allowSecurityRefresh: boolean): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (init.body && !headers.has("content-type") && !(typeof FormData !== "undefined" && init.body instanceof FormData)) headers.set("content-type", "application/json");
   if (init.method && !["GET", "HEAD"].includes(init.method) && csrfToken) headers.set("x-csrf-token", csrfToken);
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   const isJson = response.headers.get("content-type")?.includes("application/json");
@@ -58,6 +58,11 @@ export const endpoints = {
   sessions: (search = "", sortDirection: "asc" | "desc" = "desc", signal?: AbortSignal) => api<SessionSummary[]>(`/api/sessions?sortDirection=${sortDirection}&search=${encodeURIComponent(search)}`, { signal }),
   session: (threadId: string, signal?: AbortSignal) => api<SessionPayload>(`/api/sessions/${threadId}`, { signal }),
   preferences: (changes: Partial<Preferences>) => api<Preferences>("/api/preferences", { method: "PATCH", body: JSON.stringify({ ...changes, clientRequestId: newClientRequestId() }) }),
+  uploadAttachment: (file: File) => {
+    const body = new FormData(); body.append("file", file, file.name);
+    return api<UploadedAttachment>("/api/attachments", { method: "POST", body });
+  },
+  removeAttachment: (id: string) => api<void>(`/api/attachments/${id}`, { method: "DELETE" }),
 };
 
 export interface SessionPayload {

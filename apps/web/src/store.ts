@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AccessMode, PendingRequestSummary, SideChatRuntime, ThreadRuntime, UiEvent } from "@codex-web/shared-types";
+import type { AccessMode, PendingRequestSummary, SideChatRuntime, ThreadRuntime, UiEvent, UploadedAttachment } from "@codex-web/shared-types";
 
 interface AppStore {
   connectionState: "connected" | "connecting" | "disconnected";
@@ -15,7 +15,7 @@ interface AppStore {
   queuedSlashCommands: Record<string, QueuedSlashCommand>;
   queuedUserMessages: Record<string, QueuedUserMessage>;
   setDraft(threadId: string, text: string): void;
-  beginSubmission(threadId: string, draft: string, clientUserMessageId: string): void;
+  beginSubmission(threadId: string, draft: string, clientUserMessageId: string, attachments?: UploadedAttachment[]): void;
   acceptSubmission(threadId: string): void;
   markSubmissionUncertain(threadId: string): void;
   markSubmissionRetryReady(threadId: string, clientUserMessageId?: string): void;
@@ -34,6 +34,7 @@ interface AppStore {
 export interface OptimisticUserMessage {
   clientUserMessageId: string;
   text: string;
+  attachments?: UploadedAttachment[];
   state: "sending" | "queued" | "uncertain";
 }
 
@@ -45,6 +46,7 @@ export interface QueuedSlashCommand {
 
 export interface QueuedUserMessage {
   text: string;
+  attachments?: UploadedAttachment[];
   skillNames: string[];
   model: string;
   reasoning: string;
@@ -88,10 +90,11 @@ function readQueuedUserMessages(): Record<string, QueuedUserMessage> {
       if (!message || typeof message !== "object") return [];
       const candidate = message as Partial<QueuedUserMessage>;
       const validAccessMode = candidate.accessMode === "fullAccess" || candidate.accessMode === "workspaceWrite" || candidate.accessMode === "readOnly";
+      const validAttachments = candidate.attachments === undefined || (Array.isArray(candidate.attachments) && candidate.attachments.every((attachment) => attachment && typeof attachment === "object" && typeof attachment.id === "string" && typeof attachment.name === "string"));
       return typeof candidate.text === "string" && Array.isArray(candidate.skillNames) && candidate.skillNames.every((name) => typeof name === "string")
-        && typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validAccessMode
+        && typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validAccessMode && validAttachments
         && typeof candidate.clientRequestId === "string" && typeof candidate.clientUserMessageId === "string" && typeof candidate.createdAt === "number"
-        ? [[threadId, candidate as QueuedUserMessage]]
+        ? [[threadId, { ...candidate, attachments: candidate.attachments ?? [] } as QueuedUserMessage]]
         : [];
     }));
   } catch {
@@ -108,6 +111,7 @@ const initialQueuedUserMessages = readQueuedUserMessages();
 const initialQueuedOptimisticMessages = Object.fromEntries(Object.entries(initialQueuedUserMessages).map(([threadId, message]) => [threadId, [{
   clientUserMessageId: message.clientUserMessageId,
   text: message.text,
+  ...((message.attachments?.length ?? 0) ? { attachments: message.attachments } : {}),
   state: "queued" as const,
 }]]));
 
@@ -134,9 +138,9 @@ export const useAppStore = create<AppStore>((set) => ({
     delete injectedPrefills[threadId];
     return { drafts: { ...state.drafts, [threadId]: text }, injectedPrefills };
   }),
-  beginSubmission: (threadId, draft, clientUserMessageId) => set((state) => {
+  beginSubmission: (threadId, draft, clientUserMessageId, attachments = []) => set((state) => {
     const currentMessages = state.optimisticUserMessages[threadId] ?? [];
-    const optimisticMessage: OptimisticUserMessage = { clientUserMessageId, text: draft.trim(), state: "sending" };
+    const optimisticMessage: OptimisticUserMessage = { clientUserMessageId, text: draft.trim(), ...(attachments.length ? { attachments } : {}), state: "sending" };
     const existingIndex = currentMessages.findIndex((message) => message.clientUserMessageId === clientUserMessageId);
     const nextMessages = [...currentMessages];
     if (existingIndex < 0) nextMessages.push(optimisticMessage);
@@ -244,6 +248,7 @@ export const useAppStore = create<AppStore>((set) => ({
     const queuedOptimisticMessage: OptimisticUserMessage = {
       clientUserMessageId: message.clientUserMessageId,
       text: message.text,
+      ...((message.attachments?.length ?? 0) ? { attachments: message.attachments } : {}),
       state: "queued",
     };
     const existingIndex = currentMessages.findIndex((candidate) => candidate.clientUserMessageId === message.clientUserMessageId);

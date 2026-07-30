@@ -103,6 +103,26 @@ describe("session snapshot merge", () => {
     expect(merged[1]).toMatchObject({ aggregatedOutput: "ok", exitCode: 0 });
   });
 
+  it("deduplicates live and response user items by client ID when their generated item IDs differ", () => {
+    const stable = thread([{ id: "turn-1", status: "inProgress", itemsView: "full", error: null, startedAt: 1, completedAt: null, durationMs: null, items: [{
+      type: "userMessage",
+      id: "response-user",
+      clientId: "client-message-1",
+      content: [
+        { type: "text", text: "inspect", text_elements: [] },
+        { type: "mention", name: "sample.txt", path: "/server/sample.txt" },
+      ],
+    }] }]);
+    const live = thread([{ ...stable.turns[0]!, items: [{
+      ...stable.turns[0]!.items[0]!,
+      id: "event-user",
+    }] }]);
+
+    const users = mergeSessionSnapshot(stable, live).turns[0]!.items.filter((item) => item.type === "userMessage");
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ clientId: "client-message-1" });
+  });
+
   it("merges streamed command output with a completion item that omits its first delta", () => {
     const completed = thread([{ id: "turn-1", status: "completed", itemsView: "full", error: null, startedAt: 1, completedAt: 2, durationMs: 1_000, items: [{
       type: "commandExecution", id: "command-1", command: "run", cwd: "/tmp/project", processId: null,

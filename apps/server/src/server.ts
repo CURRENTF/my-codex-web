@@ -5,6 +5,7 @@ import path from "node:path";
 import Fastify from "fastify";
 import type { FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
+import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { CodexAdapter, OperationUncertainError, type ReviewTarget } from "@codex-web/codex-adapter";
@@ -22,6 +23,7 @@ import { KeyedOperationLock } from "./keyed-operation-lock.js";
 import { ConnectionRecovery, type AppServerConnectionState } from "./connection-recovery.js";
 import { safeErrorForLog } from "./safe-error.js";
 import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
+import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, streamLocalFile } from "./attachment-store.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -31,6 +33,7 @@ const settingsSchema = z.object({
   accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]).optional(),
 });
 const skillNamesSchema = z.array(z.string().trim().min(1).max(200)).max(20).default([]);
+const attachmentIdsSchema = z.array(z.string().uuid()).max(MAX_ATTACHMENTS_PER_MESSAGE).default([]);
 const reviewTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("uncommittedChanges") }),
   z.object({ type: z.literal("baseBranch"), branch: z.string().trim().min(1).max(500) }),
@@ -58,6 +61,7 @@ export async function createServer() {
     trustProxy: config.trustProxy,
   });
   await app.register(cookie);
+  await app.register(multipart, { limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1, fields: 0, parts: 1 } });
 
   const hasSession = (token: string | undefined) => secureEqual(token, sessionToken);
   const setSessionCookie = (reply: FastifyReply) => {
@@ -70,6 +74,8 @@ export async function createServer() {
   };
 
   const repositories = new Repositories(config.databasePath);
+  const attachments = new AttachmentStore(config.dataDir);
+  await attachments.initialize();
   const adapter = new CodexAdapter({
     cwd: config.projectRoot,
     codexHome: config.codexHome,
@@ -84,7 +90,7 @@ export async function createServer() {
   const runtimes = new ThreadRuntimeRegistry(events, repositories);
   const projectLocks = new KeyedOperationLock();
   const indexer = new ProjectIndexer(repositories, adapter, projectLocks);
-  const sessions = new SessionService(repositories, adapter, indexer, runtimes, projectLocks);
+  const sessions = new SessionService(repositories, adapter, indexer, runtimes, projectLocks, attachments);
   const mutations = new RequestDeduplicator();
   const once = <T>(request: { method: string; url: string }, clientRequestId: string, action: () => Promise<T> | T) =>
     mutations.run(`${request.method}\u0000${request.url}\u0000${clientRequestId}`, action);
@@ -152,7 +158,7 @@ export async function createServer() {
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
+      "img-src 'self' data: blob: https: http:",
       `connect-src 'self' ${socketOrigins.join(" ")}`,
       "font-src 'self' data:",
       "object-src 'none'",
@@ -167,6 +173,7 @@ export async function createServer() {
   });
 
   app.setErrorHandler((error, _request, reply) => {
+    if ((error as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE") return reply.code(413).send({ error: "attachment_too_large", message: `单个附件不能超过 ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MiB。` });
     if (error instanceof z.ZodError) return reply.code(400).send({ error: "Invalid request", details: z.treeifyError(error) });
     if (error instanceof DirectoryBrowserError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
     if (error instanceof SteerConflictError) return reply.code(409).send({ error: "turn_finished", message: error.message });
@@ -230,6 +237,42 @@ export async function createServer() {
       sessionPrefills: sessions.listPrefills(),
       pendingRequests: runtimes.listPendingRequests(),
     };
+  });
+  app.post("/api/attachments", async (request, reply) => {
+    const part = await request.file();
+    if (!part || part.fieldname !== "file") return reply.code(400).send({ error: "attachment_missing", message: "请选择一个文件。" });
+    return reply.code(201).send(await attachments.save(part));
+  });
+  app.get("/api/attachments/:attachmentId/content", async (request, reply) => {
+    const attachmentId = z.string().uuid().parse((request.params as { attachmentId: string }).attachmentId);
+    const download = z.object({ download: z.enum(["0", "1"]).optional() }).parse(request.query).download === "1";
+    try {
+      const content = await attachments.content(attachmentId);
+      const disposition = download || content.metadata.kind === "file" ? "attachment" : "inline";
+      reply.header("cache-control", "private, max-age=31536000, immutable");
+      reply.header("content-disposition", `${disposition}; filename*=UTF-8''${encodeURIComponent(content.metadata.name)}`);
+      reply.header("content-length", String(content.metadata.size));
+      return reply.type(content.metadata.mimeType).send(streamLocalFile(content.path));
+    } catch {
+      return reply.code(404).send({ error: "attachment_not_found", message: "附件不存在或已过期。" });
+    }
+  });
+  app.delete("/api/attachments/:attachmentId", async (request, reply) => {
+    const attachmentId = z.string().uuid().parse((request.params as { attachmentId: string }).attachmentId);
+    try {
+      const removed = await attachments.removeDraft(attachmentId);
+      return removed ? reply.code(204).send() : reply.code(409).send({ error: "attachment_claimed", message: "已发送的附件不能删除。" });
+    } catch {
+      return reply.code(404).send({ error: "attachment_not_found", message: "附件不存在或已过期。" });
+    }
+  });
+  app.get("/api/local-images/:token/content", async (request, reply) => {
+    const token = z.string().uuid().parse((request.params as { token: string }).token);
+    const content = attachments.openLocalImage(token);
+    if (!content || !existsSync(content.path)) return reply.code(404).send({ error: "image_not_found", message: "图片不存在。" });
+    reply.header("cache-control", "private, no-store");
+    reply.header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(path.basename(content.path))}`);
+    return reply.type(content.mimeType).send(streamLocalFile(content.path));
   });
   app.get("/api/models", async () => adapter.models);
   app.get("/api/projects", async () => repositories.listProjects());
@@ -329,13 +372,15 @@ export async function createServer() {
   });
   app.post("/api/sessions/:threadId/turns", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const body = settingsSchema.extend({ text: z.string().trim().min(1).max(100_000), skillNames: skillNamesSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema }).parse(request.body);
+    const body = settingsSchema.extend({ text: z.string().trim().max(100_000).default(""), skillNames: skillNamesSchema, attachmentIds: attachmentIdsSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema })
+      .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0, { message: "消息或附件至少需要一项" }).parse(request.body);
     return once(request, body.clientRequestId, () => sessions.startTurn(threadId, body.text, body, body.clientRequestId));
   });
   app.post("/api/sessions/:threadId/steer", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const body = z.object({ text: z.string().trim().min(1).max(100_000), skillNames: skillNamesSchema, expectedTurnId: idSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema }).parse(request.body);
-    return once(request, body.clientRequestId, () => sessions.steer(threadId, body.text, body.expectedTurnId, body.clientUserMessageId, body.clientRequestId, body.skillNames));
+    const body = z.object({ text: z.string().trim().max(100_000).default(""), skillNames: skillNamesSchema, attachmentIds: attachmentIdsSchema, expectedTurnId: idSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema })
+      .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0, { message: "消息或附件至少需要一项" }).parse(request.body);
+    return once(request, body.clientRequestId, () => sessions.steer(threadId, body.text, body.expectedTurnId, body.clientUserMessageId, body.clientRequestId, body.skillNames, body.attachmentIds));
   });
   app.post("/api/sessions/:threadId/compact", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);

@@ -47,6 +47,14 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
   });
 
+  it("renders Markdown images with lazy loading and no referrer", () => {
+    const html = render("![实验结果](https://example.com/result.png)");
+    expect(html).toContain('href="https://example.com/result.png"');
+    expect(html).toContain('src="https://example.com/result.png"');
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('referrerPolicy="no-referrer"');
+  });
+
   it("preserves safe external links, remote file links, and directives", () => {
     const html = render('见 [报告](/data2/report.md) 与 [文档](https://example.com/docs)。\n\n::code-comment{title="[P1] 性能实验失败会被误判" body="失败会写成 FAILED/OOM 并正常退出。" file="/home/test/run_suite.py" start=1355 end=1369 priority=1 confidence=0.99}\n::git-push{cwd="/home/haojitai/project" branch="codex/h2o"}');
     expect(html).toContain("vscode://vscode-remote/ssh-remote+hitsz-8h100-hq-server/data2/report.md");

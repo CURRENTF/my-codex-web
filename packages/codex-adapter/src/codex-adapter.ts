@@ -66,6 +66,12 @@ export interface SkillReference {
   path: string;
 }
 
+export interface AttachmentReference {
+  kind: "image" | "file";
+  name: string;
+  path: string;
+}
+
 export class OperationUncertainError extends Error {
   readonly code = "operation_uncertain";
 
@@ -114,10 +120,13 @@ function reasoningConfig(settings: Pick<SessionSettings, "reasoning">): { model_
   return settings.reasoning ? { model_reasoning_effort: settings.reasoning } : undefined;
 }
 
-function promptInput(text: string, skills: readonly SkillReference[]) {
+function promptInput(text: string, skills: readonly SkillReference[], attachments: readonly AttachmentReference[]) {
   return [
     ...skills.map((skill) => ({ type: "skill" as const, name: skill.name, path: skill.path })),
     ...(text.trim() ? [{ type: "text" as const, text, text_elements: [] }] : []),
+    ...attachments.map((attachment) => attachment.kind === "image"
+      ? ({ type: "localImage" as const, path: attachment.path })
+      : ({ type: "mention" as const, name: attachment.name, path: attachment.path })),
   ];
 }
 
@@ -347,11 +356,11 @@ export class CodexAdapter extends EventEmitter {
     return { thread: projectThread(response.thread) };
   }
 
-  async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string, skills: readonly SkillReference[] = []): Promise<{ turn: SessionTurn }> {
+  async startTurn(threadId: string, cwd: string, text: string, settings: SessionSettings, clientUserMessageId: string, skills: readonly SkillReference[] = [], attachments: readonly AttachmentReference[] = []): Promise<{ turn: SessionTurn }> {
     const response = await this.nonIdempotentMutation<TurnStartResponse>("turn/start", {
       threadId,
       clientUserMessageId,
-      input: promptInput(text, skills),
+      input: promptInput(text, skills, attachments),
       cwd,
       model: settings.model ?? null,
       effort: settings.reasoning ?? null,
@@ -361,12 +370,12 @@ export class CodexAdapter extends EventEmitter {
     return { turn: projectTurn(response.turn) };
   }
 
-  async steerTurn(threadId: string, expectedTurnId: string, text: string, clientUserMessageId: string, skills: readonly SkillReference[] = []): Promise<{ turnId: string }> {
+  async steerTurn(threadId: string, expectedTurnId: string, text: string, clientUserMessageId: string, skills: readonly SkillReference[] = [], attachments: readonly AttachmentReference[] = []): Promise<{ turnId: string }> {
     return this.nonIdempotentMutation("turn/steer", {
       threadId,
       expectedTurnId,
       clientUserMessageId,
-      input: promptInput(text, skills),
+      input: promptInput(text, skills, attachments),
     });
   }
 

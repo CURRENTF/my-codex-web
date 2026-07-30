@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
-import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, OperationUncertainError, type AdapterEvent, type AdapterPendingRequest, type ReviewTarget, type SessionSettings, type SkillReference } from "@codex-web/codex-adapter";
+import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, OperationUncertainError, type AdapterEvent, type AdapterPendingRequest, type AttachmentReference, type ReviewTarget, type SessionSettings, type SkillReference } from "@codex-web/codex-adapter";
 import { Repositories, type ProjectSessionRow } from "./database.js";
 import { ProjectIndexer } from "./project-indexer.js";
 import { ThreadRuntimeRegistry } from "./runtime-registry.js";
 import { KeyedOperationLock } from "./keyed-operation-lock.js";
+import type { AttachmentStore } from "./attachment-store.js";
 
 export class SteerConflictError extends Error {
   constructor() { super("The active turn finished before the steer message could be sent"); }
@@ -168,10 +169,15 @@ function snapshotItemKey(item: SnapshotItem): string {
   return JSON.stringify(stableValue(item));
 }
 
+function snapshotItemIdentity(item: SnapshotItem): string {
+  if (item.type === "userMessage" && item.clientId) return `userClient\u0000${item.clientId}`;
+  return `${item.type}\u0000${item.id}`;
+}
+
 function occurrenceKeys(items: SnapshotItem[], sharedIdentities: Set<string>): string[] {
   const counts = new Map<string, number>();
   return items.map((item) => {
-    const identity = `${item.type}\u0000${item.id}`;
+    const identity = snapshotItemIdentity(item);
     if (sharedIdentities.has(identity)) return `id:${identity}`;
     const key = snapshotItemKey(item);
     const occurrence = (counts.get(key) ?? 0) + 1;
@@ -181,8 +187,8 @@ function occurrenceKeys(items: SnapshotItem[], sharedIdentities: Set<string>): s
 }
 
 function commonItemPairs(primary: SnapshotItem[], supplemental: SnapshotItem[]): Array<[number, number]> {
-  const supplementalIdentities = new Set(supplemental.map((item) => `${item.type}\u0000${item.id}`));
-  const sharedIdentities = new Set(primary.map((item) => `${item.type}\u0000${item.id}`).filter((identity) => supplementalIdentities.has(identity)));
+  const supplementalIdentities = new Set(supplemental.map(snapshotItemIdentity));
+  const sharedIdentities = new Set(primary.map(snapshotItemIdentity).filter((identity) => supplementalIdentities.has(identity)));
   const left = occurrenceKeys(primary, sharedIdentities); const right = occurrenceKeys(supplemental, sharedIdentities);
   const lengths = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0));
   for (let leftIndex = left.length - 1; leftIndex >= 0; leftIndex -= 1) {
@@ -285,6 +291,7 @@ interface PendingSteerRecovery {
   expectedTurnId: string;
   clientUserMessageId: string;
   draft: string;
+  attachmentIds?: string[];
 }
 
 type ForkRecoveryOutcome = "finalized" | "discard" | "retry";
@@ -316,6 +323,7 @@ export class SessionService extends EventEmitter {
   private readonly uncertainTurnBaselines = new Map<string, string | undefined>();
   private readonly uncertainTurnMessageIds = new Map<string, string>();
   private readonly uncertainTurnDrafts = new Map<string, string>();
+  private readonly uncertainTurnAttachmentIds = new Map<string, string[]>();
   private readonly uncertainSteers = new Map<string, PendingSteerRecovery>();
   private readonly sessionPrefills = new Map<string, string>();
   private childRecovery: Promise<{ sessionRecoveryPending: boolean; forkRecoveryPending: boolean }> | null = null;
@@ -328,6 +336,7 @@ export class SessionService extends EventEmitter {
     private readonly indexer: ProjectIndexer,
     private readonly runtimes: ThreadRuntimeRegistry,
     private readonly projectLocks = new KeyedOperationLock(),
+    private readonly attachments?: AttachmentStore,
   ) { super(); }
 
   async listSessions(options: { projectId?: string; search?: string; sortDirection?: "asc" | "desc" } = {}): Promise<SessionSummary[]> {
@@ -411,7 +420,7 @@ export class SessionService extends EventEmitter {
     const sideChat = this.runtimes.getSideChat(threadId);
     const sideChatSnapshot = sideChat ? this.sessionSnapshots.get(threadId) : undefined;
     if (sideChatSnapshot) {
-      return { thread: sideChatSnapshot, goal: null, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
+      return { thread: this.attachments?.decorateThread(sideChatSnapshot) ?? sideChatSnapshot, goal: null, runtime: this.runtimes.get(threadId), settings: this.getSettings(threadId) };
     }
     this.requireMapping(threadId);
     this.restoreSession(threadId);
@@ -427,6 +436,8 @@ export class SessionService extends EventEmitter {
     const snapshot = this.sessionSnapshots.get(threadId);
     let thread = snapshot ? mergeSessionSnapshot(persistedThread, snapshot) : terminalizeSessionSnapshot(persistedThread);
     thread = this.withPersistedSkillReferences(threadId, thread);
+    thread = await this.withPersistedAttachmentReferences(threadId, thread);
+    thread = this.attachments?.decorateThread(thread) ?? thread;
     this.sessionSnapshots.set(threadId, thread);
     this.clearPrefillAfterTurnStart(threadId, thread.turns);
     this.goalPresence.set(threadId, goal !== null);
@@ -593,6 +604,14 @@ export class SessionService extends EventEmitter {
     };
   }
 
+  private async resolveAttachments(ids: readonly string[]): Promise<AttachmentReference[]> {
+    if (!ids.length) return [];
+    if (!this.attachments) throw new Error("附件服务尚未初始化");
+    const resolved = await this.attachments.resolvePromptAttachments(ids);
+    await this.attachments.claim(ids);
+    return resolved;
+  }
+
   private async finalizeCreatedSession(thread: SessionSnapshot, recovery: PendingSessionRecovery, rollbackOnFailure: boolean) {
     this.settings.set(thread.id, recovery.settings);
     this.sessionSnapshots.set(thread.id, thread);
@@ -615,7 +634,7 @@ export class SessionService extends EventEmitter {
     return { thread, settings: recovery.settings };
   }
 
-  async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string; skillNames?: string[] }, clientRequestId: string) {
+  async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string; skillNames?: string[]; attachmentIds?: string[] }, clientRequestId: string) {
     return this.idempotentUserMessage(threadId, "turn", input.clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
       this.assertNoActiveTurn(threadId, "Starting another Turn");
       const mapping = this.requireMapping(threadId);
@@ -623,18 +642,26 @@ export class SessionService extends EventEmitter {
       await this.ensureSessionSettings(threadId);
       const settings = this.resolveSettings(project.id, input, threadId);
       const resolvedSkills = await this.resolveSkills(mapping.cwd_snapshot ?? project.canonicalPath, input.skillNames ?? []);
+      const resolvedAttachments = await this.resolveAttachments(input.attachmentIds ?? []);
       const promptText = removeSkillMentions(text, resolvedSkills.textNames);
       this.persistSkillReferences(threadId, input.clientUserMessageId, resolvedSkills.textNames);
+      this.persistAttachmentReferences(threadId, input.clientUserMessageId, input.attachmentIds ?? []);
       const previousLastTurnId = this.sessionSnapshots.get(threadId)?.turns.at(-1)?.id;
       let response;
       try {
-        response = await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, promptText, settings, input.clientUserMessageId, resolvedSkills.skills);
+        response = resolvedAttachments.length
+          ? await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, promptText, settings, input.clientUserMessageId, resolvedSkills.skills, resolvedAttachments)
+          : await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, promptText, settings, input.clientUserMessageId, resolvedSkills.skills);
       } catch (error) {
-        if (!(error instanceof OperationUncertainError)) this.removePersistedSkillReferences(threadId, input.clientUserMessageId);
+        if (!(error instanceof OperationUncertainError)) {
+          this.removePersistedSkillReferences(threadId, input.clientUserMessageId);
+          this.removePersistedAttachmentReferences(threadId, input.clientUserMessageId);
+        }
         if (error instanceof OperationUncertainError) {
           this.uncertainTurnBaselines.set(threadId, previousLastTurnId);
           this.uncertainTurnMessageIds.set(threadId, input.clientUserMessageId);
           this.uncertainTurnDrafts.set(threadId, text);
+          this.uncertainTurnAttachmentIds.set(threadId, [...(input.attachmentIds ?? [])]);
           this.runtimes.markOperationUncertain(threadId, previousLastTurnId);
         }
         throw error;
@@ -642,7 +669,9 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnBaselines.delete(threadId);
       this.uncertainTurnMessageIds.delete(threadId);
       this.uncertainTurnDrafts.delete(threadId);
+      this.uncertainTurnAttachmentIds.delete(threadId);
       this.settings.set(threadId, settings);
+      response = { ...response, turn: this.attachments?.decorateTurn(response.turn) ?? response.turn };
       this.upsertSnapshotTurn(threadId, response.turn);
       this.runtimes.setActiveTurn(threadId, response.turn.id);
       this.sessionPrefills.delete(threadId);
@@ -650,7 +679,7 @@ export class SessionService extends EventEmitter {
     }));
   }
 
-  async steer(threadId: string, text: string, expectedTurnId: string, clientUserMessageId: string, clientRequestId: string, skillNames: string[] = []) {
+  async steer(threadId: string, text: string, expectedTurnId: string, clientUserMessageId: string, clientRequestId: string, skillNames: string[] = [], attachmentIds: string[] = []) {
     return this.idempotentUserMessage(threadId, "steer", clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
       if (this.uncertainSteers.has(threadId)) throw new SessionDisconnectedError("Steer");
       const runtime = this.runtimes.get(threadId);
@@ -661,14 +690,21 @@ export class SessionService extends EventEmitter {
         const project = this.requireAvailableProject(mapping.project_id);
         resolvedSkills = await this.resolveSkills(mapping.cwd_snapshot ?? project.canonicalPath, skillNames);
       }
+      const resolvedAttachments = await this.resolveAttachments(attachmentIds);
       const promptText = removeSkillMentions(text, resolvedSkills.textNames);
       this.persistSkillReferences(threadId, clientUserMessageId, resolvedSkills.textNames);
+      this.persistAttachmentReferences(threadId, clientUserMessageId, attachmentIds);
       try {
-        return await this.adapter.steerTurn(threadId, expectedTurnId, promptText, clientUserMessageId, resolvedSkills.skills);
+        return resolvedAttachments.length
+          ? await this.adapter.steerTurn(threadId, expectedTurnId, promptText, clientUserMessageId, resolvedSkills.skills, resolvedAttachments)
+          : await this.adapter.steerTurn(threadId, expectedTurnId, promptText, clientUserMessageId, resolvedSkills.skills);
       } catch (error) {
-        if (!(error instanceof OperationUncertainError)) this.removePersistedSkillReferences(threadId, clientUserMessageId);
+        if (!(error instanceof OperationUncertainError)) {
+          this.removePersistedSkillReferences(threadId, clientUserMessageId);
+          this.removePersistedAttachmentReferences(threadId, clientUserMessageId);
+        }
         if (error instanceof OperationUncertainError) {
-          this.uncertainSteers.set(threadId, { expectedTurnId, clientUserMessageId, draft: text });
+          this.uncertainSteers.set(threadId, { expectedTurnId, clientUserMessageId, draft: text, ...(attachmentIds.length ? { attachmentIds: [...attachmentIds] } : {}) });
           this.runtimes.markOperationUncertain(threadId, expectedTurnId);
         }
         if (isSteerTurnConflictError(error)) throw new SteerConflictError();
@@ -1012,6 +1048,7 @@ export class SessionService extends EventEmitter {
     const eventThreadId = "threadId" in event ? event.threadId : undefined;
     if (eventThreadId && this.removedThreads.has(eventThreadId)) return event;
     event = this.withPreferredAccessMode(event);
+    event = this.attachments?.decorateEvent(event) ?? event;
     if (event.type === "threadStarted" && event.threadSource) {
       const sessionRecovery = this.uncertainSessions.get(event.threadSource);
       if (sessionRecovery) this.observedSessions.set(event.threadSource, event.thread);
@@ -1022,6 +1059,7 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnBaselines.delete(event.threadId);
       this.uncertainTurnMessageIds.delete(event.threadId);
       this.uncertainTurnDrafts.delete(event.threadId);
+      this.uncertainTurnAttachmentIds.delete(event.threadId);
     }
     this.updateSessionSnapshot(event);
     return event;
@@ -1082,6 +1120,7 @@ export class SessionService extends EventEmitter {
           this.uncertainTurnBaselines.delete(threadId);
           this.uncertainTurnMessageIds.delete(threadId);
           this.uncertainTurnDrafts.delete(threadId);
+          this.uncertainTurnAttachmentIds.delete(threadId);
           if (outcome === "unresolved") this.runtimes.confirmUncertainTurnApplied(threadId, snapshot.turns);
         }
         return snapshot;
@@ -1129,6 +1168,7 @@ export class SessionService extends EventEmitter {
           status: "notApplied",
           clientUserMessageId: uncertainSteer.clientUserMessageId,
           draft: uncertainSteer.draft,
+          ...(uncertainSteer.attachmentIds?.length ? { attachmentIds: uncertainSteer.attachmentIds } : {}),
         };
       }
       const lastTurn = snapshot.turns.at(-1);
@@ -1136,17 +1176,20 @@ export class SessionService extends EventEmitter {
         this.uncertainTurnBaselines.delete(threadId);
         this.uncertainTurnMessageIds.delete(threadId);
         this.uncertainTurnDrafts.delete(threadId);
+        this.uncertainTurnAttachmentIds.delete(threadId);
         this.runtimes.confirmUncertainTurnApplied(threadId, snapshot.turns);
         throw new UncertainTurnAppliedError();
       }
       const clientUserMessageId = this.uncertainTurnMessageIds.get(threadId);
       const draft = this.uncertainTurnDrafts.get(threadId);
+      const attachmentIds = this.uncertainTurnAttachmentIds.get(threadId);
       this.uncertainTurnBaselines.delete(threadId);
       this.uncertainTurnMessageIds.delete(threadId);
       this.uncertainTurnDrafts.delete(threadId);
+      this.uncertainTurnAttachmentIds.delete(threadId);
       if (clientUserMessageId) this.clearUserMessageResult(threadId, "turn", clientUserMessageId);
       this.runtimes.confirmUncertainTurnNotApplied(threadId, snapshot.turns);
-      return { status: "notApplied", ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(draft ? { draft } : {}) };
+      return { status: "notApplied", ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(draft ? { draft } : {}), ...(attachmentIds?.length ? { attachmentIds } : {}) };
     });
   }
 
@@ -1376,6 +1419,13 @@ export class SessionService extends EventEmitter {
     return references.size ? restoreSnapshotSkillReferences(snapshot, references) : snapshot;
   }
 
+  private async withPersistedAttachmentReferences(threadId: string, snapshot: SessionSnapshot): Promise<SessionSnapshot> {
+    if (!this.attachments || this.runtimes.getSideChat(threadId)) return snapshot;
+    const references = new Map((this.repositories.listMessageAttachmentReferences?.(threadId) ?? [])
+      .map((row) => [row.client_user_message_id, row.attachment_ids] as const));
+    return references.size ? this.attachments.restoreThreadAttachments(snapshot, references) : snapshot;
+  }
+
   private persistSkillReferences(threadId: string, clientUserMessageId: string, skillNames: readonly string[]): void {
     if (!skillNames.length || this.runtimes.getSideChat(threadId)) return;
     this.repositories.setMessageSkillReferences?.(threadId, clientUserMessageId, skillNames);
@@ -1384,6 +1434,16 @@ export class SessionService extends EventEmitter {
   private removePersistedSkillReferences(threadId: string, clientUserMessageId: string): void {
     if (this.runtimes.getSideChat(threadId)) return;
     this.repositories.removeMessageSkillReferences?.(threadId, clientUserMessageId);
+  }
+
+  private persistAttachmentReferences(threadId: string, clientUserMessageId: string, attachmentIds: readonly string[]): void {
+    if (!attachmentIds.length || this.runtimes.getSideChat(threadId)) return;
+    this.repositories.setMessageAttachmentReferences?.(threadId, clientUserMessageId, attachmentIds);
+  }
+
+  private removePersistedAttachmentReferences(threadId: string, clientUserMessageId: string): void {
+    if (this.runtimes.getSideChat(threadId)) return;
+    this.repositories.removeMessageAttachmentReferences?.(threadId, clientUserMessageId);
   }
 
   private async ensureSessionSettings(threadId: string): Promise<SessionSettings> {
@@ -1456,6 +1516,7 @@ export class SessionService extends EventEmitter {
     this.uncertainTurnBaselines.delete(threadId);
     this.uncertainTurnMessageIds.delete(threadId);
     this.uncertainTurnDrafts.delete(threadId);
+    this.uncertainTurnAttachmentIds.delete(threadId);
     this.uncertainSteers.delete(threadId);
     for (const key of this.commandOutputDeltas.keys()) {
       if (key.startsWith(`${threadId}\u0000`)) this.commandOutputDeltas.delete(key);
@@ -1621,7 +1682,10 @@ export class SessionService extends EventEmitter {
     const turn = snapshot.turns.find((candidate) => candidate.id === turnId);
     if (!turn) return;
     const items = [...turn.items];
-    const index = items.findIndex((candidate) => candidate.id === item.id);
+    let index = items.findIndex((candidate) => candidate.id === item.id);
+    if (index < 0 && item.type === "userMessage" && item.clientId) {
+      index = items.findIndex((candidate) => candidate.type === "userMessage" && candidate.clientId === item.clientId);
+    }
     if (index < 0) items.push(item);
     else {
       const current = items[index]!;

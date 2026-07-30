@@ -11,6 +11,7 @@
     "@codex-web/codex-adapter": "*",
     "@codex-web/shared-types": "*",
     "@fastify/cookie": "^11.0.0",
+    "@fastify/multipart": "^9.2.1",
     "@fastify/static": "^10.1.2",
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.5.0",

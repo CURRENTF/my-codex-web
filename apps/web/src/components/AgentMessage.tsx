@@ -21,6 +21,10 @@ function MarkdownMessage({ text, vscodeRemoteAuthority }: { text: string; vscode
         }
         return <span>{children}</span>;
       },
+      img({ src, alt }) {
+        if (!src) return null;
+        return <a className="agent-image-link" href={src} target="_blank" rel="noreferrer"><img src={src} alt={alt ?? "回复中的图片"} loading="lazy" referrerPolicy="no-referrer" /></a>;
+      },
     }}
   >{normalizeLooseDisplayMath(text)}</ReactMarkdown>;
 }

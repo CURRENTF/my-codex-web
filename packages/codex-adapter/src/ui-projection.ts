@@ -6,7 +6,7 @@ import type { TurnPlanUpdatedNotification } from "@codex-web/codex-schema/v2/Tur
 import type { FileChangePatchUpdatedNotification } from "@codex-web/codex-schema/v2/FileChangePatchUpdatedNotification";
 
 export function projectThreadItem(item: ThreadItem): SessionItem | null {
-  if (item.type === "userMessage") return { type: "userMessage", id: item.id, clientId: item.clientId, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part && part.type !== "skill" ? { path: part.path } : {}), ...("name" in part ? { name: part.name } : {}) })) };
+  if (item.type === "userMessage") return { type: "userMessage", id: item.id, clientId: item.clientId, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part && part.type !== "skill" ? { path: part.path } : {}), ...("name" in part ? { name: part.name } : {}), ...("url" in part ? { url: part.url } : {}) })) };
   if (item.type === "agentMessage") return { type: "agentMessage", id: item.id, text: item.text, ...(item.phase ? { phase: item.phase } : {}) };
   if (item.type === "reasoning") return { type: "reasoning", id: item.id, summary: item.summary };
   if (item.type === "plan") return { type: "plan", id: item.id, text: item.text };
@@ -18,9 +18,9 @@ export function projectThreadItem(item: ThreadItem): SessionItem | null {
   if (item.type === "subAgentActivity") return { type: "genericToolCall", id: item.id, title: `Agent activity / ${item.kind}`, status: "completed", details: detailText({ agentPath: item.agentPath }) };
   if (item.type === "hookPrompt") return { type: "genericToolCall", id: item.id, title: "Hook prompt", status: "completed", details: detailText(item.fragments) };
   if (item.type === "webSearch") return { type: "genericToolCall", id: item.id, title: "Web Search", status: "completed" };
-  if (item.type === "imageView") return { type: "genericToolCall", id: item.id, title: `View image / ${item.path}`, status: "completed" };
+  if (item.type === "imageView") return { type: "imageView", id: item.id, path: item.path };
   if (item.type === "sleep") return { type: "genericToolCall", id: item.id, title: `等待 ${(item.durationMs / 1_000).toFixed(1)}s`, status: "completed" };
-  if (item.type === "imageGeneration") return { type: "genericToolCall", id: item.id, title: "Image generation", status: item.status };
+  if (item.type === "imageGeneration") return { type: "imageGeneration", id: item.id, status: item.status, result: item.result, revisedPrompt: item.revisedPrompt ?? null, savedPath: item.savedPath ?? null };
   if (item.type === "enteredReviewMode") return { type: "genericToolCall", id: item.id, title: "进入 Review 模式", status: "completed", details: item.review };
   if (item.type === "exitedReviewMode") return { type: "genericToolCall", id: item.id, title: "退出 Review 模式", status: "completed", details: item.review };
   if (item.type === "contextCompaction") return { type: "genericToolCall", id: item.id, title: "压缩上下文", status: "completed" };

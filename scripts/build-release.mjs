@@ -11,5 +11,5 @@ await build({
   format: "esm",
   target: "node22",
   sourcemap: false,
-  external: ["@fastify/cookie", "@fastify/static", "better-sqlite3", "fastify", "open", "pino", "ws", "zod"],
+  external: ["@fastify/cookie", "@fastify/multipart", "@fastify/static", "better-sqlite3", "fastify", "open", "pino", "ws", "zod"],
 });

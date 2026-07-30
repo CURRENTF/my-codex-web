@@ -210,6 +210,47 @@ describe("session operation rules", () => {
     );
   });
 
+  it("resolves uploaded images and files into structured Codex Turn inputs", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ settings: { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" as const } })),
+      startTurn: vi.fn(async () => ({ turn: turn("turn-attachments", "inProgress") })),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+      setMessageAttachmentReferences: vi.fn(),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      setActiveTurn: vi.fn(), getSideChat: vi.fn(() => undefined), notifySessionSummaryUpdated: vi.fn(),
+    };
+    const attachments = {
+      resolvePromptAttachments: vi.fn(async () => [
+        { kind: "image" as const, name: "screen.png", path: "/data/attachments/screen.png" },
+        { kind: "file" as const, name: "report.pdf", path: "/data/attachments/report.pdf" },
+      ]),
+      claim: vi.fn(async () => undefined),
+      decorateTurn: vi.fn((value) => value),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never, {} as never, attachments as never);
+
+    await service.startTurn("thread-1", "", {
+      clientUserMessageId: "message-attachments", attachmentIds: ["attachment-image", "attachment-file"],
+    }, "request-attachments");
+
+    expect(attachments.resolvePromptAttachments).toHaveBeenCalledWith(["attachment-image", "attachment-file"]);
+    expect(attachments.claim).toHaveBeenCalledWith(["attachment-image", "attachment-file"]);
+    expect(repositories.setMessageAttachmentReferences).toHaveBeenCalledWith("thread-1", "message-attachments", ["attachment-image", "attachment-file"]);
+    expect(adapter.startTurn).toHaveBeenCalledWith(
+      "thread-1", "/tmp/project", "",
+      { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" }, "message-attachments", [],
+      [
+        { kind: "image", name: "screen.png", path: "/data/attachments/screen.png" },
+        { kind: "file", name: "report.pdf", path: "/data/attachments/report.pdf" },
+      ],
+    );
+  });
+
   it("rejects unknown or disabled Skills before starting a Turn", async () => {
     const adapter = Object.assign(new EventEmitter(), {
       resumeSession: vi.fn(async () => ({ settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })),

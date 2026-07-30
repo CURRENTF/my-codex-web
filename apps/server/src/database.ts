@@ -51,6 +51,11 @@ export interface MessageSkillReferenceRow {
   skill_names: string[];
 }
 
+export interface MessageAttachmentReferenceRow {
+  client_user_message_id: string;
+  attachment_ids: string[];
+}
+
 export class Repositories {
   readonly db: Database.Database;
 
@@ -191,6 +196,36 @@ export class Repositories {
     this.db.prepare("DELETE FROM message_skill_refs WHERE thread_id = ? AND client_user_message_id = ?").run(threadId, clientUserMessageId);
   }
 
+  setMessageAttachmentReferences(threadId: string, clientUserMessageId: string, attachmentIds: readonly string[]): void {
+    const uniqueIds = [...new Set(attachmentIds.filter(Boolean))];
+    if (!uniqueIds.length) {
+      this.removeMessageAttachmentReferences(threadId, clientUserMessageId);
+      return;
+    }
+    this.db.prepare(`INSERT INTO message_attachment_refs (
+      thread_id, client_user_message_id, attachment_ids_json, created_at
+    ) VALUES (?, ?, ?, ?) ON CONFLICT(thread_id, client_user_message_id) DO UPDATE SET
+      attachment_ids_json=excluded.attachment_ids_json`).run(threadId, clientUserMessageId, JSON.stringify(uniqueIds), Date.now());
+  }
+
+  listMessageAttachmentReferences(threadId: string): MessageAttachmentReferenceRow[] {
+    const rows = this.db.prepare(`SELECT client_user_message_id, attachment_ids_json
+      FROM message_attachment_refs WHERE thread_id = ? ORDER BY created_at ASC`).all(threadId) as Array<{ client_user_message_id: string; attachment_ids_json: string }>;
+    return rows.flatMap((row) => {
+      try {
+        const parsed = JSON.parse(row.attachment_ids_json) as unknown;
+        if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) return [];
+        return [{ client_user_message_id: row.client_user_message_id, attachment_ids: parsed }];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  removeMessageAttachmentReferences(threadId: string, clientUserMessageId: string): void {
+    this.db.prepare("DELETE FROM message_attachment_refs WHERE thread_id = ? AND client_user_message_id = ?").run(threadId, clientUserMessageId);
+  }
+
   getPreferences(): Preferences {
     const result = { ...DEFAULT_PREFERENCES } as Record<string, unknown>;
     const rows = this.db.prepare("SELECT key, value_json FROM preferences").all() as Array<{ key: string; value_json: string }>;
@@ -269,6 +304,12 @@ export class Repositories {
       CREATE TABLE IF NOT EXISTS message_skill_refs (
         thread_id TEXT NOT NULL, client_user_message_id TEXT NOT NULL,
         skill_names_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY(thread_id, client_user_message_id),
+        FOREIGN KEY(thread_id) REFERENCES project_sessions(thread_id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS message_attachment_refs (
+        thread_id TEXT NOT NULL, client_user_message_id TEXT NOT NULL,
+        attachment_ids_json TEXT NOT NULL, created_at INTEGER NOT NULL,
         PRIMARY KEY(thread_id, client_user_message_id),
         FOREIGN KEY(thread_id) REFERENCES project_sessions(thread_id) ON DELETE CASCADE
       );

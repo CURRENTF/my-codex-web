@@ -48,7 +48,7 @@ describe("SQLite repositories", () => {
     expect(repositories.getProject("p1")?.defaultAccessMode).toBe("fullAccess");
   });
 
-  it("persists Skill display metadata without storing Skill paths and removes it with the Session mapping", () => {
+  it("persists message Skill and attachment display metadata and removes it with the Session mapping", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
     const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
     repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
@@ -59,8 +59,14 @@ describe("SQLite repositories", () => {
       client_user_message_id: "message-1",
       skill_names: ["caveman", "Academic Figure Prompt"],
     }]);
+    repositories.setMessageAttachmentReferences("t1", "message-1", ["attachment-1", "attachment-1", "attachment-2"]);
+    expect(repositories.listMessageAttachmentReferences("t1")).toEqual([{
+      client_user_message_id: "message-1",
+      attachment_ids: ["attachment-1", "attachment-2"],
+    }]);
 
     repositories.removeProjectSession("t1");
     expect(repositories.listMessageSkillReferences("t1")).toEqual([]);
+    expect(repositories.listMessageAttachmentReferences("t1")).toEqual([]);
   });
 });

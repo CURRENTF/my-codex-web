@@ -150,6 +150,36 @@ describe("Codex Adapter initialization", () => {
     }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
   });
 
+  it("sends uploaded images and files as structured App Server input", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "turn/start") return { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: null, completedAt: null, durationMs: null, error: null } };
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await adapter.startTurn(
+      "thread-1",
+      "/tmp/project",
+      "inspect these",
+      { model: null, reasoning: null, accessMode: "fullAccess" },
+      "message-1",
+      [],
+      [
+        { kind: "image", name: "screen.png", path: "/tmp/uploads/screen.png" },
+        { kind: "file", name: "notes.txt", path: "/tmp/uploads/notes.txt" },
+      ],
+    );
+
+    expect(request).toHaveBeenCalledWith("turn/start", expect.objectContaining({
+      input: [
+        { type: "text", text: "inspect these", text_elements: [] },
+        { type: "localImage", path: "/tmp/uploads/screen.png" },
+        { type: "mention", name: "notes.txt", path: "/tmp/uploads/notes.txt" },
+      ],
+    }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
+  });
+
   it("uses dedicated App Server methods for compact and review commands", async () => {
     const request = vi.fn(async (method: string) => {
       if (method === "review/start") return {

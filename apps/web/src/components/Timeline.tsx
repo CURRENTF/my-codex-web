@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CaretRight, Check, CheckCircle, Clipboard, Code, FileCode, GitFork, SpinnerGap, TerminalWindow, Wrench, X, XCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, Wrench, X, XCircle } from "@phosphor-icons/react";
 import { Virtuoso } from "react-virtuoso";
 import type { CodexItem, CodexTurn } from "../api";
 import { commandOutputText, commandResultDisplay } from "../command-output";
@@ -9,7 +9,35 @@ import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfir
 import { AgentMessage } from "./AgentMessage";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
-function textFromUser(item: Extract<CodexItem, { type: "userMessage" }>): string { return item.content.map((part) => part.type === "skill" && part.name ? `$${part.name}` : part.text ?? part.path ?? "").filter(Boolean).join("\n"); }
+function textFromUser(item: Extract<CodexItem, { type: "userMessage" }>): string { return item.content.map((part) => part.type === "skill" && part.name ? `$${part.name}` : part.text ?? "").filter(Boolean).join("\n"); }
+
+interface DisplayAttachment { key: string; kind: "image" | "file"; name: string; url?: string; detail?: string }
+
+function AttachmentList({ attachments }: { attachments: DisplayAttachment[] }) {
+  if (!attachments.length) return null;
+  const images = attachments.filter((attachment) => attachment.kind === "image" && attachment.url);
+  const files = attachments.filter((attachment) => attachment.kind === "file");
+  return <>
+    {images.length > 0 && <div className="message-image-grid">{images.map((attachment) => <a href={attachment.url} target="_blank" rel="noreferrer" key={attachment.key} title={`打开 ${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" referrerPolicy="no-referrer" /></a>)}</div>}
+    {files.length > 0 && <div className="message-file-list">{files.map((attachment) => attachment.url
+      ? <a href={attachment.url} download key={attachment.key}><FileIcon size={17} /><span><strong>{attachment.name}</strong>{attachment.detail && <small>{attachment.detail}</small>}</span><DownloadSimple size={15} /></a>
+      : <span className="message-file" key={attachment.key} title={attachment.detail}><FileIcon size={17} /><strong>{attachment.name}</strong></span>)}</div>}
+  </>;
+}
+
+function UserMessage({ item }: { item: Extract<CodexItem, { type: "userMessage" }> }) {
+  const text = textFromUser(item);
+  const attachments = item.content.flatMap<DisplayAttachment>((part, index) => {
+    if (part.type === "image" || part.type === "localImage") {
+      return [{ key: `${part.type}-${index}`, kind: "image", name: part.name ?? part.path?.split("/").at(-1) ?? "图片", url: part.displayUrl ?? part.url }];
+    }
+    if (part.type === "mention" && part.path) {
+      return [{ key: `mention-${index}`, kind: "file", name: part.name ?? part.path.split("/").at(-1) ?? "附件", url: part.downloadUrl }];
+    }
+    return [];
+  });
+  return <div className="user-message"><div>{text && <span className="user-message-text">{text}</span>}<AttachmentList attachments={attachments} /></div></div>;
+}
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
   for (const line of diff.split("\n")) {
@@ -39,9 +67,16 @@ function ToolCard({ title, status, details, icon = <Code size={16} /> }: { title
   return <details className="tool-card compact expandable"><summary className="tool-card-header">{icon}<span className="tool-title">{title}</span><span className="tool-result">{status}</span></summary><pre className="tool-details">{details}</pre></details>;
 }
 
+function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "imageGeneration" }> }) {
+  const path = item.type === "imageView" ? item.path : item.savedPath;
+  const title = item.type === "imageView" ? "查看图片" : "生成图片";
+  if (!item.displayUrl) return <ToolCard title={path ? `${title} / ${path}` : title} status={item.type === "imageView" ? "completed" : item.status} details={item.type === "imageGeneration" ? item.result : undefined} icon={<ImageSquare size={16} />} />;
+  return <figure className="tool-image-card"><a href={item.displayUrl} target="_blank" rel="noreferrer"><img src={item.displayUrl} alt={path?.split("/").at(-1) ?? title} loading="lazy" /></a><figcaption><ImageSquare size={15} /><span><strong>{title}</strong>{path && <code title={path}>{path}</code>}</span><a href={item.displayUrl} target="_blank" rel="noreferrer" aria-label="打开原图"><ArrowSquareOut size={15} /></a></figcaption></figure>;
+}
+
 function Item({ item, turnStatus, onOpenDiff, vscodeRemoteAuthority, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; vscodeRemoteAuthority: string | null; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
-  if (item.type === "userMessage") return <div className="user-message"><div>{textFromUser(item)}</div></div>;
+  if (item.type === "userMessage") return <UserMessage item={item} />;
   if (item.type === "agentMessage") return <AgentMessage text={`${item.text}${delta ?? ""}`} vscodeRemoteAuthority={vscodeRemoteAuthority} />;
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
@@ -52,6 +87,7 @@ function Item({ item, turnStatus, onOpenDiff, vscodeRemoteAuthority, grouped = f
   if (item.type === "commandExecution") return <CommandCard item={item} liveDelta={delta} turnStatus={turnStatus} />;
   if (item.type === "fileChange") return <FileCard item={item} onOpenDiff={onOpenDiff} />;
   if (item.type === "mcpToolCall") return <ToolCard title={`${item.server} / ${item.tool}`} status={item.status} details={item.details} />;
+  if (item.type === "imageView" || item.type === "imageGeneration") return <ToolImage item={item} />;
   if (item.type === "genericToolCall") return <ToolCard title={item.title} status={item.status} details={item.details} />;
   return null;
 }
@@ -70,7 +106,7 @@ function OptimisticMessages({ messages }: { messages: OptimisticUserMessage[] })
   return <section className="turn-block optimistic-message-block" aria-live="polite">{messages.map((message) => {
     const label = message.state === "sending" ? "发送中" : message.state === "uncertain" ? "正在确认" : "排队中";
     return <div className="pending-user-message" data-state={message.state} data-client-user-message-id={message.clientUserMessageId} key={message.clientUserMessageId}>
-      <div><span className="pending-user-text">{message.text}</span><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
+      <div>{message.text && <span className="pending-user-text">{message.text}</span>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
     </div>;
   })}</section>;
 }

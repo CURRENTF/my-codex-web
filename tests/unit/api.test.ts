@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, authenticateWebUi, bootstrap, isPasswordRequiredError } from "../../apps/web/src/api";
+import { api, ApiError, authenticateWebUi, bootstrap, endpoints, isPasswordRequiredError } from "../../apps/web/src/api";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -49,5 +49,19 @@ describe("web API security context", () => {
   it("recognizes the password-required bootstrap boundary", () => {
     expect(isPasswordRequiredError(new ApiError("Password required", 401, { error: "password_required" }))).toBe(true);
     expect(isPasswordRequiredError(new ApiError("Invalid session", 401, { error: "Invalid session" }))).toBe(false);
+  });
+
+  it("lets the browser set the multipart boundary for attachment uploads", async () => {
+    const calls: Array<{ path: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit = {}) => {
+      calls.push({ path, init });
+      return json({ id: "attachment-1", name: "note.txt", mimeType: "text/plain", size: 4, kind: "file", url: "/api/attachments/attachment-1/content" }, 201);
+    }));
+
+    await endpoints.uploadAttachment(new File(["note"], "note.txt", { type: "text/plain" }));
+
+    expect(calls[0]?.path).toBe("/api/attachments");
+    expect(calls[0]?.init.body).toBeInstanceOf(FormData);
+    expect(new Headers(calls[0]?.init.headers).has("content-type")).toBe(false);
   });
 });

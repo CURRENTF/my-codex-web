@@ -56,6 +56,35 @@ describe("Codex UI projection", () => {
     });
   });
 
+  it("preserves structured image, local image, and file mention inputs", () => {
+    expect(projectThreadItem({
+      type: "userMessage",
+      id: "user-attachments",
+      clientId: "client-attachments",
+      content: [
+        { type: "image", url: "https://example.com/input.png" },
+        { type: "localImage", path: "/tmp/input.png" },
+        { type: "mention", name: "report.pdf", path: "/tmp/report.pdf" },
+      ],
+    })).toEqual({
+      type: "userMessage",
+      id: "user-attachments",
+      clientId: "client-attachments",
+      content: [
+        { type: "image", url: "https://example.com/input.png" },
+        { type: "localImage", path: "/tmp/input.png" },
+        { type: "mention", name: "report.pdf", path: "/tmp/report.pdf" },
+      ],
+    });
+  });
+
+  it("projects viewed and generated images as first-class timeline items", () => {
+    expect(projectThreadItem({ type: "imageView", id: "view-1", path: "/tmp/view.png" })).toEqual({ type: "imageView", id: "view-1", path: "/tmp/view.png" });
+    expect(projectThreadItem({ type: "imageGeneration", id: "generation-1", status: "completed", result: "done", revisedPrompt: null, savedPath: "/tmp/generated.png" })).toEqual({
+      type: "imageGeneration", id: "generation-1", status: "completed", result: "done", revisedPrompt: null, savedPath: "/tmp/generated.png",
+    });
+  });
+
   it("projects Skill names without leaking their absolute filesystem paths", () => {
     expect(projectThreadItem({
       type: "userMessage",

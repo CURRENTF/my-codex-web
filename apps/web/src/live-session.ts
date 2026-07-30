@@ -11,6 +11,29 @@ function terminalizeTurn(turn: CodexTurn): CodexTurn {
   return { ...turn, items: turn.items.map((item) => terminalizeItem(item, turn.status)) };
 }
 
+function mergeItemSnapshot(existing: CodexItem, incoming: CodexItem): CodexItem {
+  if (existing.type === "commandExecution" && incoming.type === "commandExecution") {
+    return { ...existing, ...incoming, aggregatedOutput: mergeStreamingText(existing.aggregatedOutput, incoming.aggregatedOutput) || null };
+  }
+  if (existing.type === "userMessage" && incoming.type === "userMessage") {
+    const content = Array.from({ length: Math.max(existing.content.length, incoming.content.length) }, (_, index) => {
+      const previous = existing.content[index];
+      const next = incoming.content[index];
+      if (!next) return previous!;
+      if (!previous || previous.type !== next.type) return next;
+      return { ...previous, ...next };
+    });
+    return { ...existing, ...incoming, clientId: incoming.clientId ?? existing.clientId, content };
+  }
+  return incoming;
+}
+
+function itemSnapshotIndex(items: CodexItem[], incoming: CodexItem): number {
+  const byId = items.findIndex((candidate) => candidate.id === incoming.id);
+  if (byId >= 0 || incoming.type !== "userMessage" || !incoming.clientId) return byId;
+  return items.findIndex((candidate) => candidate.type === "userMessage" && candidate.clientId === incoming.clientId);
+}
+
 function upsertTurn(turns: CodexTurn[], incoming: CodexTurn): CodexTurn[] {
   incoming = terminalizeTurn(incoming);
   const index = turns.findIndex((turn) => turn.id === incoming.id);
@@ -19,13 +42,10 @@ function upsertTurn(turns: CodexTurn[], incoming: CodexTurn): CodexTurn[] {
   const next = [...turns];
   const items = [...current.items];
   for (const item of incoming.items) {
-    const itemIndex = items.findIndex((candidate) => candidate.id === item.id);
+    const itemIndex = itemSnapshotIndex(items, item);
     if (itemIndex < 0) items.push(item);
     else {
-      const existing = items[itemIndex]!;
-      items[itemIndex] = existing.type === "commandExecution" && item.type === "commandExecution"
-        ? { ...existing, ...item, aggregatedOutput: mergeStreamingText(existing.aggregatedOutput, item.aggregatedOutput) || null }
-        : item;
+      items[itemIndex] = mergeItemSnapshot(items[itemIndex]!, item);
     }
   }
   next[index] = terminalizeTurn({ ...current, ...incoming, items });
@@ -47,13 +67,10 @@ function upsertItem(turns: CodexTurn[], turnId: string, item: CodexItem, started
   const turn = turns[turnIndex]!;
   item = terminalizeItem(item, turn.status);
   const items = [...turn.items];
-  const itemIndex = items.findIndex((candidate) => candidate.id === item.id);
+  const itemIndex = itemSnapshotIndex(items, item);
   if (itemIndex < 0) items.push(item);
   else {
-    const current = items[itemIndex]!;
-    items[itemIndex] = current.type === "commandExecution" && item.type === "commandExecution"
-      ? { ...current, ...item, aggregatedOutput: mergeStreamingText(current.aggregatedOutput, item.aggregatedOutput) || null }
-      : item;
+    items[itemIndex] = mergeItemSnapshot(items[itemIndex]!, item);
   }
   const next = [...turns];
   next[turnIndex] = { ...turn, items };

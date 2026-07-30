@@ -115,14 +115,35 @@ export interface Goal {
   updatedAt: number;
 }
 
+export interface UploadedAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "file";
+  url: string;
+}
+
+export interface UserMessagePart {
+  type: string;
+  text?: string;
+  path?: string;
+  name?: string;
+  url?: string;
+  displayUrl?: string;
+  downloadUrl?: string;
+}
+
 export type SessionItem =
-  | { type: "userMessage"; id: string; clientId?: string | null; content: Array<{ type: string; text?: string; path?: string; name?: string }> }
+  | { type: "userMessage"; id: string; clientId?: string | null; content: UserMessagePart[] }
   | { type: "agentMessage"; id: string; text: string; phase?: string }
   | { type: "reasoning"; id: string; summary: string[] }
   | { type: "plan"; id: string; text: string }
   | { type: "commandExecution"; id: string; command: string; cwd: string; status: string; aggregatedOutput: string | null; exitCode: number | null; durationMs: number | null }
   | { type: "fileChange"; id: string; changes: Array<{ path: string; kind: string; diff?: string }>; status: string }
   | { type: "mcpToolCall"; id: string; server: string; tool: string; status: string; durationMs: number | null; details?: string }
+  | { type: "imageView"; id: string; path: string; displayUrl?: string }
+  | { type: "imageGeneration"; id: string; status: string; result: string; revisedPrompt: string | null; savedPath: string | null; displayUrl?: string }
   | { type: "genericToolCall"; id: string; title: string; status: string; details?: string };
 
 export interface SessionTurn {

@@ -52,7 +52,7 @@ describe("viewport layout CSS", () => {
   });
 
   it("uses one primary button for sending and stopping", () => {
-    expect(composerSource).toContain("const stopPrimaryAction = running && !draft.trim()");
+    expect(composerSource).toContain("const stopPrimaryAction = running && !hasPayload");
     expect(composerSource).toContain('className={stopPrimaryAction ? "stop-button" : "send-button"}');
     expect(composerSource).toContain("if (stopPrimaryAction) interrupt.mutate()");
     expect(composerSource).not.toMatch(/className="stop-button"/);
