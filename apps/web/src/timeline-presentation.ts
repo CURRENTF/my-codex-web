@@ -39,6 +39,10 @@ export function unconfirmedOptimisticUserMessages<T extends { clientUserMessageI
   return messages.filter((message) => !confirmed.has(message.clientUserMessageId));
 }
 
+export function canReconcileOptimisticUserMessages(turns: SessionTurn[]): boolean {
+  return !turns.some((turn) => turn.status === "inProgress");
+}
+
 export function formatTurnDuration(durationMs: number | null): string {
   if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) return "";
   const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));

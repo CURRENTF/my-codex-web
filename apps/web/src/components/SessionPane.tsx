@@ -11,7 +11,7 @@ import { shouldShowFullAccessNotice } from "../full-access-notice";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
 import { canBranchSession } from "../session-selection";
 import { useAppStore } from "../store";
-import { confirmedClientUserMessageIds } from "../timeline-presentation";
+import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
 import { Composer } from "./Composer";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import { GoalBar } from "./GoalBar";
@@ -63,7 +63,11 @@ export function SessionPane({ threadId, project, projects, models, vscodeRemoteA
   const archive = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/archive`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }), onSuccess: () => { if (onArchived) onArchived(threadId); else void queryClient.invalidateQueries({ queryKey: ["sessions"] }); } });
   const projectLabel = sideChat ? project.name : project.name;
   const turns = useMemo(() => payload?.thread.turns ?? [], [payload?.thread.turns]);
-  useEffect(() => reconcileOptimisticUserMessages(threadId, confirmedClientUserMessageIds(turns)), [reconcileOptimisticUserMessages, threadId, turns]);
+  const canReconcileOptimistic = canReconcileOptimisticUserMessages(turns);
+  useEffect(() => {
+    if (!canReconcileOptimistic) return;
+    reconcileOptimisticUserMessages(threadId, confirmedClientUserMessageIds(turns));
+  }, [canReconcileOptimistic, reconcileOptimisticUserMessages, threadId, turns]);
   const latestCompletedTurnId = useMemo(() => [...turns].reverse().find((turn) => turn.status === "completed")?.id ?? null, [turns]);
   const hasActiveTurn = state === "running" || state === "waitingForInput";
   const activeStartedAt = useMemo(() => turns.find((turn) => turn.status === "inProgress")?.startedAt ?? null, [turns]);

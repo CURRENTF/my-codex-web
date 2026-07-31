@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionItem } from "@codex-web/shared-types";
-import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages } from "../../apps/web/src/timeline-presentation";
+import { canReconcileOptimisticUserMessages, formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages } from "../../apps/web/src/timeline-presentation";
 
 describe("Timeline presentation", () => {
   it("formats completed Turn durations as minutes and seconds", () => {
@@ -55,5 +55,23 @@ describe("Timeline presentation", () => {
     ];
 
     expect(unconfirmedOptimisticUserMessages(turns, messages)).toEqual([messages[1]]);
+  });
+
+  it("keeps an optimistic fallback during an active Turn so a stale refetch cannot erase a Steer", () => {
+    const message = { clientUserMessageId: "steer-1", text: "additional requirement" };
+    const liveTurns = [{
+      id: "turn-1",
+      status: "inProgress" as const,
+      items: [{ type: "userMessage" as const, id: "steer-item", clientId: "steer-1", content: [{ type: "text", text: message.text }] }],
+      startedAt: 1,
+      completedAt: null,
+      durationMs: null,
+    }];
+    const staleRefetchTurns = [{ ...liveTurns[0]!, items: [] }];
+
+    expect(canReconcileOptimisticUserMessages(liveTurns)).toBe(false);
+    expect(unconfirmedOptimisticUserMessages(liveTurns, [message])).toEqual([]);
+    expect(unconfirmedOptimisticUserMessages(staleRefetchTurns, [message])).toEqual([message]);
+    expect(canReconcileOptimisticUserMessages([{ ...liveTurns[0]!, status: "completed", completedAt: 2 }])).toBe(true);
   });
 });

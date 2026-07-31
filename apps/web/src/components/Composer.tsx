@@ -261,7 +261,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       }
     }
     return api(`/api/sessions/${threadId}/turns`, { method: "POST", body: JSON.stringify({ text, skillNames, attachmentIds: submittedAttachments.map((attachment) => attachment.id), model, reasoning, accessMode, clientRequestId: expectedTurnId ? requestId() : clientRequestId, clientUserMessageId }) });
-  }, onSuccess: () => { const sent = new Set(submittedAttachmentIds.current); submittedAttachmentIds.current = []; steerDraftTurnId.current = null; acceptSubmission(threadId); setAttachments((current) => current.filter((attachment) => !sent.has(attachment.id))); setResolutionMessage(null); setFeedback(null); void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
+  }, onSuccess: () => { const sent = new Set(submittedAttachmentIds.current); submittedAttachmentIds.current = []; steerDraftTurnId.current = null; acceptSubmission(threadId); setAttachments((current) => current.filter((attachment) => !sent.has(attachment.id))); setResolutionMessage(null); setFeedback(null); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
     void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     if (apiErrorCode(error) === "operation_uncertain") { markSubmissionUncertain(threadId); return; }
     finishSubmission(threadId, false);
@@ -285,7 +285,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     });
   }, onSuccess: (_result, message) => {
     acceptSubmission(threadId); clearQueuedUserMessage(threadId, message.clientRequestId, true); setFeedback(null);
-    void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    void queryClient.invalidateQueries({ queryKey: ["sessions"] });
   }, onError: (error, message) => {
     if (apiErrorCode(error) === "operation_uncertain") {
       markSubmissionUncertain(threadId);

@@ -28,6 +28,14 @@ describe("Composer submission intent", () => {
     expect(composerSource).not.toContain("forceTurn");
   });
 
+  it("does not start a stale Session-detail refetch immediately after an accepted submission", () => {
+    const successBlocks = [...composerSource.matchAll(/onSuccess:\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\},\s*onError/g)].map((match) => match[0]);
+    const submissionBlocks = successBlocks.filter((block) => block.includes("acceptSubmission(threadId)"));
+    expect(submissionBlocks).toHaveLength(2);
+    expect(submissionBlocks.every((block) => !block.includes('queryKey: ["session", threadId]'))).toBe(true);
+    expect(submissionBlocks.every((block) => block.includes('queryKey: ["sessions"]'))).toBe(true);
+  });
+
   it("renders an Interrupt failure instead of silently leaving the Turn running", () => {
     expect(composerSource).toContain("interrupt.error && <p className=\"composer-error\"");
   });

@@ -361,18 +361,13 @@ export const useAppStore = create<AppStore>((set) => ({
       return { ...sequenced, deltas: { ...state.deltas, [payload.itemId]: (state.deltas[payload.itemId] ?? "") + payload.delta } };
     }
     if (event.type === "item.upserted") {
-      const payload = event.payload as { item?: { id?: string; type?: string; clientId?: string | null }; completedAtMs?: number; completed?: boolean };
+      const payload = event.payload as { item?: { id?: string }; completedAtMs?: number; completed?: boolean };
       const itemId = payload.item?.id;
-      const optimisticUserMessages = event.threadId && payload.item?.type === "userMessage" && payload.item.clientId
-        ? withoutOptimisticMessages(state.optimisticUserMessages, event.threadId, [payload.item.clientId])
-        : state.optimisticUserMessages;
       if (!itemId || (!payload.completed && payload.completedAtMs === undefined) || state.deltas[itemId] === undefined) {
-        return optimisticUserMessages === state.optimisticUserMessages ? sequenced : { ...sequenced, optimisticUserMessages };
+        return sequenced;
       }
       const deltas = { ...state.deltas }; delete deltas[itemId];
-      return optimisticUserMessages === state.optimisticUserMessages
-        ? { ...sequenced, deltas }
-        : { ...sequenced, deltas, optimisticUserMessages };
+      return { ...sequenced, deltas };
     }
     if (event.type === "pendingRequest.created") {
       const pending = event.payload as PendingRequestSummary;

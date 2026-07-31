@@ -17,7 +17,7 @@ beforeEach(() => useAppStore.setState({
 }));
 
 describe("optimistic user-message lifecycle", () => {
-  it("keeps an accepted submission visible as queued until Codex materializes its client ID", () => {
+  it("keeps an accepted submission as a fallback until the rendered timeline reconciles it", () => {
     const store = useAppStore.getState();
     store.setDraft("thread-1", "follow up");
     store.beginSubmission("thread-1", "follow up", "message-1");
@@ -39,6 +39,13 @@ describe("optimistic user-message lifecycle", () => {
       payload: { turnId: "turn-1", item: { id: "user-1", type: "userMessage", clientId: "message-1", content: [{ type: "text", text: "follow up" }] } },
     });
 
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.[0]).toMatchObject({
+      clientUserMessageId: "message-1",
+      text: "follow up",
+      state: "queued",
+    });
+
+    useAppStore.getState().reconcileOptimisticUserMessages("thread-1", ["message-1"]);
     expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toBeUndefined();
   });
 
