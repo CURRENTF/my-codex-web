@@ -7,7 +7,7 @@ import "katex/dist/katex.min.css";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
 import { vscodeFileUri } from "../editor-uri";
 
-function MarkdownMessage({ text, vscodeRemoteAuthority }: { text: string; vscodeRemoteAuthority: string | null }) {
+function MarkdownMessage({ text, vscodeRemoteAuthority, localImageUrls }: { text: string; vscodeRemoteAuthority: string | null; localImageUrls: Record<string, string> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}
@@ -23,7 +23,8 @@ function MarkdownMessage({ text, vscodeRemoteAuthority }: { text: string; vscode
       },
       img({ src, alt }) {
         if (!src) return null;
-        return <a className="agent-image-link" href={src} target="_blank" rel="noreferrer"><img src={src} alt={alt ?? "回复中的图片"} loading="lazy" referrerPolicy="no-referrer" /></a>;
+        const displaySrc = localImageUrls[src] ?? src;
+        return <a className="agent-image-link" href={displaySrc} target="_blank" rel="noreferrer"><img src={displaySrc} alt={alt ?? "回复中的图片"} loading="lazy" referrerPolicy="no-referrer" /></a>;
       },
     }}
   >{normalizeLooseDisplayMath(text)}</ReactMarkdown>;
@@ -83,10 +84,10 @@ function GitReceipt({ receipt }: { receipt: GitReceiptBlock }) {
   </section>;
 }
 
-export function AgentMessage({ text, vscodeRemoteAuthority = null }: { text: string; vscodeRemoteAuthority?: string | null }) {
+export function AgentMessage({ text, vscodeRemoteAuthority = null, localImageUrls = {} }: { text: string; vscodeRemoteAuthority?: string | null; localImageUrls?: Record<string, string> }) {
   return <article className="agent-message">{parseAgentMessage(text).map((block, index) => {
     if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} vscodeRemoteAuthority={vscodeRemoteAuthority} />;
     if (block.kind === "gitReceipt") return <GitReceipt key={index} receipt={block} />;
-    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} vscodeRemoteAuthority={vscodeRemoteAuthority} /></div>;
+    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} vscodeRemoteAuthority={vscodeRemoteAuthority} localImageUrls={localImageUrls} /></div>;
   })}</article>;
 }

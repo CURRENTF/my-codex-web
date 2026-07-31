@@ -4,6 +4,7 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "nod
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { MultipartFile } from "@fastify/multipart";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import type { AdapterEvent } from "@codex-web/codex-adapter";
 import type { SessionItem, SessionThread, SessionTurn, UploadedAttachment, UserMessagePart } from "@codex-web/shared-types";
 
@@ -81,6 +82,32 @@ async function detectedImageMime(filename: string): Promise<string | null> {
 
 function validId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+interface MarkdownNode {
+  type: string;
+  url?: string;
+  identifier?: string;
+  children?: MarkdownNode[];
+}
+
+function markdownImagePaths(text: string): string[] {
+  const root = fromMarkdown(text) as MarkdownNode;
+  const direct = new Set<string>();
+  const references = new Set<string>();
+  const definitions = new Map<string, string>();
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "image" && node.url) direct.add(node.url);
+    if (node.type === "imageReference" && node.identifier) references.add(node.identifier);
+    if (node.type === "definition" && node.identifier && node.url) definitions.set(node.identifier, node.url);
+    node.children?.forEach(visit);
+  };
+  visit(root);
+  for (const identifier of references) {
+    const filename = definitions.get(identifier);
+    if (filename) direct.add(filename);
+  }
+  return [...direct];
 }
 
 export class AttachmentStore {
@@ -238,6 +265,13 @@ export class AttachmentStore {
     }
     if (item.type === "imageView") return { ...item, displayUrl: this.localImageUrl(item.path) };
     if (item.type === "imageGeneration" && item.savedPath) return { ...item, displayUrl: this.localImageUrl(item.savedPath) };
+    if (item.type === "agentMessage") {
+      const localImageUrls = Object.fromEntries(markdownImagePaths(item.text).flatMap((filename) => {
+        const url = this.localImageUrl(filename);
+        return url ? [[filename, url]] : [];
+      }));
+      return Object.keys(localImageUrls).length ? { ...item, localImageUrls } : item;
+    }
     return item;
   }
 

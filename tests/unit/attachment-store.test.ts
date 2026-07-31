@@ -80,6 +80,38 @@ describe("AttachmentStore", () => {
     expect(store.openLocalImage(token)).toEqual({ path: toolPath, mimeType: "image/png" });
   });
 
+  it("decorates local images embedded in agent Markdown without rewriting the source text", async () => {
+    const inlinePath = path.join(directory, "inline.png");
+    const referencedPath = path.join(directory, "referenced image.jpg");
+    await writeFile(inlinePath, png);
+    await writeFile(referencedPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    const text = [
+      `![inline](${inlinePath})`,
+      `![referenced][figure]`,
+      `[figure]: <${referencedPath}>`,
+      `![external](https://example.com/remote.png)`,
+      "`![code](/tmp/not-an-image.png)`",
+    ].join("\n\n");
+
+    const thread = store.decorateThread({
+      id: "thread", preview: "", name: null, cwd: directory, createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null,
+      turns: [{ id: "turn", status: "completed", startedAt: 1, completedAt: 2, durationMs: 1, items: [
+        { type: "agentMessage", id: "agent", text },
+      ] }],
+    });
+    const agent = thread.turns[0]?.items[0];
+    expect(agent).toMatchObject({ type: "agentMessage", text });
+    if (agent?.type !== "agentMessage") throw new Error("missing agent message");
+    expect(agent.localImageUrls).toEqual({
+      [inlinePath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
+      [referencedPath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
+    });
+    for (const [filename, url] of Object.entries(agent.localImageUrls ?? {})) {
+      const token = url.split("/")[3]!;
+      expect(store.openLocalImage(token)?.path).toBe(filename);
+    }
+  });
+
   it("restores attachment parts omitted from a persisted App Server user message without duplicating images", async () => {
     const image = await store.save(part("screen.png", "image/png", png));
     const file = await store.save(part("notes.txt", "text/plain", Buffer.from("hello")));

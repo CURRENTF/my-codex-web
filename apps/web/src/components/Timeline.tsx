@@ -77,7 +77,7 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
 function Item({ item, turnStatus, onOpenDiff, vscodeRemoteAuthority, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; vscodeRemoteAuthority: string | null; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
   if (item.type === "userMessage") return <UserMessage item={item} />;
-  if (item.type === "agentMessage") return <AgentMessage text={`${item.text}${delta ?? ""}`} vscodeRemoteAuthority={vscodeRemoteAuthority} />;
+  if (item.type === "agentMessage") return <AgentMessage text={`${item.text}${delta ?? ""}`} vscodeRemoteAuthority={vscodeRemoteAuthority} localImageUrls={item.localImageUrls} />;
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
     if (grouped) return <section className="activity-reasoning"><div className="activity-reasoning-label"><Wrench size={14} />思考摘要</div>{content}</section>;

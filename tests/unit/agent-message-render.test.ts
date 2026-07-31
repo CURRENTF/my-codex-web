@@ -3,10 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentMessage } from "../../apps/web/src/components/AgentMessage";
 
-function render(text: string) {
+function render(text: string, localImageUrls?: Record<string, string>) {
   return renderToStaticMarkup(createElement(AgentMessage, {
     text,
     vscodeRemoteAuthority: "ssh-remote+hitsz-8h100-hq-server",
+    localImageUrls,
   }));
 }
 
@@ -53,6 +54,16 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain('src="https://example.com/result.png"');
     expect(html).toContain('loading="lazy"');
     expect(html).toContain('referrerPolicy="no-referrer"');
+  });
+
+  it("uses a server-issued URL for a local Markdown image while leaving external images unchanged", () => {
+    const localPath = "/home/haojitai/output/result.png";
+    const displayUrl = "/api/local-images/00000000-0000-4000-8000-000000000000/content";
+    const html = render(`![local](${localPath})\n\n![external](https://example.com/result.png)`, { [localPath]: displayUrl });
+    expect(html).toContain(`href="${displayUrl}"`);
+    expect(html).toContain(`src="${displayUrl}"`);
+    expect(html).not.toContain(`src="${localPath}"`);
+    expect(html).toContain('src="https://example.com/result.png"');
   });
 
   it("preserves safe external links, remote file links, and directives", () => {

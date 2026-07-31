@@ -24,6 +24,7 @@ import { ConnectionRecovery, type AppServerConnectionState } from "./connection-
 import { safeErrorForLog } from "./safe-error.js";
 import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
 import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, streamLocalFile } from "./attachment-store.js";
+import { acceptsSpaDocument } from "./spa-fallback.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -444,7 +445,7 @@ export async function createServer() {
   if (existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist, wildcard: false });
     app.setNotFoundHandler((request, reply) => {
-      if (request.raw.method === "GET" && !request.url.startsWith("/api/")) {
+      if (!request.url.startsWith("/api/") && acceptsSpaDocument(request.raw.method ?? "", request.headers.accept)) {
         reply.type("text/html").send(createReadStream(path.join(webDist, "index.html")));
       } else reply.code(404).send({ error: "Not found" });
     });
