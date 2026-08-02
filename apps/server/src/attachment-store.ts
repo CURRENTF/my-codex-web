@@ -91,14 +91,14 @@ interface MarkdownNode {
   children?: MarkdownNode[];
 }
 
-function markdownImagePaths(text: string): string[] {
+function markdownLocalImagePaths(text: string): string[] {
   const root = fromMarkdown(text) as MarkdownNode;
   const direct = new Set<string>();
   const references = new Set<string>();
   const definitions = new Map<string, string>();
   const visit = (node: MarkdownNode): void => {
-    if (node.type === "image" && node.url) direct.add(node.url);
-    if (node.type === "imageReference" && node.identifier) references.add(node.identifier);
+    if ((node.type === "image" || node.type === "link") && node.url) direct.add(node.url);
+    if ((node.type === "imageReference" || node.type === "linkReference") && node.identifier) references.add(node.identifier);
     if (node.type === "definition" && node.identifier && node.url) definitions.set(node.identifier, node.url);
     node.children?.forEach(visit);
   };
@@ -266,7 +266,7 @@ export class AttachmentStore {
     if (item.type === "imageView") return { ...item, displayUrl: this.localImageUrl(item.path) };
     if (item.type === "imageGeneration" && item.savedPath) return { ...item, displayUrl: this.localImageUrl(item.savedPath) };
     if (item.type === "agentMessage") {
-      const localImageUrls = Object.fromEntries(markdownImagePaths(item.text).flatMap((filename) => {
+      const localImageUrls = Object.fromEntries(markdownLocalImagePaths(item.text).flatMap((filename) => {
         const url = this.localImageUrl(filename);
         return url ? [[filename, url]] : [];
       }));

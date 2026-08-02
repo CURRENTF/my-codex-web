@@ -4,17 +4,31 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
+import type { CodeServerStatus } from "@codex-web/shared-types";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
-import { vscodeFileUri } from "../editor-uri";
+import { codeServerFileUrl } from "../code-server-url";
 
-function MarkdownMessage({ text, vscodeRemoteAuthority, localImageUrls }: { text: string; vscodeRemoteAuthority: string | null; localImageUrls: Record<string, string> }) {
+const UNCONFIGURED_CODE_SERVER: CodeServerStatus = { url: null, state: "unconfigured", checkedAt: null };
+
+function unavailableTitle(codeServer: CodeServerStatus): string {
+  if (codeServer.state === "checking") return "正在检查 code-server";
+  if (codeServer.state === "unconfigured") return "未配置 code-server";
+  return "code-server 当前不可用";
+}
+
+function MarkdownMessage({ text, codeServer, cwd, localImageUrls }: { text: string; codeServer: CodeServerStatus; cwd: string; localImageUrls: Record<string, string> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}
     components={{
       a({ href, children }) {
+        const localImageUrl = href ? localImageUrls[href] : undefined;
+        if (localImageUrl) {
+          return <a className="agent-inline-link external" href={localImageUrl} target="_blank" rel="noreferrer" title={href}><ArrowSquareOut size={14} />{children}</a>;
+        }
         if (href?.startsWith("/")) {
-          return <a className="agent-inline-link file" href={vscodeFileUri(href, vscodeRemoteAuthority)} title={href}><FileCode size={14} />{children}</a>;
+          if (codeServer.state !== "available" || !codeServer.url) return <span className="agent-inline-link file unavailable" aria-disabled="true" title={`${href} · ${unavailableTitle(codeServer)}`}><FileCode size={14} />{children}</span>;
+          return <a className="agent-inline-link file" href={codeServerFileUrl(codeServer.url, href, cwd)} target="_blank" rel="noreferrer" title={href}><FileCode size={14} />{children}</a>;
         }
         if (href && /^https?:\/\//.test(href)) {
           return <a className="agent-inline-link external" href={href} target="_blank" rel="noreferrer"><ArrowSquareOut size={14} />{children}</a>;
@@ -30,11 +44,13 @@ function MarkdownMessage({ text, vscodeRemoteAuthority, localImageUrls }: { text
   >{normalizeLooseDisplayMath(text)}</ReactMarkdown>;
 }
 
-function CodeCommentCard({ comment, vscodeRemoteAuthority }: { comment: CodeCommentBlock; vscodeRemoteAuthority: string | null }) {
+function CodeCommentCard({ comment, codeServer, cwd }: { comment: CodeCommentBlock; codeServer: CodeServerStatus; cwd: string }) {
   const priority = comment.priority === null ? null : Math.max(0, Math.trunc(comment.priority));
   const title = priority === null ? comment.title : comment.title.replace(new RegExp(`^\\[P${priority}\\]\\s*`, "i"), "");
   const line = comment.start === null ? "" : comment.end !== null && comment.end !== comment.start ? `${comment.start}-${comment.end}` : String(comment.start);
-  const target = `${vscodeFileUri(comment.file, vscodeRemoteAuthority)}${comment.start === null ? "" : `:${Math.trunc(comment.start)}`}`;
+  const target = codeServer.state === "available" && codeServer.url
+    ? codeServerFileUrl(codeServer.url, comment.file, cwd, comment.start)
+    : null;
   const severity = priority === null
     ? { code: "Review", label: "审查建议", icon: MagnifyingGlass }
     : {
@@ -56,11 +72,15 @@ function CodeCommentCard({ comment, vscodeRemoteAuthority }: { comment: CodeComm
       </header>
       <p>{comment.body}</p>
       <footer>
-        <a className="code-comment-location" href={target} title={comment.file}>
+        {target ? <a className="code-comment-location" href={target} target="_blank" rel="noreferrer" title={comment.file}>
           <FileCode size={14} />
           <code>{comment.file}{line && `:${line}`}</code>
           <span>打开文件 <ArrowSquareOut size={13} /></span>
-        </a>
+        </a> : <span className="code-comment-location unavailable" aria-disabled="true" title={unavailableTitle(codeServer)}>
+          <FileCode size={14} />
+          <code>{comment.file}{line && `:${line}`}</code>
+          <span>{unavailableTitle(codeServer)}</span>
+        </span>}
       </footer>
     </div>
   </section>;
@@ -84,10 +104,10 @@ function GitReceipt({ receipt }: { receipt: GitReceiptBlock }) {
   </section>;
 }
 
-export function AgentMessage({ text, vscodeRemoteAuthority = null, localImageUrls = {} }: { text: string; vscodeRemoteAuthority?: string | null; localImageUrls?: Record<string, string> }) {
+export function AgentMessage({ text, codeServer = UNCONFIGURED_CODE_SERVER, cwd = "/", localImageUrls = {} }: { text: string; codeServer?: CodeServerStatus; cwd?: string; localImageUrls?: Record<string, string> }) {
   return <article className="agent-message">{parseAgentMessage(text).map((block, index) => {
-    if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} vscodeRemoteAuthority={vscodeRemoteAuthority} />;
+    if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} codeServer={codeServer} cwd={cwd} />;
     if (block.kind === "gitReceipt") return <GitReceipt key={index} receipt={block} />;
-    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} vscodeRemoteAuthority={vscodeRemoteAuthority} localImageUrls={localImageUrls} /></div>;
+    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} codeServer={codeServer} cwd={cwd} localImageUrls={localImageUrls} /></div>;
   })}</article>;
 }

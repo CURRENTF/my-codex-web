@@ -25,6 +25,7 @@ import { safeErrorForLog } from "./safe-error.js";
 import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
 import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, streamLocalFile } from "./attachment-store.js";
 import { acceptsSpaDocument } from "./spa-fallback.js";
+import { initialCodeServerStatus, probeCodeServer } from "./code-server.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -228,7 +229,7 @@ export async function createServer() {
       connection: { state: connectionState, codexVersion: null },
       authReady: adapter.account !== null,
       csrfToken,
-      vscodeRemoteAuthority: config.vscodeRemoteAuthority,
+      codeServer: initialCodeServerStatus(config.codeServerUrl),
       projects: repositories.listProjects(),
       preferences: repositories.getPreferences(),
       models: adapter.models,
@@ -238,6 +239,10 @@ export async function createServer() {
       sessionPrefills: sessions.listPrefills(),
       pendingRequests: runtimes.listPendingRequests(),
     };
+  });
+  app.get("/api/code-server/status", async (_request, reply) => {
+    reply.header("cache-control", "no-store, max-age=0");
+    return probeCodeServer(config.codeServerUrl, config.codeServerHealthUrl);
   });
   app.post("/api/attachments", async (request, reply) => {
     const part = await request.file();

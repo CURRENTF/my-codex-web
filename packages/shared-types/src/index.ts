@@ -203,7 +203,7 @@ export interface BootstrapPayload {
   connection: { state: "connected" | "connecting" | "disconnected"; codexVersion: string | null };
   authReady: boolean;
   csrfToken: string;
-  vscodeRemoteAuthority: string | null;
+  codeServer: CodeServerStatus;
   projects: Project[];
   preferences: Preferences;
   models: ModelOption[];
@@ -212,6 +212,12 @@ export interface BootstrapPayload {
   itemDeltas: Record<string, string>;
   sessionPrefills: Record<string, string>;
   pendingRequests: PendingRequestSummary[];
+}
+
+export interface CodeServerStatus {
+  url: string | null;
+  state: "checking" | "available" | "unavailable" | "unconfigured";
+  checkedAt: number | null;
 }
 
 export function mergeStreamingText(base: string | null | undefined, update: string | null | undefined): string {

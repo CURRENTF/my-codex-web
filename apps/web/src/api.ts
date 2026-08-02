@@ -1,4 +1,4 @@
-import type { BootstrapPayload, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
+import type { BootstrapPayload, CodeServerStatus, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
@@ -53,6 +53,7 @@ export async function authenticateWebUi(password: string): Promise<void> {
 }
 
 export const endpoints = {
+  codeServerStatus: () => api<CodeServerStatus>("/api/code-server/status", { cache: "no-store" }),
   projects: () => api<Project[]>("/api/projects"),
   skills: (projectId: string, signal?: AbortSignal) => api<SkillOption[]>(`/api/projects/${projectId}/skills`, { signal }),
   sessions: (search = "", sortDirection: "asc" | "desc" = "desc", signal?: AbortSignal) => api<SessionSummary[]>(`/api/sessions?sortDirection=${sortDirection}&search=${encodeURIComponent(search)}`, { signal }),

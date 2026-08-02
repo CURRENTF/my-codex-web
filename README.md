@@ -49,7 +49,10 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 | `CODEX_WEB_COOKIE_SECURE` | HTTPS Origin 自动启用 | 强制登录 Cookie 仅通过 HTTPS 发送 |
 | `CODEX_WEB_TRUST_PROXY` | `0` | 只在服务仍绑定回环地址且前方是可信反向代理时设为 `1` |
 | `CODEX_WEB_SESSION_COOKIE_NAME` | `my_codex_web_session` | 登录 Cookie 名；同一域名部署多个 Web UI 时应保持唯一 |
-| `CODEX_WEB_VSCODE_REMOTE_AUTHORITY` | 未设置 | 远程部署时使用的 VS Code Remote SSH authority，例如 `ssh-remote+hitsz-8h100-hq-server` |
+| `CODEX_WEB_CODE_SERVER_URL` | 未设置 | 浏览器打开 B 上文件时使用的 code-server HTTP(S) URL，例如 `https://0513jtrc.beer:12334` |
+| `CODEX_WEB_CODE_SERVER_HEALTH_URL` | `<CODEX_WEB_CODE_SERVER_URL>/healthz` | 服务端健康探测 URL；同机部署建议使用 `http://127.0.0.1:12334/healthz` |
+
+配置 code-server 后，Project、普通文件链接和代码审查位置都只通过 code-server 打开。Web UI 每 15 秒从服务端探测一次健康状态；探测失败时入口会显示为不可用，不会回退到客户端的 `vscode://`。若 code-server 迁移端口，只需更新上述两个环境变量并重启 Web UI。
 
 ## 开发
 

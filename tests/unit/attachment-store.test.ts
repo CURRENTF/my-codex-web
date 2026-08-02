@@ -83,12 +83,15 @@ describe("AttachmentStore", () => {
   it("decorates local images embedded in agent Markdown without rewriting the source text", async () => {
     const inlinePath = path.join(directory, "inline.png");
     const referencedPath = path.join(directory, "referenced image.jpg");
+    const linkedPath = path.join(directory, "linked.webp");
     await writeFile(inlinePath, png);
     await writeFile(referencedPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    await writeFile(linkedPath, Buffer.from("linked image"));
     const text = [
       `![inline](${inlinePath})`,
       `![referenced][figure]`,
       `[figure]: <${referencedPath}>`,
+      `[open linked image](${linkedPath})`,
       `![external](https://example.com/remote.png)`,
       "`![code](/tmp/not-an-image.png)`",
     ].join("\n\n");
@@ -105,6 +108,7 @@ describe("AttachmentStore", () => {
     expect(agent.localImageUrls).toEqual({
       [inlinePath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
       [referencedPath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
+      [linkedPath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
     });
     for (const [filename, url] of Object.entries(agent.localImageUrls ?? {})) {
       const token = url.split("/")[3]!;
