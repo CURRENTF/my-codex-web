@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants, chmodSync, copyFileSync, createReadStream, createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -84,6 +84,14 @@ function validId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+function stableToken(identity: string): string {
+  const bytes = createHash("sha256").update(identity).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 interface MarkdownNode {
   type: string;
   url?: string;
@@ -91,36 +99,52 @@ interface MarkdownNode {
   children?: MarkdownNode[];
 }
 
-function markdownLocalImagePaths(text: string): string[] {
+function markdownLocalTargets(text: string): { imagePaths: string[]; linkPaths: string[] } {
   const root = fromMarkdown(text) as MarkdownNode;
-  const direct = new Set<string>();
-  const references = new Set<string>();
+  const imagePaths = new Set<string>();
+  const linkPaths = new Set<string>();
+  const imageReferences = new Set<string>();
+  const linkReferences = new Set<string>();
   const definitions = new Map<string, string>();
   const visit = (node: MarkdownNode): void => {
-    if ((node.type === "image" || node.type === "link") && node.url) direct.add(node.url);
-    if ((node.type === "imageReference" || node.type === "linkReference") && node.identifier) references.add(node.identifier);
+    if (node.type === "image" && node.url) imagePaths.add(node.url);
+    if (node.type === "link" && node.url) linkPaths.add(node.url);
+    if (node.type === "imageReference" && node.identifier) imageReferences.add(node.identifier);
+    if (node.type === "linkReference" && node.identifier) linkReferences.add(node.identifier);
     if (node.type === "definition" && node.identifier && node.url) definitions.set(node.identifier, node.url);
     node.children?.forEach(visit);
   };
   visit(root);
-  for (const identifier of references) {
+  for (const identifier of imageReferences) {
     const filename = definitions.get(identifier);
-    if (filename) direct.add(filename);
+    if (filename) imagePaths.add(filename);
   }
-  return [...direct];
+  for (const identifier of linkReferences) {
+    const filename = definitions.get(identifier);
+    if (filename) linkPaths.add(filename);
+  }
+  return { imagePaths: [...imagePaths], linkPaths: [...linkPaths] };
 }
 
 export class AttachmentStore {
   readonly root: string;
+  readonly localImageRoot: string;
+  readonly localPathRoot: string;
   private readonly localImagePaths = new Map<string, string>();
   private readonly localImageTokens = new Map<string, string>();
+  private readonly localPathPaths = new Map<string, string>();
+  private readonly localPathTokens = new Map<string, string>();
 
   constructor(dataDir: string) {
     this.root = path.join(dataDir, "attachments");
+    this.localImageRoot = path.join(dataDir, "local-images");
+    this.localPathRoot = path.join(dataDir, "local-paths");
   }
 
   async initialize(): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
+    await mkdir(this.localImageRoot, { recursive: true, mode: 0o700 });
+    await mkdir(this.localPathRoot, { recursive: true, mode: 0o700 });
     await this.cleanupExpiredDrafts();
   }
 
@@ -194,14 +218,42 @@ export class AttachmentStore {
   }
 
   openLocalImage(token: string): { path: string; mimeType: string } | null {
-    const filename = this.localImagePaths.get(token);
+    if (!validId(token)) return null;
+    const mapped = this.localImagePaths.get(token);
+    if (mapped) {
+      const mimeType = imageMimeFromName(mapped);
+      return mimeType ? { path: mapped, mimeType } : null;
+    }
+    for (const mimeType of ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"]) {
+      const snapshotPath = path.join(this.localImageRoot, `${token}${imageExtension(mimeType)}`);
+      if (!existsSync(snapshotPath)) continue;
+      this.localImagePaths.set(token, snapshotPath);
+      return { path: snapshotPath, mimeType };
+    }
+    return null;
+  }
+
+  openLocalPath(token: string): { path: string; mimeType: string } | null {
+    if (!validId(token)) return null;
+    let filename = this.localPathPaths.get(token);
+    if (!filename) {
+      try {
+        const metadata = JSON.parse(readFileSync(path.join(this.localPathRoot, `${token}.json`), "utf8")) as { path?: unknown };
+        if (typeof metadata.path !== "string" || !path.isAbsolute(metadata.path)) return null;
+        filename = metadata.path;
+        this.localPathPaths.set(token, filename);
+        this.localPathTokens.set(filename, token);
+      } catch {
+        return null;
+      }
+    }
     if (!filename) return null;
     const mimeType = imageMimeFromName(filename);
     return mimeType ? { path: filename, mimeType } : null;
   }
 
   decorateThread(thread: SessionThread): SessionThread {
-    return { ...thread, turns: thread.turns.map((turn) => this.decorateTurn(turn)) };
+    return { ...thread, turns: thread.turns.map((turn) => this.decorateTurn(turn, thread.id)) };
   }
 
   async restoreThreadAttachments(thread: SessionThread, references: ReadonlyMap<string, readonly string[]>): Promise<SessionThread> {
@@ -237,24 +289,25 @@ export class AttachmentStore {
     };
   }
 
-  decorateTurn(turn: SessionTurn): SessionTurn {
-    return { ...turn, items: turn.items.map((item) => this.decorateItem(item)) };
+  decorateTurn(turn: SessionTurn, threadId: string): SessionTurn {
+    const scope = `${threadId}:${turn.id}`;
+    return { ...turn, items: turn.items.map((item) => this.decorateItem(item, scope)) };
   }
 
   decorateEvent(event: AdapterEvent): AdapterEvent {
     if (event.type === "threadStarted") return { ...event, thread: this.decorateThread(event.thread) };
-    if (event.type === "turnStarted" || event.type === "turnCompleted") return { ...event, turn: this.decorateTurn(event.turn) };
-    if (event.type === "itemUpserted") return { ...event, item: this.decorateItem(event.item) };
+    if (event.type === "turnStarted" || event.type === "turnCompleted") return { ...event, turn: this.decorateTurn(event.turn, event.threadId) };
+    if (event.type === "itemUpserted") return { ...event, item: this.decorateItem(event.item, `${event.threadId}:${event.turnId}`) };
     return event;
   }
 
-  private decorateItem(item: SessionItem): SessionItem {
+  private decorateItem(item: SessionItem, scope: string): SessionItem {
     if (item.type === "userMessage") {
       return {
         ...item,
-        content: item.content.map((part) => {
+        content: item.content.map((part, index) => {
           if (part.type === "image" && part.url) return { ...part, displayUrl: part.url };
-          if (part.type === "localImage" && part.path) return { ...part, displayUrl: this.localImageUrl(part.path) };
+          if (part.type === "localImage" && part.path) return { ...part, displayUrl: this.localImageUrl(part.path, `${scope}:user:${item.id}:${index}`) };
           if (part.type === "mention" && part.path) {
             const id = this.attachmentIdFromPath(part.path);
             return id ? { ...part, downloadUrl: `/api/attachments/${id}/content?download=1` } : part;
@@ -263,27 +316,75 @@ export class AttachmentStore {
         }),
       };
     }
-    if (item.type === "imageView") return { ...item, displayUrl: this.localImageUrl(item.path) };
-    if (item.type === "imageGeneration" && item.savedPath) return { ...item, displayUrl: this.localImageUrl(item.savedPath) };
+    if (item.type === "imageView") return { ...item, displayUrl: this.localImageUrl(item.path, `${scope}:view:${item.id}`) };
+    if (item.type === "imageGeneration" && item.savedPath) return { ...item, displayUrl: this.localImageUrl(item.savedPath, `${scope}:generation:${item.id}`) };
     if (item.type === "agentMessage") {
-      const localImageUrls = Object.fromEntries(markdownLocalImagePaths(item.text).flatMap((filename) => {
-        const url = this.localImageUrl(filename);
+      const targets = markdownLocalTargets(item.text);
+      const localImageUrls = Object.fromEntries(targets.imagePaths.flatMap((filename) => {
+        const url = this.localImageUrl(filename, `${scope}:agent:${item.id}:${filename}`);
         return url ? [[filename, url]] : [];
       }));
-      return Object.keys(localImageUrls).length ? { ...item, localImageUrls } : item;
+      const localPathUrls = Object.fromEntries(targets.linkPaths.flatMap((filename) => {
+        const url = this.localPathUrl(filename);
+        return url ? [[filename, url]] : [];
+      }));
+      return Object.keys(localImageUrls).length || Object.keys(localPathUrls).length ? { ...item, localImageUrls, localPathUrls } : item;
     }
     return item;
   }
 
-  private localImageUrl(filename: string): string | undefined {
-    if (!path.isAbsolute(filename) || !imageMimeFromName(filename)) return undefined;
-    let token = this.localImageTokens.get(filename);
-    if (!token) {
-      token = randomUUID();
-      this.localImageTokens.set(filename, token);
-      this.localImagePaths.set(token, filename);
+  private localImageUrl(filename: string, identity: string): string | undefined {
+    const mimeType = path.isAbsolute(filename) ? imageMimeFromName(filename) : null;
+    if (!mimeType) return undefined;
+    let token = this.localImageTokens.get(identity);
+    if (token) return `/api/local-images/${token}/content`;
+    token = stableToken(identity);
+    const snapshotPath = path.join(this.localImageRoot, `${token}${imageExtension(mimeType)}`);
+    if (!existsSync(snapshotPath)) {
+      const temporaryPath = path.join(this.localImageRoot, `.${token}.${randomUUID()}.tmp`);
+      try {
+        const source = statSync(filename);
+        if (!source.isFile()) return undefined;
+        copyFileSync(filename, temporaryPath, fsConstants.COPYFILE_FICLONE);
+        const afterCopy = statSync(filename);
+        if (source.size !== afterCopy.size || source.mtimeMs !== afterCopy.mtimeMs) return undefined;
+        renameSync(temporaryPath, snapshotPath);
+        chmodSync(snapshotPath, 0o600);
+      } catch {
+        return undefined;
+      } finally {
+        rmSync(temporaryPath, { force: true });
+      }
     }
+    this.localImageTokens.set(identity, token);
+    this.localImagePaths.set(token, snapshotPath);
     return `/api/local-images/${token}/content`;
+  }
+
+  private localPathUrl(filename: string): string | undefined {
+    if (!path.isAbsolute(filename) || !imageMimeFromName(filename)) return undefined;
+    let token = this.localPathTokens.get(filename);
+    if (!token) {
+      token = stableToken(`local-path:${filename}`);
+      const metadataPath = path.join(this.localPathRoot, `${token}.json`);
+      if (!existsSync(metadataPath)) {
+        try {
+          writeFileSync(metadataPath, JSON.stringify({ path: filename }), { mode: 0o600, flag: "wx" });
+        } catch {
+          return undefined;
+        }
+      } else {
+        try {
+          const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as { path?: unknown };
+          if (metadata.path !== filename) return undefined;
+        } catch {
+          return undefined;
+        }
+      }
+      this.localPathTokens.set(filename, token);
+      this.localPathPaths.set(token, filename);
+    }
+    return `/api/local-paths/${token}/content`;
   }
 
   private attachmentIdFromPath(filename: string): string | null {

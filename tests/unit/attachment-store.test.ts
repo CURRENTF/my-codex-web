@@ -77,7 +77,67 @@ describe("AttachmentStore", () => {
     expect(view).toMatchObject({ type: "imageView", displayUrl: expect.stringMatching(/^\/api\/local-images\/.+\/content$/) });
     if (view?.type !== "imageView" || !view.displayUrl) throw new Error("missing image URL");
     const token = view.displayUrl.split("/")[3]!;
-    expect(store.openLocalImage(token)).toEqual({ path: toolPath, mimeType: "image/png" });
+    const snapshot = store.openLocalImage(token);
+    expect(snapshot).toMatchObject({ path: expect.stringMatching(/\/local-images\/.+\.png$/), mimeType: "image/png" });
+    expect(await readFile(snapshot!.path)).toEqual(png);
+  });
+
+  it("keeps an embedded image immutable while a path hyperlink follows later file updates", async () => {
+    const sourcePath = path.join(directory, "result.png");
+    const firstImage = Buffer.concat([png, Buffer.from("first")]);
+    const secondImage = Buffer.concat([png, Buffer.from("second")]);
+    await writeFile(sourcePath, firstImage);
+    const text = `![embedded](${sourcePath})\n\n[current path](${sourcePath})`;
+
+    const firstThread = store.decorateThread({
+      id: "thread", preview: "", name: null, cwd: directory, createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null,
+      turns: [{ id: "turn", status: "completed", startedAt: 1, completedAt: 2, durationMs: 1, items: [
+        { type: "agentMessage", id: "agent", text },
+      ] }],
+    });
+    const firstAgent = firstThread.turns[0]?.items[0];
+    if (firstAgent?.type !== "agentMessage") throw new Error("missing agent message");
+    const embeddedUrl = firstAgent.localImageUrls?.[sourcePath];
+    const pathUrl = firstAgent.localPathUrls?.[sourcePath];
+    if (!embeddedUrl || !pathUrl) throw new Error("missing local image URLs");
+    const embeddedToken = embeddedUrl.split("/")[3]!;
+    const pathToken = pathUrl.split("/")[3]!;
+    expect(embeddedUrl).toMatch(/^\/api\/local-images\/.+\/content$/);
+    expect(pathUrl).toMatch(/^\/api\/local-paths\/.+\/content$/);
+    expect(await readFile(store.openLocalImage(embeddedToken)!.path)).toEqual(firstImage);
+    expect(await readFile(store.openLocalPath(pathToken)!.path)).toEqual(firstImage);
+
+    await writeFile(sourcePath, secondImage);
+    expect(await readFile(store.openLocalImage(embeddedToken)!.path)).toEqual(firstImage);
+    expect(await readFile(store.openLocalPath(pathToken)!.path)).toEqual(secondImage);
+
+    const laterThread = store.decorateThread({
+      id: "thread", preview: "", name: null, cwd: directory, createdAt: 1, updatedAt: 2, ephemeral: false, forkedFromId: null,
+      turns: [{ id: "later-turn", status: "completed", startedAt: 3, completedAt: 4, durationMs: 1, items: [
+        { type: "agentMessage", id: "later-agent", text: `![later embedded](${sourcePath})` },
+      ] }],
+    });
+    const laterAgent = laterThread.turns[0]?.items[0];
+    if (laterAgent?.type !== "agentMessage") throw new Error("missing later agent message");
+    const laterUrl = laterAgent.localImageUrls?.[sourcePath];
+    if (!laterUrl) throw new Error("missing later image URL");
+    expect(laterUrl).not.toBe(embeddedUrl);
+    expect(await readFile(store.openLocalImage(laterUrl.split("/")[3]!)!.path)).toEqual(secondImage);
+
+    const restartedStore = new AttachmentStore(directory);
+    await restartedStore.initialize();
+    expect(await readFile(restartedStore.openLocalImage(embeddedToken)!.path)).toEqual(firstImage);
+    expect(await readFile(restartedStore.openLocalPath(pathToken)!.path)).toEqual(secondImage);
+    const restored = restartedStore.decorateThread({
+      id: "thread", preview: "", name: null, cwd: directory, createdAt: 1, updatedAt: 2, ephemeral: false, forkedFromId: null,
+      turns: [{ id: "turn", status: "completed", startedAt: 1, completedAt: 2, durationMs: 1, items: [
+        { type: "agentMessage", id: "agent", text },
+      ] }],
+    });
+    const restoredAgent = restored.turns[0]?.items[0];
+    if (restoredAgent?.type !== "agentMessage") throw new Error("missing restored agent message");
+    expect(restoredAgent.localImageUrls?.[sourcePath]).toBe(embeddedUrl);
+    expect(restoredAgent.localPathUrls?.[sourcePath]).toBe(pathUrl);
   });
 
   it("decorates local images embedded in agent Markdown without rewriting the source text", async () => {
@@ -108,12 +168,16 @@ describe("AttachmentStore", () => {
     expect(agent.localImageUrls).toEqual({
       [inlinePath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
       [referencedPath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
-      [linkedPath]: expect.stringMatching(/^\/api\/local-images\/.+\/content$/),
     });
-    for (const [filename, url] of Object.entries(agent.localImageUrls ?? {})) {
+    expect(agent.localPathUrls).toEqual({
+      [linkedPath]: expect.stringMatching(/^\/api\/local-paths\/.+\/content$/),
+    });
+    for (const url of Object.values(agent.localImageUrls ?? {})) {
       const token = url.split("/")[3]!;
-      expect(store.openLocalImage(token)?.path).toBe(filename);
+      expect(store.openLocalImage(token)?.path).toMatch(/\/local-images\/.+\.(png|jpg)$/);
     }
+    const linkedToken = agent.localPathUrls![linkedPath]!.split("/")[3]!;
+    expect(store.openLocalPath(linkedToken)).toEqual({ path: linkedPath, mimeType: "image/webp" });
   });
 
   it("restores attachment parts omitted from a persisted App Server user message without duplicating images", async () => {

@@ -3,12 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentMessage } from "../../apps/web/src/components/AgentMessage";
 
-function render(text: string, localImageUrls?: Record<string, string>) {
+function render(text: string, localImageUrls?: Record<string, string>, localPathUrls?: Record<string, string>) {
   return renderToStaticMarkup(createElement(AgentMessage, {
     text,
     codeServer: { url: "https://0513jtrc.beer:12334", state: "available", checkedAt: Date.now() },
     cwd: "/home/haojitai/project",
     localImageUrls,
+    localPathUrls,
   }));
 }
 
@@ -69,9 +70,9 @@ describe("Agent message Markdown rendering", () => {
 
   it("opens a linked local image through its authenticated HTTP URL instead of code-server", () => {
     const localPath = "/home/haojitai/output/result.png";
-    const displayUrl = "/api/local-images/00000000-0000-4000-8000-000000000000/content";
-    const html = render(`[打开图片](${localPath})\n\n[报告](/data2/report.md)`, { [localPath]: displayUrl });
-    expect(html).toContain(`href="${displayUrl}"`);
+    const pathUrl = "/api/local-paths/00000000-0000-4000-8000-000000000000/content";
+    const html = render(`[打开图片](${localPath})\n\n[报告](/data2/report.md)`, undefined, { [localPath]: pathUrl });
+    expect(html).toContain(`href="${pathUrl}"`);
     expect(html).not.toContain("0513jtrc.beer%3A12334");
     expect(html).toContain("https://0513jtrc.beer:12334/?folder=%2Fhome%2Fhaojitai%2Fproject&amp;goto=%2Fdata2%2Freport.md");
   });

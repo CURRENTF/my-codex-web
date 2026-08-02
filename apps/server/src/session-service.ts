@@ -671,7 +671,7 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnDrafts.delete(threadId);
       this.uncertainTurnAttachmentIds.delete(threadId);
       this.settings.set(threadId, settings);
-      response = { ...response, turn: this.attachments?.decorateTurn(response.turn) ?? response.turn };
+      response = { ...response, turn: this.attachments?.decorateTurn(response.turn, threadId) ?? response.turn };
       this.upsertSnapshotTurn(threadId, response.turn);
       this.runtimes.setActiveTurn(threadId, response.turn.id);
       this.sessionPrefills.delete(threadId);

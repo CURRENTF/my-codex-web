@@ -16,15 +16,15 @@ function unavailableTitle(codeServer: CodeServerStatus): string {
   return "code-server 当前不可用";
 }
 
-function MarkdownMessage({ text, codeServer, cwd, localImageUrls }: { text: string; codeServer: CodeServerStatus; cwd: string; localImageUrls: Record<string, string> }) {
+function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls }: { text: string; codeServer: CodeServerStatus; cwd: string; localImageUrls: Record<string, string>; localPathUrls: Record<string, string> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}
     components={{
       a({ href, children }) {
-        const localImageUrl = href ? localImageUrls[href] : undefined;
-        if (localImageUrl) {
-          return <a className="agent-inline-link external" href={localImageUrl} target="_blank" rel="noreferrer" title={href}><ArrowSquareOut size={14} />{children}</a>;
+        const localPathUrl = href ? localPathUrls[href] : undefined;
+        if (localPathUrl) {
+          return <a className="agent-inline-link external" href={localPathUrl} target="_blank" rel="noreferrer" title={href}><ArrowSquareOut size={14} />{children}</a>;
         }
         if (href?.startsWith("/")) {
           if (codeServer.state !== "available" || !codeServer.url) return <span className="agent-inline-link file unavailable" aria-disabled="true" title={`${href} · ${unavailableTitle(codeServer)}`}><FileCode size={14} />{children}</span>;
@@ -104,10 +104,10 @@ function GitReceipt({ receipt }: { receipt: GitReceiptBlock }) {
   </section>;
 }
 
-export function AgentMessage({ text, codeServer = UNCONFIGURED_CODE_SERVER, cwd = "/", localImageUrls = {} }: { text: string; codeServer?: CodeServerStatus; cwd?: string; localImageUrls?: Record<string, string> }) {
+export function AgentMessage({ text, codeServer = UNCONFIGURED_CODE_SERVER, cwd = "/", localImageUrls = {}, localPathUrls = {} }: { text: string; codeServer?: CodeServerStatus; cwd?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string> }) {
   return <article className="agent-message">{parseAgentMessage(text).map((block, index) => {
     if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} codeServer={codeServer} cwd={cwd} />;
     if (block.kind === "gitReceipt") return <GitReceipt key={index} receipt={block} />;
-    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} codeServer={codeServer} cwd={cwd} localImageUrls={localImageUrls} /></div>;
+    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} codeServer={codeServer} cwd={cwd} localImageUrls={localImageUrls} localPathUrls={localPathUrls} /></div>;
   })}</article>;
 }

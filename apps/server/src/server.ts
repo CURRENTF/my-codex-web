@@ -276,6 +276,14 @@ export async function createServer() {
     const token = z.string().uuid().parse((request.params as { token: string }).token);
     const content = attachments.openLocalImage(token);
     if (!content || !existsSync(content.path)) return reply.code(404).send({ error: "image_not_found", message: "图片不存在。" });
+    reply.header("cache-control", "private, max-age=31536000, immutable");
+    reply.header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(path.basename(content.path))}`);
+    return reply.type(content.mimeType).send(streamLocalFile(content.path));
+  });
+  app.get("/api/local-paths/:token/content", async (request, reply) => {
+    const token = z.string().uuid().parse((request.params as { token: string }).token);
+    const content = attachments.openLocalPath(token);
+    if (!content || !existsSync(content.path)) return reply.code(404).send({ error: "image_not_found", message: "图片不存在。" });
     reply.header("cache-control", "private, no-store");
     reply.header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(path.basename(content.path))}`);
     return reply.type(content.mimeType).send(streamLocalFile(content.path));

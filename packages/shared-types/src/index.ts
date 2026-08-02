@@ -136,7 +136,7 @@ export interface UserMessagePart {
 
 export type SessionItem =
   | { type: "userMessage"; id: string; clientId?: string | null; content: UserMessagePart[] }
-  | { type: "agentMessage"; id: string; text: string; phase?: string; localImageUrls?: Record<string, string> }
+  | { type: "agentMessage"; id: string; text: string; phase?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string> }
   | { type: "reasoning"; id: string; summary: string[] }
   | { type: "plan"; id: string; text: string }
   | { type: "commandExecution"; id: string; command: string; cwd: string; status: string; aggregatedOutput: string | null; exitCode: number | null; durationMs: number | null }
