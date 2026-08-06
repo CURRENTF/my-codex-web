@@ -1,7 +1,8 @@
-import type { ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn } from "@codex-web/shared-types";
+import type { ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn, SessionTurnError } from "@codex-web/shared-types";
 import type { Thread } from "@codex-web/codex-schema/v2/Thread";
 import type { ThreadItem } from "@codex-web/codex-schema/v2/ThreadItem";
 import type { Turn } from "@codex-web/codex-schema/v2/Turn";
+import type { TurnError } from "@codex-web/codex-schema/v2/TurnError";
 import type { TurnPlanUpdatedNotification } from "@codex-web/codex-schema/v2/TurnPlanUpdatedNotification";
 import type { FileChangePatchUpdatedNotification } from "@codex-web/codex-schema/v2/FileChangePatchUpdatedNotification";
 
@@ -49,10 +50,29 @@ export function projectTurn(turn: Turn): SessionTurn {
   return {
     id: turn.id,
     status: turn.status,
+    ...(turn.error ? { errors: [projectTurnError(turn.error, false)] } : {}),
     items: (turn.items ?? []).flatMap((item) => { const projected = projectThreadItem(item); return projected ? [projected] : []; }),
     startedAt: turn.startedAt ?? null,
     completedAt: turn.completedAt ?? null,
     durationMs: turn.durationMs ?? null,
+  };
+}
+
+export function projectTurnError(error: TurnError, willRetry: boolean): SessionTurnError {
+  const info = error.codexErrorInfo;
+  const code = typeof info === "string"
+    ? info
+    : info && typeof info === "object" ? Object.keys(info)[0] ?? null : null;
+  const value = info && typeof info === "object" && code ? (info as Record<string, unknown>)[code] : null;
+  const httpStatusCode = value && typeof value === "object" && typeof (value as { httpStatusCode?: unknown }).httpStatusCode === "number"
+    ? (value as { httpStatusCode: number }).httpStatusCode
+    : null;
+  return {
+    message: error.message,
+    code,
+    httpStatusCode,
+    additionalDetails: error.additionalDetails,
+    willRetry,
   };
 }
 

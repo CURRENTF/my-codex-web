@@ -1,4 +1,4 @@
-import { mergeStreamingText, type ItemDeltaUiEventPayload, type ItemUiEventPayload, type TurnUiEventPayload, type UiEvent } from "@codex-web/shared-types";
+import { mergeStreamingText, type ItemDeltaUiEventPayload, type ItemUiEventPayload, type SessionTurnError, type TurnErrorUiEventPayload, type TurnUiEventPayload, type UiEvent } from "@codex-web/shared-types";
 import type { CodexItem, CodexTurn, Goal, SessionPayload } from "./api";
 
 function terminalizeItem(item: CodexItem, turnStatus: CodexTurn["status"]): CodexItem {
@@ -48,7 +48,31 @@ function upsertTurn(turns: CodexTurn[], incoming: CodexTurn): CodexTurn[] {
       items[itemIndex] = mergeItemSnapshot(items[itemIndex]!, item);
     }
   }
-  next[index] = terminalizeTurn({ ...current, ...incoming, items });
+  const errors = mergeTurnErrors(current.errors, incoming.errors);
+  next[index] = terminalizeTurn({ ...current, ...incoming, ...(errors.length ? { errors } : {}), items });
+  return next;
+}
+
+function turnErrorKey(error: SessionTurnError): string {
+  return JSON.stringify([error.message, error.code, error.httpStatusCode, error.additionalDetails, error.willRetry]);
+}
+
+function mergeTurnErrors(current: SessionTurnError[] = [], incoming: SessionTurnError[] = []): SessionTurnError[] {
+  const seen = new Set<string>();
+  return [...current, ...incoming].filter((error) => {
+    const key = turnErrorKey(error);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function appendTurnError(turns: CodexTurn[], turnId: string, error: SessionTurnError): CodexTurn[] {
+  const index = turns.findIndex((turn) => turn.id === turnId);
+  if (index < 0) return [...turns, { id: turnId, status: "inProgress", errors: [error], items: [], startedAt: null, completedAt: null, durationMs: null }];
+  const next = [...turns];
+  const turn = next[index]!;
+  next[index] = { ...turn, errors: mergeTurnErrors(turn.errors, [error]) };
   return next;
 }
 
@@ -106,6 +130,11 @@ export function applySessionEvent(
   if (event.type === "turn.started" || event.type === "turn.completed") {
     const turn = (event.payload as Partial<TurnUiEventPayload>).turn;
     return turn ? { ...current, thread: { ...current.thread, turns: upsertTurn(current.thread.turns, turn) } } : current;
+  }
+  if (event.type === "turn.error") {
+    const { turnId, error } = event.payload as Partial<TurnErrorUiEventPayload>;
+    if (!turnId || !error) return current;
+    return { ...current, thread: { ...current.thread, turns: appendTurnError(current.thread.turns, turnId, error) } };
   }
   if (event.type === "item.upserted") {
     const { turnId, item, startedAtMs } = event.payload as Partial<ItemUiEventPayload>;

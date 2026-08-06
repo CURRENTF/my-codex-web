@@ -359,6 +359,9 @@ export class ThreadRuntimeRegistry {
         this.events.publish("session.summary.updated", { reason: "turn-completed" }, { threadId });
         break;
       }
+      case "turnError":
+        this.events.publish("turn.error", { turnId: event.turnId, error: event.error }, this.ids(threadId));
+        break;
       case "itemUpserted": {
         this.events.publish("item.upserted", { turnId: event.turnId, item: event.item, completed: event.completed, ...("startedAtMs" in event ? { startedAtMs: event.startedAtMs } : {}), ...("completedAtMs" in event ? { completedAtMs: event.completedAtMs } : {}) }, this.ids(threadId));
         if (event.completed) {

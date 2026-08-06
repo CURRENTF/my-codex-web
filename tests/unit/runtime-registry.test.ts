@@ -23,6 +23,39 @@ function pending(registry: ThreadRuntimeRegistry, request: { id: number; method:
 }
 
 describe("runtime projection", () => {
+  it("publishes App Server Turn errors to the browser with retry metadata", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const runtimeEvents: Array<{ type: string; payload: unknown }> = [];
+    events.on("event", (event) => runtimeEvents.push(event));
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+
+    notify(registry, { method: "error", params: {
+      threadId: "t1",
+      turnId: "turn-1",
+      willRetry: true,
+      error: {
+        message: "Connection reset while streaming",
+        codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 503 } },
+        additionalDetails: "upstream temporarily unavailable",
+      },
+    } });
+
+    expect(runtimeEvents.at(-1)).toMatchObject({
+      type: "turn.error",
+      payload: {
+        turnId: "turn-1",
+        error: {
+          message: "Connection reset while streaming",
+          code: "responseStreamConnectionFailed",
+          httpStatusCode: 503,
+          additionalDetails: "upstream temporarily unavailable",
+          willRetry: true,
+        },
+      },
+    });
+  });
+
   it("publishes current context usage through runtime.changed", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { CaretDown, CaretRight, ClockCounterClockwise, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, Target, X } from "@phosphor-icons/react";
+import { Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, Target, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { CodeServerStatus, Preferences, Project, SessionSummary } from "@codex-web/shared-types";
 import { codeServerFolderUrl } from "../code-server-url";
 import { useAppStore } from "../store";
 import { StatusIcon } from "./StatusIcon";
+import type { BrowserNotificationControlState } from "../browser-notifications";
 
 export function relativeTime(timestamp: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - timestamp) / 1_000));
@@ -28,9 +29,9 @@ function SessionRow({ session, active, projectName, now, onOpen }: { session: Se
 }
 
 export interface SidebarProps {
-  projects: Project[]; sessions: SessionSummary[]; activeThreadId: string | null; preferences: Preferences; codeServer: CodeServerStatus;
+  projects: Project[]; sessions: SessionSummary[]; activeThreadId: string | null; preferences: Preferences; codeServer: CodeServerStatus; notificationState: BrowserNotificationControlState;
   search: string; onSearch(value: string): void; onMode(mode: Preferences["sidebarMode"]): void;
-  onSort(direction: Preferences["sortDirection"]): void; onReorder(projectId: string, targetProjectId: string): void;
+  onSort(direction: Preferences["sortDirection"]): void; onToggleNotifications(): void; onReorder(projectId: string, targetProjectId: string): void;
   onOpen(threadId: string): void; onNew(projectId?: string): void; onAddProject(): void;
   onRescan(projectId: string): void; onRenameProject(project: Project): void; onRemoveProject(project: Project): void;
 }
@@ -44,9 +45,13 @@ export function Sidebar(props: SidebarProps) {
     return () => window.clearInterval(timer);
   }, []);
   const projectNames = useMemo(() => Object.fromEntries(props.projects.map((p) => [p.id, p.name])), [props.projects]);
+  const notificationLabel = props.notificationState === "enabled" ? "关闭 Session 完成通知"
+    : props.notificationState === "blocked" ? "Chrome 已禁止此站点发送通知，请在网站设置中允许"
+      : props.notificationState === "unsupported" ? "当前浏览器不支持系统通知" : "开启 Session 完成通知";
   return <aside className="sidebar">
     <div className="sidebar-top">
       <button className="new-session-button" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建 Session</button>
+      <button className={`icon-button notification-button ${props.notificationState}`} aria-label={notificationLabel} title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} weight={props.notificationState === "enabled" ? "fill" : "regular"} />}</button>
       <button className="icon-button" aria-label="添加 Project" onClick={props.onAddProject}><FolderOpen size={18} /></button>
     </div>
     <label className="search-field"><MagnifyingGlass size={15} /><input value={props.search} onChange={(event) => props.onSearch(event.target.value)} placeholder="搜索 Session" aria-label="搜索 Session" />{props.search && <button onClick={() => props.onSearch("")} aria-label="清除搜索"><X size={13} /></button>}</label>

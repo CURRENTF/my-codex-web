@@ -34,6 +34,8 @@ export interface ProjectSessionRow {
   parent_thread_id: string | null;
   fork_turn_id: string | null;
   access_mode_override: AccessMode | null;
+  last_model: string | null;
+  last_reasoning: string | null;
   added_at: number;
   last_seen_at: number;
   hidden: number;
@@ -115,7 +117,7 @@ export class Repositories {
     })();
   }
 
-  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden" | "access_mode_override"> & { hidden?: number }): void {
+  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden" | "access_mode_override" | "last_model" | "last_reasoning"> & { hidden?: number }): void {
     this.db.prepare(`INSERT INTO project_sessions (
       thread_id, project_id, cwd_snapshot, source_kind, origin, parent_thread_id,
       fork_turn_id, added_at, last_seen_at, hidden
@@ -160,6 +162,15 @@ export class Repositories {
 
   setSessionAccessModeOverride(threadId: string, accessMode: AccessMode): ProjectSessionRow {
     const result = this.db.prepare("UPDATE project_sessions SET access_mode_override = ? WHERE thread_id = ?").run(accessMode, threadId);
+    if (!result.changes) throw new Error("Session mapping not found");
+    const mapping = this.getProjectSession(threadId);
+    if (!mapping) throw new Error("Session mapping not found");
+    return mapping;
+  }
+
+  setSessionTurnSettings(threadId: string, settings: { model: string | null; reasoning: string | null }): ProjectSessionRow {
+    const result = this.db.prepare("UPDATE project_sessions SET last_model = ?, last_reasoning = ? WHERE thread_id = ?")
+      .run(settings.model, settings.reasoning, threadId);
     if (!result.changes) throw new Error("Session mapping not found");
     const mapping = this.getProjectSession(threadId);
     if (!mapping) throw new Error("Session mapping not found");
@@ -294,6 +305,7 @@ export class Repositories {
         thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, cwd_snapshot TEXT,
         source_kind TEXT, origin TEXT NOT NULL, parent_thread_id TEXT, fork_turn_id TEXT,
         access_mode_override TEXT CHECK (access_mode_override IN ('fullAccess', 'workspaceWrite', 'readOnly')),
+        last_model TEXT, last_reasoning TEXT,
         added_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, hidden INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
@@ -318,6 +330,12 @@ export class Repositories {
     const projectSessionColumns = this.db.prepare("PRAGMA table_info(project_sessions)").all() as Array<{ name: string }>;
     if (!projectSessionColumns.some((column) => column.name === "access_mode_override")) {
       this.db.exec("ALTER TABLE project_sessions ADD COLUMN access_mode_override TEXT CHECK (access_mode_override IN ('fullAccess', 'workspaceWrite', 'readOnly'))");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "last_model")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN last_model TEXT");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "last_reasoning")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN last_reasoning TEXT");
     }
   }
 }

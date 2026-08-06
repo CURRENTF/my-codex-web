@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, Wrench, X, XCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, WarningCircle, Wrench, X, XCircle } from "@phosphor-icons/react";
 import { Virtuoso } from "react-virtuoso";
 import type { CodeServerStatus } from "@codex-web/shared-types";
 import type { CodexItem, CodexTurn } from "../api";
@@ -100,6 +100,15 @@ function ActivityGroup({ items, turnStatus, onOpenDiff, codeServer, cwd }: { ite
   </details>;
 }
 
+function TurnErrors({ errors }: { errors: NonNullable<CodexTurn["errors"]> }) {
+  return <div className="turn-errors" aria-live="polite">{errors.map((error, index) => <section className={`turn-error-card ${error.willRetry ? "retrying" : "terminal"}`} role={error.willRetry ? "status" : "alert"} key={`${error.message}-${error.code ?? "unknown"}-${index}`}>
+    <header><WarningCircle size={17} weight="fill" /><strong>Codex App Server 报错</strong><span>{error.willRetry ? "将自动重试" : "执行失败"}</span></header>
+    <p>{error.message}</p>
+    {(error.code || error.httpStatusCode !== null) && <div className="turn-error-meta">{error.code && <code>{error.code}</code>}{error.httpStatusCode !== null && <code>HTTP {error.httpStatusCode}</code>}</div>}
+    {error.additionalDetails && <details><summary>详细信息</summary><pre>{error.additionalDetails}</pre></details>}
+  </section>)}</div>;
+}
+
 const EMPTY_OPTIMISTIC_MESSAGES: OptimisticUserMessage[] = [];
 
 function OptimisticMessages({ messages }: { messages: OptimisticUserMessage[] }) {
@@ -120,6 +129,7 @@ function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDi
   return <section className="turn-block">{entries.map((entry, index) => entry.kind === "activity"
     ? <ActivityGroup key={`activity-${entry.items[0]?.id ?? index}`} items={entry.items} turnStatus={turn.status} onOpenDiff={onOpenDiff} codeServer={codeServer} cwd={cwd} />
     : <Item key={entry.item.id ?? `${turn.id}-${index}`} item={entry.item} turnStatus={turn.status} onOpenDiff={onOpenDiff} codeServer={codeServer} cwd={cwd} />)}
+    {!!turn.errors?.length && <TurnErrors errors={turn.errors} />}
     {turn.status !== "inProgress" && <footer className="turn-footer"><span className="turn-outcome">{turn.status === "completed" ? <Check size={13} /> : <XCircle size={13} />}{duration ? `已处理 ${duration}` : "处理完成"}{completedAt && <span className="turn-completed-at">· 完成于 {completedAt}</span>}</span>{finalMessage && <button onClick={() => copy(finalMessage.text)}><Clipboard size={13} />复制</button>}{canFork && <><button onClick={() => onFork(turn.id, "after", turn.id)}><GitFork size={13} />从此轮之后 Fork</button><button onClick={() => onFork(previousTurnId, "before", turn.id)}><GitFork size={13} />从此问题之前 Fork</button><button onClick={() => onSideChat(turn.id)}>从此处 Side Chat</button></>}</footer>}
   </section>;
 }

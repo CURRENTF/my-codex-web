@@ -135,6 +135,10 @@ export async function createServer() {
     { error: safeErrorForLog(error) },
     "Deferred Codex child recovery failed; retrying on its bounded background schedule",
   ));
+  sessions.on("settingsPersistenceError", (error) => app.log.warn(
+    { error: safeErrorForLog(error) },
+    "Failed to persist the latest Session model and reasoning settings",
+  ));
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;

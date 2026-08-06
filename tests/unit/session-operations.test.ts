@@ -164,6 +164,7 @@ describe("session operation rules", () => {
     const repositories = {
       getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
       getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+      setSessionTurnSettings: vi.fn(),
     };
     const runtimes = {
       get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
@@ -179,6 +180,8 @@ describe("session operation rules", () => {
 
     await expect(Promise.all([first, retry])).resolves.toHaveLength(2);
     expect(adapter.startTurn).toHaveBeenCalledTimes(1);
+    expect(repositories.setSessionTurnSettings).toHaveBeenCalledOnce();
+    expect(repositories.setSessionTurnSettings).toHaveBeenCalledWith("thread-1", { model: "gpt-test", reasoning: "high" });
     expect(runtimes.setActiveTurn).toHaveBeenCalledTimes(1);
   });
 
@@ -1103,6 +1106,61 @@ describe("session operation rules", () => {
 
     expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", { accessMode: "fullAccess" });
     expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "fullAccess" });
+  });
+
+  it("restores a cold Session from its latest successful Turn settings instead of Project defaults", async () => {
+    const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-max", "completed")] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "project-model", reasoning: "high", accessMode: "fullAccess" as const } })),
+      readSession: vi.fn(async () => snapshot),
+      getGoal: vi.fn(async () => null),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({
+        thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project",
+        last_model: "gpt-5.6-sol", last_reasoning: "max", access_mode_override: null,
+      })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess" as const })),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const result = await service.readSession("thread-1");
+
+    expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", {
+      model: "gpt-5.6-sol", reasoning: "max", accessMode: "fullAccess",
+    });
+    expect(result.settings).toEqual({ model: "gpt-5.6-sol", reasoning: "max", accessMode: "fullAccess" });
+  });
+
+  it("backfills App Server settings for a legacy Session that already has Turns", async () => {
+    const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-max", "completed")] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "gpt-5.6-sol", reasoning: "max", accessMode: "workspaceWrite" as const } })),
+      readSession: vi.fn(async () => snapshot),
+      getGoal: vi.fn(async () => null),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({
+        thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project",
+        last_model: null, last_reasoning: null, access_mode_override: null,
+      })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess" as const })),
+      setSessionTurnSettings: vi.fn(),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+
+    const result = await service.readSession("thread-1");
+
+    expect(result.settings).toEqual({ model: "gpt-5.6-sol", reasoning: "max", accessMode: "fullAccess" });
+    expect(repositories.setSessionTurnSettings).toHaveBeenCalledWith("thread-1", { model: "gpt-5.6-sol", reasoning: "max" });
   });
 
   it("applies a persisted Session access override before the Project default", async () => {

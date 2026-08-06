@@ -670,6 +670,7 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnMessageIds.delete(threadId);
       this.uncertainTurnDrafts.delete(threadId);
       this.uncertainTurnAttachmentIds.delete(threadId);
+      this.persistLastTurnSettings(threadId, settings);
       this.settings.set(threadId, settings);
       response = { ...response, turn: this.attachments?.decorateTurn(response.turn, threadId) ?? response.turn };
       this.upsertSnapshotTurn(threadId, response.turn);
@@ -1462,22 +1463,42 @@ export class SessionService extends EventEmitter {
     const mapping = this.requireMapping(threadId);
     const project = this.requireProject(mapping.project_id);
     const coldAccessMode = mapping.access_mode_override ?? project.defaultAccessMode;
+    const persistedTurnSettings = {
+      ...(mapping.last_model ? { model: mapping.last_model } : {}),
+      ...(mapping.last_reasoning ? { reasoning: mapping.last_reasoning } : {}),
+      accessMode: coldAccessMode,
+    };
     let resumed;
     try {
       resumed = current
         ? await this.adapter.resumeSession(threadId, current)
-        : await this.adapter.resumeSession(threadId, { accessMode: coldAccessMode });
+        : await this.adapter.resumeSession(threadId, persistedTurnSettings);
     } catch (error) {
       const snapshot = this.sessionSnapshots.get(threadId);
       if (!current || !snapshot || !isUnmaterializedSessionReadError(error)) throw error;
       return { thread: snapshot, settings: current };
     }
-    const settings = resolveSessionSettings(project, {}, current ?? { ...resumed.settings, accessMode: coldAccessMode });
+    const settings = resolveSessionSettings(project, {}, current ?? {
+      model: mapping.last_model ?? resumed.settings.model,
+      reasoning: mapping.last_reasoning ?? resumed.settings.reasoning,
+      accessMode: coldAccessMode,
+    });
+    if (resumed.thread?.turns.length > 0 && (mapping.last_model == null || mapping.last_reasoning == null)) {
+      this.persistLastTurnSettings(threadId, settings);
+    }
     const cachedSnapshot = this.sessionSnapshots.get(threadId);
     const thread = cachedSnapshot ? mergeSessionSnapshot(resumed.thread, cachedSnapshot) : resumed.thread;
     this.settings.set(threadId, settings);
     this.sessionSnapshots.set(threadId, thread);
     return { ...resumed, thread, settings };
+  }
+
+  private persistLastTurnSettings(threadId: string, settings: SessionSettings): void {
+    try {
+      this.repositories.setSessionTurnSettings?.(threadId, { model: settings.model, reasoning: settings.reasoning });
+    } catch (error) {
+      this.emit("settingsPersistenceError", error);
+    }
   }
 
   private requireProject(projectId: string) {

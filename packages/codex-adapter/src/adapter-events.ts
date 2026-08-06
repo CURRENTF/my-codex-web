@@ -1,12 +1,14 @@
-import type { ContextUsage, Goal, ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn } from "@codex-web/shared-types";
+import type { ContextUsage, Goal, ItemDeltaUiEventPayload, SessionItem, SessionThread, SessionTurn, SessionTurnError } from "@codex-web/shared-types";
 import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
-import { projectFileChangePatch, projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnPlan } from "./ui-projection.js";
+import { projectFileChangePatch, projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnError, projectTurnPlan } from "./ui-projection.js";
+import type { TurnError } from "@codex-web/codex-schema/v2/TurnError";
 import type { SessionSettings } from "./codex-adapter.js";
 
 export type AdapterEvent =
   | { type: "threadStarted"; threadId: string; thread: SessionThread; threadSource?: string; parentThreadId?: string }
   | { type: "threadStatusChanged"; threadId: string; status: "active" | "idle" | "notLoaded" | "systemError"; activeFlags: string[] }
   | { type: "turnStarted" | "turnCompleted"; threadId: string; turn: SessionTurn }
+  | { type: "turnError"; threadId: string; turnId: string; error: SessionTurnError }
   | { type: "itemUpserted"; threadId: string; turnId: string; item: SessionItem; completed: boolean; startedAtMs?: number; completedAtMs?: number }
   | { type: "itemDelta"; threadId: string; turnId?: string; delta: ItemDeltaUiEventPayload }
   | { type: "goalUpdated"; threadId: string; goal: Goal }
@@ -46,6 +48,14 @@ export function projectAdapterEvent(notification: Notification): AdapterEvent | 
   if (notification.method === "turn/started" || notification.method === "turn/completed") {
     if (!params.turn || typeof params.turn !== "object") return null;
     return { type: notification.method === "turn/started" ? "turnStarted" : "turnCompleted", threadId, turn: projectTurn(params.turn as Parameters<typeof projectTurn>[0]) };
+  }
+  if (notification.method === "error" && typeof params.turnId === "string" && params.error && typeof params.error === "object") {
+    return {
+      type: "turnError",
+      threadId,
+      turnId: params.turnId,
+      error: projectTurnError(params.error as TurnError, params.willRetry === true),
+    };
   }
   if (notification.method === "turn/plan/updated" && typeof params.turnId === "string" && Array.isArray(params.plan)) {
     return { type: "itemUpserted", threadId, turnId: params.turnId, item: projectTurnPlan(params as Parameters<typeof projectTurnPlan>[0]), completed: false };

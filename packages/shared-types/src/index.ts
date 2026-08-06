@@ -146,9 +146,18 @@ export type SessionItem =
   | { type: "imageGeneration"; id: string; status: string; result: string; revisedPrompt: string | null; savedPath: string | null; displayUrl?: string }
   | { type: "genericToolCall"; id: string; title: string; status: string; details?: string };
 
+export interface SessionTurnError {
+  message: string;
+  code: string | null;
+  httpStatusCode: number | null;
+  additionalDetails: string | null;
+  willRetry: boolean;
+}
+
 export interface SessionTurn {
   id: string;
   status: "completed" | "interrupted" | "failed" | "inProgress";
+  errors?: SessionTurnError[];
   items: SessionItem[];
   startedAt: number | null;
   completedAt: number | null;
@@ -168,6 +177,7 @@ export interface SessionThread {
 }
 
 export interface TurnUiEventPayload { turn: SessionTurn }
+export interface TurnErrorUiEventPayload { turnId: string; error: SessionTurnError }
 export interface ItemUiEventPayload { turnId: string; item: SessionItem; startedAtMs?: number; completedAtMs?: number; completed?: boolean }
 export interface ItemDeltaUiEventPayload { itemId: string; delta: string; kind: "agentMessage" | "plan" | "reasoningSummary" | "commandOutput" }
 

@@ -15,6 +15,50 @@ const session: SessionPayload = {
 };
 
 describe("applySessionEvent", () => {
+  it("adds live App Server errors to the matching Turn without waiting for a refresh", () => {
+    const started = applySessionEvent(session, event("turn.started", { turn: { id: "turn-1", status: "inProgress", errors: [], items: [], startedAt: 10, completedAt: null, durationMs: null } }))!;
+    const failed = applySessionEvent(started, event("turn.error", {
+      turnId: "turn-1",
+      error: {
+        message: "Connection reset while streaming",
+        code: "responseStreamConnectionFailed",
+        httpStatusCode: 503,
+        additionalDetails: null,
+        willRetry: true,
+      },
+    }))!;
+
+    expect((failed.thread.turns[0] as unknown as { errors: unknown[] }).errors).toEqual([{
+      message: "Connection reset while streaming",
+      code: "responseStreamConnectionFailed",
+      httpStatusCode: 503,
+      additionalDetails: null,
+      willRetry: true,
+    }]);
+  });
+
+  it("keeps retry errors when the terminal Turn snapshot adds the final failure", () => {
+    const started = applySessionEvent(session, event("turn.started", { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: 10, completedAt: null, durationMs: null } }))!;
+    const retrying = applySessionEvent(started, event("turn.error", {
+      turnId: "turn-1",
+      error: { message: "Stream disconnected", code: "responseStreamDisconnected", httpStatusCode: 502, additionalDetails: null, willRetry: true },
+    }))!;
+    const failed = applySessionEvent(retrying, event("turn.completed", { turn: {
+      id: "turn-1",
+      status: "failed",
+      errors: [{ message: "Retry attempts exhausted", code: "responseTooManyFailedAttempts", httpStatusCode: 502, additionalDetails: null, willRetry: false }],
+      items: [],
+      startedAt: 10,
+      completedAt: 12,
+      durationMs: 2_000,
+    } }))!;
+
+    expect(failed.thread.turns[0]?.errors).toEqual([
+      { message: "Stream disconnected", code: "responseStreamDisconnected", httpStatusCode: 502, additionalDetails: null, willRetry: true },
+      { message: "Retry attempts exhausted", code: "responseTooManyFailedAttempts", httpStatusCode: 502, additionalDetails: null, willRetry: false },
+    ]);
+  });
+
   it("builds a live turn from item events and preserves its items when completion omits them", () => {
     const started = applySessionEvent(session, event("turn.started", { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: 10, completedAt: null, durationMs: null } }))!;
     const withUser = applySessionEvent(started, event("item.upserted", { turnId: "turn-1", item: { type: "userMessage", id: "user-1", content: [{ type: "text", text: "hello" }] } }))!;

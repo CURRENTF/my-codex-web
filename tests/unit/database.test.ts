@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { Repositories } from "../../apps/server/src/database";
 
@@ -8,6 +9,23 @@ const databases: Repositories[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
 describe("SQLite repositories", () => {
+  it("adds latest-Turn setting columns to an existing project_sessions table", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
+    const databasePath = path.join(root, "app.db");
+    const legacy = new Database(databasePath);
+    legacy.exec(`CREATE TABLE project_sessions (
+      thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, cwd_snapshot TEXT,
+      source_kind TEXT, origin TEXT NOT NULL, parent_thread_id TEXT, fork_turn_id TEXT,
+      access_mode_override TEXT, added_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,
+      hidden INTEGER NOT NULL DEFAULT 0
+    )`);
+    legacy.close();
+
+    const repositories = new Repositories(databasePath); databases.push(repositories);
+    const columns = repositories.db.prepare("PRAGMA table_info(project_sessions)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["last_model", "last_reasoning"]));
+  });
+
   it("round-trips preferences and deletes only project mappings", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
     const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
@@ -46,6 +64,20 @@ describe("SQLite repositories", () => {
     expect(repositories.getProjectSession("t1")?.access_mode_override).toBeNull();
     expect(repositories.setSessionAccessModeOverride("t1", "readOnly").access_mode_override).toBe("readOnly");
     expect(repositories.getProject("p1")?.defaultAccessMode).toBe("fullAccess");
+  });
+
+  it("persists the model and reasoning used by the latest successful Turn", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({ thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1 });
+
+    expect(repositories.getProjectSession("t1")).toMatchObject({ last_model: null, last_reasoning: null });
+    expect(repositories.setSessionTurnSettings("t1", { model: "gpt-5.6-sol", reasoning: "max" })).toMatchObject({
+      last_model: "gpt-5.6-sol",
+      last_reasoning: "max",
+    });
+    expect(repositories.getProject("p1")).toMatchObject({ defaultModel: "project-model", defaultReasoning: "high" });
   });
 
   it("persists message Skill and attachment display metadata and removes it with the Session mapping", () => {

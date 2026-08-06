@@ -66,6 +66,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .new-session-button:hover { opacity: .9; }
 .icon-button { display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: var(--radius-control); background: transparent; color: var(--text-soft); cursor: pointer; }
 .icon-button:hover { background: var(--surface-hover); color: var(--text); }
+.notification-button { position: relative; transition: background .15s ease, color .15s ease; }
+.notification-button.enabled { background: var(--accent-soft); color: var(--accent); }
+.notification-button.enabled::after { position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border: 1px solid var(--sidebar); border-radius: 50%; background: var(--success); content: ""; }
+.notification-button.blocked { color: var(--danger); }
 .search-field { display: flex; height: 34px; align-items: center; gap: 8px; margin: 2px 13px 9px; padding: 0 10px; border: 1px solid transparent; border-radius: var(--radius-control); background: color-mix(in srgb, var(--surface-strong) 72%, transparent); color: var(--text-faint); }
 .search-field:focus-within { border-color: var(--line-strong); background: var(--surface-strong); }
 .search-field input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 13px; }
@@ -207,6 +211,19 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .pending-user-status { display: inline-flex; align-items: center; justify-self: end; gap: 4px; color: var(--text-faint); font-size: 10px; line-height: 1; }
 .pending-user-message[data-state="uncertain"] .pending-user-status { color: var(--warning); }
 .agent-message { display: grid; gap: 9px; margin: 12px 0 14px; color: var(--text); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.turn-errors { display: grid; gap: 8px; margin: 12px 0 14px; }
+.turn-error-card { display: grid; min-width: 0; gap: 8px; border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); padding: 10px 12px; color: var(--text); }
+.turn-error-card.retrying { border-color: color-mix(in srgb, var(--warning) 38%, var(--line)); background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
+.turn-error-card header { display: flex; min-width: 0; align-items: center; gap: 7px; color: var(--danger); }
+.turn-error-card.retrying header { color: var(--warning); }
+.turn-error-card header strong { min-width: 0; flex: 1; font-size: 12px; }
+.turn-error-card header span { flex: 0 0 auto; border-radius: 999px; background: color-mix(in srgb, currentColor 9%, transparent); padding: 3px 7px; font-size: 9px; font-weight: 700; }
+.turn-error-card p { margin: 0; color: var(--text); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.turn-error-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+.turn-error-meta code { max-width: 100%; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 78%, transparent); border-radius: 5px; background: var(--surface-strong); padding: 2px 5px; color: var(--text-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.turn-error-card details { min-width: 0; color: var(--text-soft); font-size: 10px; }
+.turn-error-card summary { width: fit-content; cursor: pointer; }
+.turn-error-card pre { max-width: 100%; margin: 7px 0 0; overflow: auto; border-radius: 7px; background: var(--surface-strong); padding: 8px 9px; color: var(--text-soft); font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-message-text { min-width: 0; }
 .agent-message-text > :first-child { margin-top: 0; }
 .agent-message-text > :last-child { margin-bottom: 0; }

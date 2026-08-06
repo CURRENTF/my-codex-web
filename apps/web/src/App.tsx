@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
-import type { Preferences, Project, SessionSummary, UiEvent } from "@codex-web/shared-types";
+import type { Preferences, Project, SessionSummary, TurnUiEventPayload, UiEvent } from "@codex-web/shared-types";
 import { api, authenticateWebUi, bootstrap, endpoints, isPasswordRequiredError, newClientRequestId, type SessionPayload } from "./api";
 import { applySessionEvent } from "./live-session";
 import { COMPOSER_FOCUS_RETRY_DELAYS, shouldRestoreComposerFocus } from "./composer-focus";
@@ -12,6 +12,7 @@ import { bootstrapGate } from "./bootstrap-gate";
 import { shouldRunFocusRescan } from "./focus-rescan";
 import { refreshProjectAvailability, refreshProjectAvailabilityAfterError } from "./project-refresh";
 import { recentSessionToAutoOpen, sessionCreationProjectId } from "./session-selection";
+import { browserNotificationControlState, currentBrowserNotificationPermission, persistTurnCompletionNotificationsEnabled, readTurnCompletionNotificationsEnabled, requestBrowserNotificationPermission, shouldNotifyTurnCompletion, showTurnCompletionNotification, type BrowserNotificationPermission } from "./browser-notifications";
 import { queryClient } from "./main";
 import { useAppStore } from "./store";
 import { ProjectDirectoryDialog } from "./components/ProjectDirectoryDialog";
@@ -77,6 +78,8 @@ export function App() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [sideCloseError, setSideCloseError] = useState<string | null>(null);
   const [sessionCreateError, setSessionCreateError] = useState<string | null>(null);
+  const [turnNotificationsEnabled, setTurnNotificationsEnabled] = useState(readTurnCompletionNotificationsEnabled);
+  const [notificationPermission, setNotificationPermission] = useState<BrowserNotificationPermission>(currentBrowserNotificationPermission);
   const initialized = useRef(false); const lastFocusScan = useRef(0); const modalFocusSuppressed = useRef(false); const autoOpenSuppressedRef = useRef(false); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
   const sessionCreationInFlight = useRef(false);
   const restoreMainComposerFocus = useRef(false); const focusOrigin = useRef<Element | null>(null); const focusTimers = useRef<number[]>([]);
@@ -123,6 +126,8 @@ export function App() {
   const selected = allSessions.find((session) => session.threadId === selectedThreadId); const selectedProject = projects.find((project) => project.id === selected?.projectId) ?? null;
   const sideChat = useMemo(() => Object.values(sideChats).find((item) => item.parentThreadId === selectedThreadId), [sideChats, selectedThreadId]);
   const sideThreadId = sideChat?.threadId ?? null;
+  const notificationContext = useRef({ activeThreadId: selectedThreadId, sessions: allSessions, enabled: turnNotificationsEnabled, permission: notificationPermission });
+  notificationContext.current = { activeThreadId: selectedThreadId, sessions: allSessions, enabled: turnNotificationsEnabled, permission: notificationPermission };
   useEffect(() => setSideCloseError(null), [sideThreadId]);
   const mainRuntime = useAppStore((state) => selectedThreadId ? state.runtimes[selectedThreadId] : undefined);
   const sideRuntime = useAppStore((state) => sideThreadId ? state.runtimes[sideThreadId] : undefined);
@@ -157,7 +162,24 @@ export function App() {
           : undefined;
         if (typeof prefill === "string" && prefill) useAppStore.getState().restorePrefill(event.threadId, prefill);
       }
-      if (["turn.started", "turn.completed", "item.upserted", "item.delta", "goal.updated", "goal.cleared", "session.settings.updated"].includes(event.type) && event.threadId) {
+      if (event.type === "turn.completed" && event.threadId) {
+        const turn = (event.payload as Partial<TurnUiEventPayload>).turn;
+        const context = notificationContext.current;
+        if (turn) {
+          const input = {
+            threadId: event.threadId,
+            turnId: turn.id,
+            status: turn.status,
+            sessionTitle: context.sessions.find((session) => session.threadId === event.threadId)?.title ?? "Codex Session",
+            activeThreadId: context.activeThreadId,
+            documentVisible: document.visibilityState === "visible",
+          };
+          if (shouldNotifyTurnCompletion(input, context.enabled, context.permission)) {
+            showTurnCompletionNotification(input, (threadId) => navigate(`/sessions/${threadId}`));
+          }
+        }
+      }
+      if (["turn.started", "turn.completed", "turn.error", "item.upserted", "item.delta", "goal.updated", "goal.cleared", "session.settings.updated"].includes(event.type) && event.threadId) {
         client.setQueryData<SessionPayload>(["session", event.threadId], (current) => applySessionEvent(current, event, liveDeltas));
       }
       if (["session.summary.updated", "sessions.rescanned", "turn.completed", "turn.started", "goal.updated", "goal.cleared"].includes(event.type)) void client.invalidateQueries({ queryKey: ["sessions"] });
@@ -237,7 +259,19 @@ export function App() {
     };
     connect();
     return () => { disposed = true; if (retryTimer !== undefined) window.clearTimeout(retryTimer); closeCurrentSocket(); };
-  }, [bootstrapReady, client, consume, initialize, markDisconnected]);
+  }, [bootstrapReady, client, consume, initialize, markDisconnected, navigate]);
+  useEffect(() => {
+    const refreshNotificationState = () => {
+      setNotificationPermission(currentBrowserNotificationPermission());
+      setTurnNotificationsEnabled(readTurnCompletionNotificationsEnabled());
+    };
+    window.addEventListener("focus", refreshNotificationState);
+    window.addEventListener("storage", refreshNotificationState);
+    return () => {
+      window.removeEventListener("focus", refreshNotificationState);
+      window.removeEventListener("storage", refreshNotificationState);
+    };
+  }, []);
   useEffect(() => {
     const onFocus = () => {
       const now = Date.now();
@@ -259,6 +293,20 @@ export function App() {
   useEffect(() => () => { for (const timer of focusTimers.current) window.clearTimeout(timer); }, []);
 
   const updatePreferences = useMutation({ mutationFn: (changes: Partial<Preferences>) => endpoints.preferences(changes), onSuccess: (updated) => client.setQueryData(["bootstrap"], bootstrapData ? { ...bootstrapData, preferences: updated } : bootstrapData) });
+  const notificationState = browserNotificationControlState(turnNotificationsEnabled, notificationPermission);
+  const toggleTurnNotifications = async () => {
+    if (notificationState === "unsupported" || notificationState === "blocked") return;
+    if (notificationState === "enabled") {
+      persistTurnCompletionNotificationsEnabled(false);
+      setTurnNotificationsEnabled(false);
+      return;
+    }
+    const permission = await requestBrowserNotificationPermission();
+    setNotificationPermission(permission);
+    if (permission !== "granted") return;
+    persistTurnCompletionNotificationsEnabled(true);
+    setTurnNotificationsEnabled(true);
+  };
   const fullAccessNoticeSeen = selectedProject
     ? preferences?.fullAccessNoticeSeenProjects.includes(selectedProject.id) ?? false
     : true;
@@ -371,7 +419,7 @@ export function App() {
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
   if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
-  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} codeServer={codeServer} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={(project) => void removeProject(project)} />
+  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} codeServer={codeServer} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={(project) => void removeProject(project)} />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
         {sessionCreateError && <div className="workspace-error"><WarningCircle size={15} weight="fill" /><span>{sessionCreateError}</span><button onClick={() => setSessionCreateError(null)} aria-label="关闭新建 Session 错误"><X size={14} /></button></div>}

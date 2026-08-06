@@ -107,6 +107,60 @@ describe("Codex UI projection", () => {
     expect(projectItemDelta("item/agentMessage/delta", { threadId: "secret-protocol-field", turnId: "turn-1", itemId: "agent-1", delta: "x" })).toEqual({ itemId: "agent-1", delta: "x", kind: "agentMessage" });
   });
 
+  it("preserves App Server error details on failed Turns", () => {
+    const turn = projectTurn({
+      id: "turn-failed",
+      status: "failed",
+      itemsView: "full",
+      error: {
+        message: "The response stream disconnected before completion",
+        codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 502 } },
+        additionalDetails: "upstream request id: req-test",
+      },
+      startedAt: 10,
+      completedAt: 12,
+      durationMs: 2_000,
+      items: [],
+    });
+
+    expect(turn).toMatchObject({
+      errors: [{
+        message: "The response stream disconnected before completion",
+        code: "responseStreamDisconnected",
+        httpStatusCode: 502,
+        additionalDetails: "upstream request id: req-test",
+        willRetry: false,
+      }],
+    });
+  });
+
+  it("projects retryable App Server error notifications", () => {
+    expect(projectAdapterEvent({
+      method: "error",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        willRetry: true,
+        error: {
+          message: "Connection reset while streaming",
+          codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 503 } },
+          additionalDetails: null,
+        },
+      },
+    })).toEqual({
+      type: "turnError",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      error: {
+        message: "Connection reset while streaming",
+        code: "responseStreamConnectionFailed",
+        httpStatusCode: 503,
+        additionalDetails: null,
+        willRetry: true,
+      },
+    });
+  });
+
   it("projects stable turn plan updates into a timeline item", () => {
     expect(projectTurnPlan({
       threadId: "thread-1",
