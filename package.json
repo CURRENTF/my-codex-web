@@ -23,7 +23,7 @@
     "protocol:harness": "tsx scripts/protocol-harness.ts",
     "test:package": "node scripts/test-package.mjs"
   },
-  "files": [".release/server.mjs", "apps/web/dist", "bin", "README.md"],
+  "files": [".release/server.mjs", "apps/web/dist", "bin", "README.md", "THIRD_PARTY_NOTICES.md"],
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
     "@fastify/multipart": "^9.2.1",
