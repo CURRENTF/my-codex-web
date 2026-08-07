@@ -1,11 +1,12 @@
 import { create } from "zustand";
-import type { AccessMode, PendingRequestSummary, SideChatRuntime, ThreadRuntime, UiEvent, UploadedAttachment } from "@codex-web/shared-types";
+import type { AccessMode, PendingRequestSummary, SideChatRuntime, SubagentRuntime, ThreadRuntime, UiEvent, UploadedAttachment } from "@codex-web/shared-types";
 
 interface AppStore {
   connectionState: "connected" | "connecting" | "disconnected";
   lastEventSeq: number;
   runtimes: Record<string, ThreadRuntime>;
   sideChats: Record<string, SideChatRuntime>;
+  subagents: Record<string, SubagentRuntime>;
   deltas: Record<string, string>;
   pendingRequests: Record<string, PendingRequestSummary>;
   drafts: Record<string, string>;
@@ -26,7 +27,7 @@ interface AppStore {
   clearQueuedSlashCommand(threadId: string, clientRequestId?: string): void;
   queueUserMessage(threadId: string, message: QueuedUserMessage): void;
   clearQueuedUserMessage(threadId: string, clientRequestId?: string, preserveOptimistic?: boolean): void;
-  initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number, sessionPrefills?: Record<string, string>): void;
+  initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number, sessionPrefills?: Record<string, string>, subagents?: SubagentRuntime[]): void;
   markDisconnected(): void;
   consume(event: UiEvent): void;
 }
@@ -132,7 +133,7 @@ function withoutOptimisticMessages(
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSlashCommands: readQueuedSlashCommands(), queuedUserMessages: initialQueuedUserMessages,
+  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, subagents: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSlashCommands: readQueuedSlashCommands(), queuedUserMessages: initialQueuedUserMessages,
   setDraft: (threadId, text) => set((state) => {
     const injectedPrefills = { ...state.injectedPrefills };
     delete injectedPrefills[threadId];
@@ -274,7 +275,7 @@ export const useAppStore = create<AppStore>((set) => ({
         : withoutOptimisticMessages(state.optimisticUserMessages, threadId, [current.clientUserMessageId]),
     };
   }),
-  initialize: (runtimes, sideChats, deltas = {}, pendingRequests = [], connectionState = "connected", eventSeq = 0, sessionPrefills = {}) => set((state) => {
+  initialize: (runtimes, sideChats, deltas = {}, pendingRequests = [], connectionState = "connected", eventSeq = 0, sessionPrefills = {}, subagents = []) => set((state) => {
     const drafts = { ...state.drafts };
     const injectedPrefills = { ...state.injectedPrefills };
     for (const [threadId, injected] of Object.entries(injectedPrefills)) {
@@ -295,6 +296,7 @@ export const useAppStore = create<AppStore>((set) => ({
       lastEventSeq: eventSeq,
       runtimes: Object.fromEntries(runtimes.map((runtime) => [runtime.threadId, runtime])),
       sideChats: Object.fromEntries(sideChats.map((runtime) => [runtime.threadId, runtime])),
+      subagents: Object.fromEntries(subagents.map((runtime) => [runtime.threadId, runtime])),
       deltas,
       pendingRequests: Object.fromEntries(pendingRequests.map((request) => [request.id, request])),
       drafts,
@@ -308,6 +310,10 @@ export const useAppStore = create<AppStore>((set) => ({
       state: "disconnected" as const,
       activeTurnId: undefined,
     }])),
+    subagents: Object.fromEntries(Object.entries(state.subagents).map(([threadId, runtime]) => {
+      const active = runtime.state === "running" || runtime.state === "waitingForInput" || runtime.agentStatus === "pendingInit" || runtime.agentStatus === "running";
+      return [threadId, active ? { ...runtime, state: "disconnected" as const, activeTurnId: undefined } : runtime];
+    })),
   })),
   consume: (event) => set((state) => {
     if (event.seq <= state.lastEventSeq) return state;
@@ -319,6 +325,10 @@ export const useAppStore = create<AppStore>((set) => ({
     if (event.type === "runtime.changed") {
       const runtime = event.payload as ThreadRuntime;
       return { ...sequenced, runtimes: { ...state.runtimes, [runtime.threadId]: runtime } };
+    }
+    if (event.type === "subagent.changed") {
+      const subagent = event.payload as SubagentRuntime;
+      return { ...sequenced, subagents: { ...state.subagents, [subagent.threadId]: subagent } };
     }
     if (event.type === "turn.started" && event.threadId) {
       const injected = state.injectedPrefills[event.threadId];

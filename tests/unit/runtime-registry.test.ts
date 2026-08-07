@@ -486,6 +486,98 @@ describe("runtime projection", () => {
     expect(registry.listPendingRequests()).toEqual([]);
   });
 
+  it("tracks Subagent spawn metadata, actual settings, and runtime state", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const runtimeEvents: Array<{ type: string; threadId?: string; payload: unknown }> = [];
+    events.on("event", (event) => runtimeEvents.push(event));
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+
+    notify(registry, { method: "item/started", params: { threadId: "parent", turnId: "turn-1", item: {
+      type: "collabAgentToolCall", id: "spawn-1", tool: "spawnAgent", status: "inProgress", senderThreadId: "parent",
+      receiverThreadIds: ["child"], prompt: "Review it", model: "gpt-5.6-sol", reasoningEffort: "high",
+      agentsStates: { child: { status: "running", message: "Working" } },
+    } } });
+    notify(registry, { method: "thread/started", params: { thread: {
+      id: "child", sessionId: "session-1", forkedFromId: "parent", parentThreadId: "parent", preview: "", ephemeral: false,
+      modelProvider: "openai", createdAt: 2, updatedAt: 2, recencyAt: 2, status: { type: "active", activeFlags: [] }, path: null,
+      cwd: "/tmp/project", cliVersion: "test", source: { subAgent: { thread_spawn: {
+        parent_thread_id: "parent", depth: 0, agent_path: "review", agent_nickname: "reviewer", agent_role: "reviewer",
+      } } }, threadSource: null, agentNickname: "reviewer", agentRole: "reviewer", gitInfo: null, name: null, turns: [],
+    } } });
+    notify(registry, { method: "thread/settings/updated", params: { threadId: "child", threadSettings: {
+      model: "gpt-5.6-sol", effort: "xhigh", approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
+    } } });
+    notify(registry, { method: "thread/status/changed", params: { threadId: "child", status: { type: "active", activeFlags: [] } } });
+
+    expect(registry.listSubagents()).toEqual([expect.objectContaining({
+      threadId: "child",
+      parentThreadId: "parent",
+      contextMode: "forked",
+      sourceKind: "threadSpawn",
+      agentNickname: "reviewer",
+      requestedModel: "gpt-5.6-sol",
+      requestedReasoning: "high",
+      model: "gpt-5.6-sol",
+      reasoning: "xhigh",
+      state: "running",
+      agentStatus: "running",
+      statusMessage: "Working",
+    })]);
+    expect(runtimeEvents.some((event) => event.type === "subagent.changed" && event.threadId === "parent")).toBe(true);
+  });
+
+  it("marks spawn-only Subagents disconnected and recursively removes nested mappings", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    const spawn = (senderThreadId: string, childThreadId: string) => notify(registry, { method: "item/started", params: {
+      threadId: senderThreadId, turnId: `${senderThreadId}-turn`, item: {
+        type: "collabAgentToolCall", id: `spawn-${childThreadId}`, tool: "spawnAgent", status: "inProgress", senderThreadId,
+        receiverThreadIds: [childThreadId], prompt: null, model: null, reasoningEffort: null,
+        agentsStates: { [childThreadId]: { status: "running", message: null } },
+      },
+    } });
+
+    spawn("parent", "child");
+    spawn("child", "grandchild");
+    registry.handleConnection("disconnected");
+    expect(registry.listSubagents()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ threadId: "child", state: "disconnected" }),
+      expect.objectContaining({ threadId: "grandchild", state: "disconnected" }),
+    ]));
+
+    registry.removeThread("parent");
+    expect(registry.listSubagents()).toEqual([]);
+  });
+
+  it("applies later collab status updates without reparenting nested Subagents", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    const spawn = (senderThreadId: string, childThreadId: string) => notify(registry, { method: "item/started", params: {
+      threadId: senderThreadId, turnId: `${senderThreadId}-turn`, item: {
+        type: "collabAgentToolCall", id: `spawn-${childThreadId}`, tool: "spawnAgent", status: "inProgress", senderThreadId,
+        receiverThreadIds: [childThreadId], prompt: null, model: null, reasoningEffort: null,
+        agentsStates: { [childThreadId]: { status: "running", message: null } },
+      },
+    } });
+    spawn("parent", "child");
+    spawn("child", "grandchild");
+
+    notify(registry, { method: "item/completed", params: { threadId: "parent", turnId: "parent-turn", item: {
+      type: "collabAgentToolCall", id: "wait-grandchild", tool: "wait", status: "completed", senderThreadId: "parent",
+      receiverThreadIds: ["grandchild"], prompt: null, model: null, reasoningEffort: null,
+      agentsStates: { grandchild: { status: "completed", message: "Done" } },
+    } } });
+
+    expect(registry.listSubagents().find((item) => item.threadId === "grandchild")).toMatchObject({
+      parentThreadId: "child",
+      agentStatus: "completed",
+      statusMessage: "Done",
+    });
+  });
+
   it("clears a request when App Server resolves it and preserves terminal state", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });

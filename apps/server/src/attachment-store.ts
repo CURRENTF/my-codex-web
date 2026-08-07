@@ -328,7 +328,20 @@ export class AttachmentStore {
         const url = this.localPathUrl(filename);
         return url ? [[filename, url]] : [];
       }));
-      return Object.keys(localImageUrls).length || Object.keys(localPathUrls).length ? { ...item, localImageUrls, localPathUrls } : item;
+      const localPathKinds = Object.fromEntries(targets.linkPaths.flatMap((filename): Array<[string, "file" | "directory"]> => {
+        if (!path.isAbsolute(filename)) return [];
+        try {
+          const info = statSync(filename);
+          if (info.isDirectory()) return [[filename, "directory"]];
+          if (info.isFile()) return [[filename, "file"]];
+        } catch {
+          // The link may point to a path that no longer exists; retain file-link fallback behavior.
+        }
+        return [];
+      })) as Record<string, "file" | "directory">;
+      return Object.keys(localImageUrls).length || Object.keys(localPathUrls).length || Object.keys(localPathKinds).length
+        ? { ...item, localImageUrls, localPathUrls, localPathKinds }
+        : item;
     }
     return item;
   }

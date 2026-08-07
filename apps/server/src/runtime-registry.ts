@@ -1,4 +1,4 @@
-import type { PendingRequestSummary, RuntimeState, SessionTurn, SideChatRuntime, ThreadRuntime } from "@codex-web/shared-types";
+import type { PendingRequestSummary, RuntimeState, SessionTurn, SideChatRuntime, SubagentDescriptor, SubagentRuntime, ThreadRuntime } from "@codex-web/shared-types";
 import type { AdapterEvent, AdapterPendingRequest } from "@codex-web/codex-adapter";
 import { EventGateway } from "./event-gateway.js";
 import { Repositories } from "./database.js";
@@ -13,6 +13,7 @@ export class ThreadRuntimeRegistry {
   private readonly pendingRequests = new Map<string, AdapterPendingRequest>();
   private readonly pendingRequestOwners = new Map<string, string>();
   private readonly subagentParents = new Map<string, string>();
+  private readonly subagents = new Map<string, SubagentRuntime>();
   private readonly liveDeltas = new Map<string, string>();
   private readonly liveDeltaThreads = new Map<string, string>();
   private readonly finishTimers = new Map<string, NodeJS.Timeout>();
@@ -30,6 +31,7 @@ export class ThreadRuntimeRegistry {
 
   list(): ThreadRuntime[] { return [...this.runtimes.values()].map((item) => ({ ...item })); }
   listSideChats(): SideChatRuntime[] { return [...this.sideChats.values()].map((item) => ({ ...item })); }
+  listSubagents(): SubagentRuntime[] { return [...this.subagents.values()].map((item) => ({ ...item })); }
   get(threadId: string): ThreadRuntime {
     return this.runtimes.get(threadId) ?? { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] };
   }
@@ -137,6 +139,12 @@ export class ThreadRuntimeRegistry {
         if (runtime.state === "running" || runtime.state === "waitingForInput") {
           this.connectionInterruptedTurns.set(threadId, runtime.activeTurnId ?? null);
           this.setRuntime(threadId, { state: "disconnected", activeTurnId: undefined, pendingRequestIds: [] });
+        }
+      }
+      for (const [threadId, subagent] of this.subagents) {
+        const spawnOnlyActive = !this.runtimes.has(threadId) && (subagent.agentStatus === "pendingInit" || subagent.agentStatus === "running");
+        if (subagent.state === "running" || subagent.state === "waitingForInput" || spawnOnlyActive) {
+          this.updateSubagent(threadId, { state: "disconnected", activeTurnId: undefined, pendingRequestIds: [] });
         }
       }
     }
@@ -269,7 +277,21 @@ export class ThreadRuntimeRegistry {
       return;
     }
     if (event.type === "threadStarted") {
-      if (event.parentThreadId) this.subagentParents.set(event.threadId, event.parentThreadId);
+      if (event.parentThreadId) {
+        this.subagentParents.set(event.threadId, event.parentThreadId);
+        this.updateSubagent(event.threadId, event.subagent ?? {
+          threadId: event.threadId,
+          parentThreadId: event.parentThreadId,
+          forkedFromId: event.thread.forkedFromId,
+          contextMode: event.thread.forkedFromId ? "forked" : "isolated",
+          sourceKind: "unknown",
+          depth: null,
+          agentPath: null,
+          agentNickname: null,
+          agentRole: null,
+          createdAt: event.thread.createdAt * 1_000,
+        });
+      }
       return;
     }
     const threadId = event.threadId;
@@ -363,6 +385,26 @@ export class ThreadRuntimeRegistry {
         this.events.publish("turn.error", { turnId: event.turnId, error: event.error }, this.ids(threadId));
         break;
       case "itemUpserted": {
+        if (event.subagentUpdate) {
+          for (const receiverThreadId of event.subagentUpdate.receiverThreadIds) {
+            const agentState = event.subagentUpdate.agentsStates[receiverThreadId];
+            if (event.subagentUpdate.spawn) {
+              this.subagentParents.set(receiverThreadId, event.subagentUpdate.parentThreadId);
+              const existingParent = this.subagents.get(event.subagentUpdate.parentThreadId);
+              const existingChild = this.subagents.get(receiverThreadId);
+              this.updateSubagent(receiverThreadId, {
+                parentThreadId: event.subagentUpdate.parentThreadId,
+                requestedModel: event.subagentUpdate.model,
+                requestedReasoning: event.subagentUpdate.reasoning,
+                prompt: event.subagentUpdate.prompt,
+                depth: existingChild?.depth ?? (existingParent ? existingParent.depth === null ? null : existingParent.depth + 1 : 0),
+                ...(agentState ? { agentStatus: agentState.status, statusMessage: agentState.message } : {}),
+              });
+            } else if (agentState && this.subagents.has(receiverThreadId)) {
+              this.updateSubagent(receiverThreadId, { agentStatus: agentState.status, statusMessage: agentState.message });
+            }
+          }
+        }
         this.events.publish("item.upserted", { turnId: event.turnId, item: event.item, completed: event.completed, ...("startedAtMs" in event ? { startedAtMs: event.startedAtMs } : {}), ...("completedAtMs" in event ? { completedAtMs: event.completedAtMs } : {}) }, this.ids(threadId));
         if (event.completed) {
           this.liveDeltas.delete(event.item.id);
@@ -387,6 +429,7 @@ export class ThreadRuntimeRegistry {
         this.setRuntime(threadId, { contextUsage: event.contextUsage });
         break;
       case "settingsUpdated":
+        this.updateSubagent(threadId, { model: event.settings.model, reasoning: event.settings.reasoning });
         this.events.publish("session.settings.updated", { settings: event.settings }, this.ids(threadId));
         break;
       case "nameUpdated":
@@ -437,6 +480,7 @@ export class ThreadRuntimeRegistry {
     }
     this.runtimes.set(threadId, updated);
     if (this.sideChats.has(threadId)) this.sideChats.set(threadId, updated as SideChatRuntime);
+    if (this.subagents.has(threadId)) this.updateSubagent(threadId, updated);
     if (updated.activeTurnId) this.resolveActiveTurnWaiters(threadId, updated.activeTurnId);
     else if (updated.state !== "running" && updated.state !== "waitingForInput") this.resolveActiveTurnWaiters(threadId, undefined);
     if (!updated.activeTurnId && updated.state !== "running" && updated.state !== "waitingForInput") this.resolveTerminalWaiters(threadId, true);
@@ -485,10 +529,48 @@ export class ThreadRuntimeRegistry {
   }
 
   private removeSubagentMappings(threadId: string): void {
-    this.subagentParents.delete(threadId);
-    for (const [subagentId, parentThreadId] of this.subagentParents) {
-      if (parentThreadId === threadId) this.subagentParents.delete(subagentId);
+    const pending = [threadId];
+    const removed = new Set<string>();
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (removed.has(current)) continue;
+      removed.add(current);
+      for (const [subagentId, parentThreadId] of this.subagentParents) {
+        if (parentThreadId === current) pending.push(subagentId);
+      }
     }
+    for (const removedThreadId of removed) {
+      this.subagentParents.delete(removedThreadId);
+      this.subagents.delete(removedThreadId);
+    }
+  }
+
+  private updateSubagent(threadId: string, changes: Partial<SubagentRuntime> | SubagentDescriptor): void {
+    const current = this.subagents.get(threadId);
+    const parentThreadId = changes.parentThreadId ?? current?.parentThreadId;
+    if (!parentThreadId) return;
+    const runtime = this.get(threadId);
+    const base: SubagentRuntime = current ?? {
+      ...runtime,
+      threadId,
+      parentThreadId,
+      forkedFromId: null,
+      contextMode: "unknown",
+      sourceKind: "unknown",
+      depth: null,
+      agentPath: null,
+      agentNickname: null,
+      agentRole: null,
+      createdAt: Date.now(),
+      requestedModel: null,
+      requestedReasoning: null,
+      model: null,
+      reasoning: null,
+      prompt: null,
+    };
+    const updated = { ...base, ...runtime, ...changes, threadId, parentThreadId } as SubagentRuntime;
+    this.subagents.set(threadId, updated);
+    this.events.publish("subagent.changed", updated, { threadId: this.visibleRequestThreadId(parentThreadId) ?? parentThreadId });
   }
 
   private clearLiveDeltas(threadId: string): void {

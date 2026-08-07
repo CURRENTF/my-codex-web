@@ -13,6 +13,7 @@ import { shouldRunFocusRescan } from "./focus-rescan";
 import { refreshProjectAvailability, refreshProjectAvailabilityAfterError } from "./project-refresh";
 import { recentSessionToAutoOpen, sessionCreationProjectId } from "./session-selection";
 import { browserNotificationControlState, currentBrowserNotificationPermission, persistTurnCompletionNotificationsEnabled, readTurnCompletionNotificationsEnabled, requestBrowserNotificationPermission, shouldNotifyTurnCompletion, showTurnCompletionNotification, type BrowserNotificationPermission } from "./browser-notifications";
+import { playCompletionNotificationSound, preloadCompletionNotificationSound, unlockCompletionNotificationSound } from "./notification-sound";
 import { queryClient } from "./main";
 import { useAppStore } from "./store";
 import { ProjectDirectoryDialog } from "./components/ProjectDirectoryDialog";
@@ -139,7 +140,7 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!bootstrapData || initialized.current) return; initialized.current = true; initialize(bootstrapData.runtimeStates, bootstrapData.activeSideChats, bootstrapData.itemDeltas, bootstrapData.pendingRequests, bootstrapData.connection.state, bootstrapData.eventSeq, bootstrapData.sessionPrefills);
+    if (!bootstrapData || initialized.current) return; initialized.current = true; initialize(bootstrapData.runtimeStates, bootstrapData.activeSideChats, bootstrapData.itemDeltas, bootstrapData.pendingRequests, bootstrapData.connection.state, bootstrapData.eventSeq, bootstrapData.sessionPrefills, bootstrapData.subagents);
   }, [bootstrapData, initialize]);
   useEffect(() => {
     if (!allSessionsQuery.isSuccess) return;
@@ -175,7 +176,7 @@ export function App() {
             documentVisible: document.visibilityState === "visible",
           };
           if (shouldNotifyTurnCompletion(input, context.enabled, context.permission)) {
-            showTurnCompletionNotification(input, (threadId) => navigate(`/sessions/${threadId}`));
+            if (showTurnCompletionNotification(input, (threadId) => navigate(`/sessions/${threadId}`))) playCompletionNotificationSound();
           }
         }
       }
@@ -192,7 +193,7 @@ export function App() {
         if (disposed) return false;
         client.setQueryData(["bootstrap"], fresh);
         client.setQueryData(["projects"], fresh.projects);
-        initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq, fresh.sessionPrefills);
+        initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq, fresh.sessionPrefills, fresh.subagents);
         const replay = bufferedEvents.filter((event) => event.seq > fresh.eventSeq).sort((left, right) => left.seq - right.seq);
         bufferedEvents = [];
         buffering = false;
@@ -273,6 +274,17 @@ export function App() {
     };
   }, []);
   useEffect(() => {
+    if (!turnNotificationsEnabled) return;
+    preloadCompletionNotificationSound();
+    const unlock = () => { unlockCompletionNotificationSound(); };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, [turnNotificationsEnabled]);
+  useEffect(() => {
     const onFocus = () => {
       const now = Date.now();
       if (!shouldRunFocusRescan({ now, lastScanAt: lastFocusScan.current, modalFocusSuppressed: modalFocusSuppressed.current })) return;
@@ -301,11 +313,14 @@ export function App() {
       setTurnNotificationsEnabled(false);
       return;
     }
+    preloadCompletionNotificationSound();
+    unlockCompletionNotificationSound();
     const permission = await requestBrowserNotificationPermission();
     setNotificationPermission(permission);
     if (permission !== "granted") return;
     persistTurnCompletionNotificationsEnabled(true);
     setTurnNotificationsEnabled(true);
+    playCompletionNotificationSound();
   };
   const fullAccessNoticeSeen = selectedProject
     ? preferences?.fullAccessNoticeSeenProjects.includes(selectedProject.id) ?? false

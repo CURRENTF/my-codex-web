@@ -38,6 +38,10 @@ describe("viewport layout CSS", () => {
     expect(timelineSource.match(/message-with-attachments/g)).toHaveLength(2);
   });
 
+  it("keeps the portaled Goal editor inside the viewport", () => {
+    expect(rule(".goal-popover")).toContain("width: min(390px, calc(100vw - 24px))");
+  });
+
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
     expect(rule(".composer-running-controls")).toContain("flex: 0 0 auto");
     expect(styles).not.toContain(".composer-running-controls.is-reserved");

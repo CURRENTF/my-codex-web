@@ -1,4 +1,4 @@
-import { ArrowSquareOut, CheckCircle, FileCode, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
+import { ArrowSquareOut, CheckCircle, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -6,7 +6,7 @@ import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import type { CodeServerStatus } from "@codex-web/shared-types";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
-import { codeServerFileUrl } from "../code-server-url";
+import { codeServerFileUrl, codeServerFolderUrl } from "../code-server-url";
 
 const UNCONFIGURED_CODE_SERVER: CodeServerStatus = { url: null, state: "unconfigured", checkedAt: null };
 
@@ -16,7 +16,7 @@ function unavailableTitle(codeServer: CodeServerStatus): string {
   return "code-server 当前不可用";
 }
 
-function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls }: { text: string; codeServer: CodeServerStatus; cwd: string; localImageUrls: Record<string, string>; localPathUrls: Record<string, string> }) {
+function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls, localPathKinds }: { text: string; codeServer: CodeServerStatus; cwd: string; localImageUrls: Record<string, string>; localPathUrls: Record<string, string>; localPathKinds: Record<string, "file" | "directory"> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}
@@ -27,7 +27,10 @@ function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls 
           return <a className="agent-inline-link external" href={localPathUrl} target="_blank" rel="noreferrer" title={href}><ArrowSquareOut size={14} />{children}</a>;
         }
         if (href?.startsWith("/")) {
-          if (codeServer.state !== "available" || !codeServer.url) return <span className="agent-inline-link file unavailable" aria-disabled="true" title={`${href} · ${unavailableTitle(codeServer)}`}><FileCode size={14} />{children}</span>;
+          const isDirectory = localPathKinds[href] === "directory";
+          const PathIcon = isDirectory ? FolderOpen : FileCode;
+          if (codeServer.state !== "available" || !codeServer.url) return <span className="agent-inline-link file unavailable" aria-disabled="true" title={`${href} · ${unavailableTitle(codeServer)}`}><PathIcon size={14} />{children}</span>;
+          if (isDirectory) return <a className="agent-inline-link file" href={codeServerFolderUrl(codeServer.url, href)} target="_blank" rel="noreferrer" title={href}><PathIcon size={14} />{children}</a>;
           return <a className="agent-inline-link file" href={codeServerFileUrl(codeServer.url, href, cwd)} target="_blank" rel="noreferrer" title={href}><FileCode size={14} />{children}</a>;
         }
         if (href && /^https?:\/\//.test(href)) {
@@ -104,10 +107,10 @@ function GitReceipt({ receipt }: { receipt: GitReceiptBlock }) {
   </section>;
 }
 
-export function AgentMessage({ text, codeServer = UNCONFIGURED_CODE_SERVER, cwd = "/", localImageUrls = {}, localPathUrls = {} }: { text: string; codeServer?: CodeServerStatus; cwd?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string> }) {
+export function AgentMessage({ text, codeServer = UNCONFIGURED_CODE_SERVER, cwd = "/", localImageUrls = {}, localPathUrls = {}, localPathKinds = {} }: { text: string; codeServer?: CodeServerStatus; cwd?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }) {
   return <article className="agent-message">{parseAgentMessage(text).map((block, index) => {
     if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} codeServer={codeServer} cwd={cwd} />;
     if (block.kind === "gitReceipt") return <GitReceipt key={index} receipt={block} />;
-    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} codeServer={codeServer} cwd={cwd} localImageUrls={localImageUrls} localPathUrls={localPathUrls} /></div>;
+    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} codeServer={codeServer} cwd={cwd} localImageUrls={localImageUrls} localPathUrls={localPathUrls} localPathKinds={localPathKinds} /></div>;
   })}</article>;
 }

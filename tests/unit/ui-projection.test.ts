@@ -24,6 +24,73 @@ describe("Codex UI projection", () => {
     });
   });
 
+  it("projects the public Subagent context and identity metadata", () => {
+    const event = projectAdapterEvent({
+      method: "thread/started",
+      params: {
+        thread: {
+          id: "child", sessionId: "session-1", forkedFromId: "parent", parentThreadId: "parent", preview: "", ephemeral: false,
+          modelProvider: "openai", createdAt: 2, updatedAt: 2, recencyAt: 2, status: { type: "active", activeFlags: [] }, path: null,
+          cwd: "/tmp/project", cliVersion: "test", source: { subAgent: { thread_spawn: {
+            parent_thread_id: "parent", depth: 1, agent_path: "review/nested", agent_nickname: "nested", agent_role: "reviewer",
+          } } }, threadSource: null, agentNickname: "nested", agentRole: "reviewer", gitInfo: null, name: null, turns: [],
+        },
+      },
+    });
+
+    expect(event).toMatchObject({
+      type: "threadStarted",
+      parentThreadId: "parent",
+      subagent: {
+        threadId: "child",
+        parentThreadId: "parent",
+        forkedFromId: "parent",
+        contextMode: "forked",
+        sourceKind: "threadSpawn",
+        depth: 1,
+        agentPath: "review/nested",
+        agentNickname: "nested",
+        agentRole: "reviewer",
+        createdAt: 2_000,
+      },
+    });
+  });
+
+  it("projects requested model, effort, and live states from spawnAgent items", () => {
+    const event = projectAdapterEvent({
+      method: "item/started",
+      params: {
+        threadId: "parent",
+        turnId: "turn-1",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          status: "inProgress",
+          senderThreadId: "parent",
+          receiverThreadIds: ["child"],
+          prompt: "Review the implementation",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+          agentsStates: { child: { status: "running", message: null } },
+        },
+      },
+    });
+
+    expect(event).toMatchObject({
+      type: "itemUpserted",
+      subagentUpdate: {
+        parentThreadId: "parent",
+        receiverThreadIds: ["child"],
+        spawn: true,
+        prompt: "Review the implementation",
+        model: "gpt-5.6-sol",
+        reasoning: "high",
+        agentsStates: { child: { status: "running", message: null } },
+      },
+    });
+  });
+
   it("projects protocol command items into the stable shared DTO", () => {
     const item = projectThreadItem({
       type: "commandExecution",

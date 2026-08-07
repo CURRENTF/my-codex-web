@@ -3,13 +3,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentMessage } from "../../apps/web/src/components/AgentMessage";
 
-function render(text: string, localImageUrls?: Record<string, string>, localPathUrls?: Record<string, string>) {
+function render(text: string, localImageUrls?: Record<string, string>, localPathUrls?: Record<string, string>, localPathKinds?: Record<string, "file" | "directory">) {
   return renderToStaticMarkup(createElement(AgentMessage, {
     text,
     codeServer: { url: "https://0513jtrc.beer:12334", state: "available", checkedAt: Date.now() },
     cwd: "/home/haojitai/project",
     localImageUrls,
     localPathUrls,
+    localPathKinds,
   }));
 }
 
@@ -75,6 +76,13 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain(`href="${pathUrl}"`);
     expect(html).not.toContain("0513jtrc.beer%3A12334");
     expect(html).toContain("https://0513jtrc.beer:12334/?folder=%2Fhome%2Fhaojitai%2Fproject&amp;goto=%2Fdata2%2Freport.md");
+  });
+
+  it("opens a linked local directory as the code-server workspace instead of treating it as a file", () => {
+    const directory = "/home/haojitai/projects/Sparse-vLLM/benchmark/analysis/deltakv";
+    const html = render(`[分析目录](${directory})`, undefined, undefined, { [directory]: "directory" });
+    expect(html).toContain("https://0513jtrc.beer:12334/?folder=%2Fhome%2Fhaojitai%2Fprojects%2FSparse-vLLM%2Fbenchmark%2Fanalysis%2Fdeltakv");
+    expect(html).not.toContain("goto=");
   });
 
   it("preserves safe external links, remote file links, and directives", () => {

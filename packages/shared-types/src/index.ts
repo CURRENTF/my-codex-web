@@ -52,6 +52,33 @@ export interface ThreadRuntime {
   lastTerminalStatus?: "completed" | "interrupted" | "failed";
 }
 
+export type SubagentContextMode = "forked" | "isolated" | "unknown";
+export type SubagentSourceKind = "threadSpawn" | "review" | "compact" | "memoryConsolidation" | "other" | "unknown";
+export type SubagentAgentStatus = "pendingInit" | "running" | "interrupted" | "completed" | "errored" | "shutdown" | "notFound";
+
+export interface SubagentDescriptor {
+  threadId: string;
+  parentThreadId: string;
+  forkedFromId: string | null;
+  contextMode: SubagentContextMode;
+  sourceKind: SubagentSourceKind;
+  depth: number | null;
+  agentPath: string | null;
+  agentNickname: string | null;
+  agentRole: string | null;
+  createdAt: number;
+}
+
+export interface SubagentRuntime extends ThreadRuntime, SubagentDescriptor {
+  requestedModel: string | null;
+  requestedReasoning: string | null;
+  model: string | null;
+  reasoning: string | null;
+  prompt: string | null;
+  agentStatus?: SubagentAgentStatus;
+  statusMessage?: string | null;
+}
+
 export interface ContextUsage {
   usedTokens: number;
   maxTokens: number | null;
@@ -136,7 +163,7 @@ export interface UserMessagePart {
 
 export type SessionItem =
   | { type: "userMessage"; id: string; clientId?: string | null; content: UserMessagePart[] }
-  | { type: "agentMessage"; id: string; text: string; phase?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string> }
+  | { type: "agentMessage"; id: string; text: string; phase?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }
   | { type: "reasoning"; id: string; summary: string[] }
   | { type: "plan"; id: string; text: string }
   | { type: "commandExecution"; id: string; command: string; cwd: string; status: string; aggregatedOutput: string | null; exitCode: number | null; durationMs: number | null }
@@ -219,6 +246,7 @@ export interface BootstrapPayload {
   models: ModelOption[];
   runtimeStates: ThreadRuntime[];
   activeSideChats: SideChatRuntime[];
+  subagents: SubagentRuntime[];
   itemDeltas: Record<string, string>;
   sessionPrefills: Record<string, string>;
   pendingRequests: PendingRequestSummary[];

@@ -6,6 +6,7 @@ beforeEach(() => useAppStore.setState({
   lastEventSeq: 0,
   runtimes: {},
   sideChats: {},
+  subagents: {},
   deltas: {},
   pendingRequests: {},
   drafts: {},
@@ -176,6 +177,41 @@ describe("live delta lifecycle", () => {
 
     expect(useAppStore.getState().runtimes["thread-1"]).toMatchObject({ state: "disconnected" });
     expect(useAppStore.getState().runtimes["thread-1"]?.activeTurnId).toBeUndefined();
+  });
+
+  it("hydrates Subagents, applies live updates, and marks them disconnected with the socket", () => {
+    const child = {
+      threadId: "child", parentThreadId: "parent", forkedFromId: "parent", contextMode: "forked" as const, sourceKind: "threadSpawn" as const,
+      depth: 0, agentPath: "review", agentNickname: "reviewer", agentRole: "reviewer", createdAt: 1,
+      requestedModel: "gpt-5.6-sol", requestedReasoning: "high", model: null, reasoning: null, prompt: "Review it",
+      state: "running" as const, activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [],
+    };
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {}, [child]);
+    expect(useAppStore.getState().subagents.child).toEqual(child);
+
+    useAppStore.getState().consume({
+      seq: 8, type: "subagent.changed", threadId: "parent", emittedAt: 8,
+      payload: { ...child, reasoning: "xhigh" },
+    });
+    expect(useAppStore.getState().subagents.child?.reasoning).toBe("xhigh");
+
+    useAppStore.getState().markDisconnected();
+    expect(useAppStore.getState().subagents.child).toMatchObject({ state: "disconnected" });
+    expect(useAppStore.getState().subagents.child?.activeTurnId).toBeUndefined();
+  });
+
+  it("preserves terminal Subagent history when the browser socket disconnects", () => {
+    const completed = {
+      threadId: "completed", parentThreadId: "parent", forkedFromId: "parent", contextMode: "forked" as const, sourceKind: "threadSpawn" as const,
+      depth: 0, agentPath: null, agentNickname: null, agentRole: null, createdAt: 1,
+      requestedModel: null, requestedReasoning: null, model: "gpt-5.6-sol", reasoning: "high", prompt: null,
+      state: "idle" as const, activeFlags: [], pendingRequestIds: [], agentStatus: "completed" as const,
+    };
+    useAppStore.getState().initialize([], [], {}, [], "connected", 7, {}, [completed]);
+
+    useAppStore.getState().markDisconnected();
+
+    expect(useAppStore.getState().subagents.completed).toEqual(completed);
   });
 
   it("keeps a global disconnect override for Sessions without Runtime entries until bootstrap recovery", () => {

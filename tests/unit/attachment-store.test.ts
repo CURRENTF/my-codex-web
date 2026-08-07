@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -178,6 +178,26 @@ describe("AttachmentStore", () => {
     }
     const linkedToken = agent.localPathUrls![linkedPath]!.split("/")[3]!;
     expect(store.openLocalPath(linkedToken)).toEqual({ path: linkedPath, mimeType: "image/webp" });
+  });
+
+  it("records whether linked local paths are files or directories", async () => {
+    const linkedDirectory = path.join(directory, "analysis");
+    const linkedFile = path.join(linkedDirectory, "report.md");
+    await mkdir(linkedDirectory);
+    await writeFile(linkedFile, "report");
+
+    const thread = store.decorateThread({
+      id: "thread", preview: "", name: null, cwd: directory, createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null,
+      turns: [{ id: "turn", status: "completed", startedAt: 1, completedAt: 2, durationMs: 1, items: [
+        { type: "agentMessage", id: "agent", text: `[目录](${linkedDirectory})\n\n[文件](${linkedFile})` },
+      ] }],
+    });
+    const agent = thread.turns[0]?.items[0];
+    if (agent?.type !== "agentMessage") throw new Error("missing agent message");
+    expect(agent.localPathKinds).toEqual({
+      [linkedDirectory]: "directory",
+      [linkedFile]: "file",
+    });
   });
 
   it("restores attachment parts omitted from a persisted App Server user message without duplicating images", async () => {

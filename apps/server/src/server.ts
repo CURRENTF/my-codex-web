@@ -239,6 +239,7 @@ export async function createServer() {
       models: adapter.models,
       runtimeStates: runtimes.list(),
       activeSideChats: runtimes.listSideChats(),
+      subagents: runtimes.listSubagents(),
       itemDeltas: runtimes.listItemDeltas(),
       sessionPrefills: sessions.listPrefills(),
       pendingRequests: runtimes.listPendingRequests(),
