@@ -254,6 +254,13 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .agent-message-text > :last-child { margin-bottom: 0; }
 .agent-message-text p { margin: .65em 0; }
 .agent-message-text ul, .agent-message-text ol { margin: .65em 0; padding-left: 1.6em; }
+.agent-message-text ul { list-style-type: disc; }
+.agent-message-text ol { list-style-type: decimal; }
+.agent-message-text ul ul { list-style-type: circle; }
+.agent-message-text ul ul ul { list-style-type: square; }
+.agent-message-text ol ol { list-style-type: lower-alpha; }
+.agent-message-text ol ol ol { list-style-type: lower-roman; }
+.agent-message-text li > ul, .agent-message-text li > ol { margin-top: .2em; margin-bottom: .2em; padding-left: 1.45em; }
 .agent-message-text li + li { margin-top: .18em; }
 .agent-message-text blockquote { margin: .8em 0; border-left: 3px solid var(--line-strong); padding: .15em 0 .15em .9em; color: var(--text-soft); }
 .agent-message-text pre { max-width: 100%; margin: .8em 0; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--surface-strong) 84%, transparent); padding: 11px 13px; line-height: 1.55; white-space: pre; }

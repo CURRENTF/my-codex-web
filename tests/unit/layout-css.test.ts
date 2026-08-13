@@ -38,6 +38,14 @@ describe("viewport layout CSS", () => {
     expect(timelineSource.match(/message-with-attachments/g)).toHaveLength(2);
   });
 
+  it("restores visible Markdown list markers and nested hierarchy after Tailwind preflight", () => {
+    expect(styles).toContain(".agent-message-text ul { list-style-type: disc; }");
+    expect(styles).toContain(".agent-message-text ol { list-style-type: decimal; }");
+    expect(styles).toContain(".agent-message-text ul ul { list-style-type: circle; }");
+    expect(styles).toContain(".agent-message-text ul ul ul { list-style-type: square; }");
+    expect(rule(".agent-message-text li > ul, .agent-message-text li > ol")).toContain("padding-left: 1.45em");
+  });
+
   it("keeps the portaled Goal editor inside the viewport", () => {
     expect(rule(".goal-popover")).toContain("width: min(390px, calc(100vw - 24px))");
   });

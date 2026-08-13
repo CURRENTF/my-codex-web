@@ -1,12 +1,22 @@
+function codeServerPathQuery(path: string): string {
+  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+function codeServerBaseUrl(baseUrl: string): URL {
+  return new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+}
+
 export function codeServerFolderUrl(baseUrl: string, folderPath: string): string {
-  const url = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
-  url.searchParams.set("folder", folderPath);
+  const url = codeServerBaseUrl(baseUrl);
+  url.search = `?folder=${codeServerPathQuery(folderPath)}`;
   return url.toString();
 }
 
 export function codeServerFileUrl(baseUrl: string, filePath: string, folderPath: string, line: number | null = null): string {
-  const url = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
-  url.searchParams.set("folder", folderPath);
-  url.searchParams.set("goto", `${filePath}${line === null ? "" : `:${Math.max(1, Math.trunc(line))}`}`);
+  const url = codeServerBaseUrl(baseUrl);
+  const target = `vscode-remote://${url.host}${codeServerPathQuery(filePath)}${line === null ? "" : `:${Math.max(1, Math.trunc(line))}`}`;
+  const payload = [["openFile", target]];
+  if (line !== null) payload.push(["gotoLineMode", "true"]);
+  url.search = `?folder=${codeServerPathQuery(folderPath)}&payload=${encodeURIComponent(JSON.stringify(payload))}`;
   return url.toString();
 }

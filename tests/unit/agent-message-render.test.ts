@@ -15,6 +15,13 @@ function render(text: string, localImageUrls?: Record<string, string>, localPath
 }
 
 describe("Agent message Markdown rendering", () => {
+  it("preserves ordered, unordered, and nested list structure", () => {
+    const html = render("- 一级\n  - 二级\n    1. 三级有序\n    2. 三级有序二\n- 一级二\n\n1. 有序一级\n2. 有序一级二");
+    const compact = html.replace(/>\s+</g, "><").replace(/\s+(?=<)/g, "");
+    expect(compact).toContain("<ul><li>一级<ul><li>二级<ol><li>三级有序</li><li>三级有序二</li></ol></li></ul></li><li>一级二</li></ul>");
+    expect(compact).toContain("<ol><li>有序一级</li><li>有序一级二</li></ol>");
+  });
+
   it("renders fenced Bash code and inline code", () => {
     const html = render("`sparse-vllm-20260727-h2o-chain-prefix-cache-merge-validation`.\n\n```bash\ngit merge --ff-only codex/chain-prefix-cache\n```");
     expect(html).toContain("<code>sparse-vllm-20260727-h2o-chain-prefix-cache-merge-validation</code>");
@@ -74,25 +81,27 @@ describe("Agent message Markdown rendering", () => {
     const pathUrl = "/api/local-paths/00000000-0000-4000-8000-000000000000/content";
     const html = render(`[打开图片](${localPath})\n\n[报告](/data2/report.md)`, undefined, { [localPath]: pathUrl });
     expect(html).toContain(`href="${pathUrl}"`);
-    expect(html).not.toContain("0513jtrc.beer%3A12334");
-    expect(html).toContain("https://0513jtrc.beer:12334/?folder=%2Fhome%2Fhaojitai%2Fproject&amp;goto=%2Fdata2%2Freport.md");
+    expect(html).toContain("https://0513jtrc.beer:12334/?folder=/home/haojitai/project&amp;payload=");
+    expect(html).toContain("vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fdata2%2Freport.md");
   });
 
   it("opens a linked local directory as the code-server workspace instead of treating it as a file", () => {
     const directory = "/home/haojitai/projects/Sparse-vLLM/benchmark/analysis/deltakv";
     const html = render(`[分析目录](${directory})`, undefined, undefined, { [directory]: "directory" });
-    expect(html).toContain("https://0513jtrc.beer:12334/?folder=%2Fhome%2Fhaojitai%2Fprojects%2FSparse-vLLM%2Fbenchmark%2Fanalysis%2Fdeltakv");
-    expect(html).not.toContain("goto=");
+    expect(html).toContain("https://0513jtrc.beer:12334/?folder=/home/haojitai/projects/Sparse-vLLM/benchmark/analysis/deltakv");
+    expect(html).not.toContain("openFile=");
   });
 
   it("preserves safe external links, remote file links, and directives", () => {
     const html = render('见 [报告](/data2/report.md) 与 [文档](https://example.com/docs)。\n\n::code-comment{title="[P1] 性能实验失败会被误判" body="失败会写成 FAILED/OOM 并正常退出。" file="/home/test/run_suite.py" start=1355 end=1369 priority=1 confidence=0.99}\n::git-push{cwd="/home/haojitai/project" branch="codex/h2o"}');
-    expect(html).toContain("https://0513jtrc.beer:12334/?folder=%2Fhome%2Fhaojitai%2Fproject&amp;goto=%2Fdata2%2Freport.md");
+    expect(html).toContain("https://0513jtrc.beer:12334/?folder=/home/haojitai/project&amp;payload=");
+    expect(html).toContain("vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fdata2%2Freport.md");
     expect(html).toContain('href="https://example.com/docs"');
     expect(html).toContain("P1 高优先级");
     expect(html).toContain("置信度 99%");
     expect(html).toContain("/home/test/run_suite.py:1355-1369");
-    expect(html).toContain("goto=%2Fhome%2Ftest%2Frun_suite.py%3A1355");
+    expect(html).toContain("vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fhome%2Ftest%2Frun_suite.py%3A1355");
+    expect(html).toContain("gotoLineMode%22%2C%22true");
     expect(html).toContain("已推送分支");
   });
 

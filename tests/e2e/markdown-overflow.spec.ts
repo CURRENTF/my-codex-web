@@ -37,3 +37,27 @@ test("keeps long Markdown code scrolling inside its block instead of the Timelin
   expect(overflow.scrollWidth).toBe(overflow.clientWidth);
   expect(codeOverflow.scrollWidth).toBeGreaterThan(codeOverflow.clientWidth);
 });
+
+test("shows Markdown bullets, numbers, and nested indentation after preflight", async ({ page }) => {
+  await page.setContent(`
+    <article class="agent-message">
+      <div class="agent-message-text">
+        <ul data-testid="unordered"><li>一级<ul data-testid="nested-unordered"><li>二级<ul data-testid="deep-unordered"><li>三级</li></ul></li></ul></li></ul>
+        <ol data-testid="ordered"><li>第一项</li><li>第二项</li></ol>
+      </div>
+    </article>
+  `);
+  await page.addStyleTag({ path: stylesPath });
+
+  const styles = await page.locator("[data-testid]").evaluateAll((nodes) => nodes.map((node) => {
+    const computed = getComputedStyle(node);
+    return { testId: node.getAttribute("data-testid"), listStyleType: computed.listStyleType, paddingLeft: computed.paddingLeft };
+  }));
+
+  expect(styles).toEqual([
+    { testId: "unordered", listStyleType: "disc", paddingLeft: "22.4px" },
+    { testId: "nested-unordered", listStyleType: "circle", paddingLeft: "20.3px" },
+    { testId: "deep-unordered", listStyleType: "square", paddingLeft: "20.3px" },
+    { testId: "ordered", listStyleType: "decimal", paddingLeft: "22.4px" },
+  ]);
+});
