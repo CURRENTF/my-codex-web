@@ -37,7 +37,8 @@ export function descendantSubagents(subagents: readonly SubagentRuntime[], paren
 export function displaySubagentState(agent: SubagentRuntime): RuntimeState {
   if (agent.state !== "idle") return agent.state;
   if (agent.agentStatus === "pendingInit" || agent.agentStatus === "running") return "running";
-  if (agent.agentStatus === "completed" || agent.agentStatus === "shutdown") return "justFinished";
+  if (agent.agentStatus === "completed") return "justFinished";
+  if (agent.agentStatus === "shutdown" || agent.agentStatus === "notLoaded") return "idle";
   if (agent.agentStatus === "interrupted") return "interrupted";
   if (agent.agentStatus === "errored" || agent.agentStatus === "notFound") return "failed";
   return "idle";
@@ -89,5 +90,6 @@ export function subagentStateLabel(agent: SubagentRuntime, state = displaySubage
   if (state === "running") return agent.agentStatus === "pendingInit" ? "初始化" : "正在执行";
   if (agent.agentStatus === "completed") return "已完成";
   if (agent.agentStatus === "shutdown") return "已关闭";
+  if (agent.agentStatus === "notLoaded") return "未加载";
   return "空闲";
 }

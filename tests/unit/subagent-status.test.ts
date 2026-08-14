@@ -62,6 +62,8 @@ describe("Subagent status", () => {
   it("uses precise lifecycle labels for initializing and completed agents", () => {
     expect(subagentStateLabel(agent({ threadId: "pending", parentThreadId: "root", agentStatus: "pendingInit" }))).toBe("初始化");
     expect(subagentStateLabel(agent({ threadId: "done", parentThreadId: "root", agentStatus: "completed" }))).toBe("已完成");
+    expect(subagentStateLabel(agent({ threadId: "unloaded", parentThreadId: "root", agentStatus: "shutdown" }))).toBe("已关闭");
+    expect(subagentStateLabel(agent({ threadId: "unloaded", parentThreadId: "root", agentStatus: "notLoaded" }))).toBe("未加载");
   });
 
   it("renders an expanded active tree with context, model, effort, and inheritance", () => {

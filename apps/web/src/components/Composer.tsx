@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Paperclip, ShieldCheck, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ContextUsage, Goal, ModelOption, Project, RuntimeState, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 import { ApiError, api, endpoints, newClientRequestId } from "../api";
 import { commandArgumentSuggestions, composerTrigger, isCompletedSkillTrigger, isSupportedSlashCommand, parseSlashCommand, referencedSkillNames, slashArgumentTrigger, slashCommands, type CompletedSkillMention, type SlashCommandName } from "../composer-commands";
 import { expectedSteerTurnId, isTurnFinishedConflict } from "../composer-intent";
+import { resizeComposerTextarea } from "../composer-textarea";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
 import { useAppStore, type QueuedUserMessage } from "../store";
 
@@ -99,6 +100,18 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setAttachments([]); setUploadingCount(0); setDraggingFiles(false);
   }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
   useEffect(() => { if (selectedModel && !selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) setReasoning(selectedModel.defaultReasoning); }, [selectedModel, reasoning]);
+  useLayoutEffect(() => {
+    if (textarea.current) resizeComposerTextarea(textarea.current);
+  }, [draft]);
+  useEffect(() => {
+    const resize = () => { if (textarea.current) resizeComposerTextarea(textarea.current); };
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
+    };
+  }, []);
 
   const trigger = composerTrigger(draft, cursor);
   const argumentTrigger = slashArgumentTrigger(draft);

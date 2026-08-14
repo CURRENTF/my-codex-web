@@ -54,7 +54,7 @@ export interface ThreadRuntime {
 
 export type SubagentContextMode = "forked" | "isolated" | "unknown";
 export type SubagentSourceKind = "threadSpawn" | "review" | "compact" | "memoryConsolidation" | "other" | "unknown";
-export type SubagentAgentStatus = "pendingInit" | "running" | "interrupted" | "completed" | "errored" | "shutdown" | "notFound";
+export type SubagentAgentStatus = "pendingInit" | "running" | "interrupted" | "completed" | "errored" | "shutdown" | "notFound" | "notLoaded";
 
 export interface SubagentDescriptor {
   threadId: string;

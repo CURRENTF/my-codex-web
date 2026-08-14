@@ -32,6 +32,14 @@ describe("viewport layout CSS", () => {
     expect(rule(".parallel-write-warning")).not.toContain("grid-area");
   });
 
+  it("lets long prompts grow until half the visible page", () => {
+    expect(rule(".composer textarea")).toContain("min-height: 64px");
+    expect(rule(".composer textarea")).toContain("max-height: 50dvh");
+    expect(rule(".composer textarea")).toContain("overflow-y: hidden");
+    expect(composerSource).toContain("resizeComposerTextarea(textarea.current)");
+    expect(composerSource).toContain('window.visualViewport?.addEventListener("resize", resize)');
+  });
+
   it("keeps short text messages content-sized while reserving preview width for attachments", () => {
     expect(rule(".user-message > div")).not.toContain("min-width");
     expect(rule(".message-with-attachments")).toContain("min-width: min(220px, 86%)");

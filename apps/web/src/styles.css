@@ -396,7 +396,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .attachment-chip > button { position: absolute; top: 5px; right: 5px; display: grid; width: 20px; height: 20px; place-items: center; border-radius: 5px; background: transparent; color: var(--text-faint); cursor: pointer; }
 .attachment-chip > button:hover { background: var(--surface-hover); color: var(--text); }
 .attachment-drop-hint { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 7px; background: color-mix(in srgb, var(--surface-strong) 90%, var(--accent) 10%); color: var(--accent); font-size: 12px; font-weight: 650; pointer-events: none; }
-.composer textarea { display: block; width: 100%; min-height: 64px; max-height: 180px; overflow-x: hidden; overflow-y: auto; resize: none; border: 0; outline: 0; background: transparent; padding: 13px 14px 4px; color: var(--text); font-size: 13px; line-height: 1.5; }
+.composer textarea { display: block; width: 100%; min-height: 64px; max-height: 50vh; max-height: 50dvh; overflow-x: hidden; overflow-y: hidden; resize: none; border: 0; outline: 0; background: transparent; padding: 13px 14px 4px; color: var(--text); font-size: 13px; line-height: 1.5; }
 .composer textarea::placeholder { color: var(--text-faint); }
 .composer textarea:disabled { cursor: not-allowed; color: var(--text-faint); }
 .composer-toolbar { display: flex; min-width: 0; min-height: 39px; flex-wrap: nowrap; align-items: center; gap: 3px 8px; overflow: hidden; padding: 3px 7px 7px; }

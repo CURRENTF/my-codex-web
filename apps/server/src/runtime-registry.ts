@@ -1,5 +1,5 @@
 import type { PendingRequestSummary, RuntimeState, SessionTurn, SideChatRuntime, SubagentDescriptor, SubagentRuntime, ThreadRuntime } from "@codex-web/shared-types";
-import type { AdapterEvent, AdapterPendingRequest } from "@codex-web/codex-adapter";
+import type { AdapterEvent, AdapterPendingRequest, ListedSubagent } from "@codex-web/codex-adapter";
 import { EventGateway } from "./event-gateway.js";
 import { Repositories } from "./database.js";
 
@@ -32,6 +32,26 @@ export class ThreadRuntimeRegistry {
   list(): ThreadRuntime[] { return [...this.runtimes.values()].map((item) => ({ ...item })); }
   listSideChats(): SideChatRuntime[] { return [...this.sideChats.values()].map((item) => ({ ...item })); }
   listSubagents(): SubagentRuntime[] { return [...this.subagents.values()].map((item) => ({ ...item })); }
+  restoreSubagents(subagents: readonly ListedSubagent[]): void {
+    for (const subagent of [...subagents].sort((left, right) => left.createdAt - right.createdAt || left.threadId.localeCompare(right.threadId))) {
+      this.subagentParents.set(subagent.threadId, subagent.parentThreadId);
+      const current = this.subagents.get(subagent.threadId);
+      const currentIsLive = current?.state === "running"
+        || current?.state === "waitingForInput"
+        || current?.agentStatus === "pendingInit"
+        || current?.agentStatus === "running";
+      const snapshotIsLive = subagent.state === "running" || subagent.state === "waitingForInput";
+      this.updateSubagent(subagent.threadId, {
+        ...subagent,
+        ...(currentIsLive && !snapshotIsLive ? {
+          state: current.state,
+          activeFlags: current.activeFlags,
+          agentStatus: current.agentStatus,
+          activeTurnId: current.activeTurnId,
+        } : {}),
+      });
+    }
+  }
   get(threadId: string): ThreadRuntime {
     return this.runtimes.get(threadId) ?? { threadId, state: "idle", activeFlags: [], pendingRequestIds: [] };
   }

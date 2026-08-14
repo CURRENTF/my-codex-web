@@ -61,3 +61,37 @@ test("shows Markdown bullets, numbers, and nested indentation after preflight", 
     { testId: "ordered", listStyleType: "decimal", paddingLeft: "22.4px" },
   ]);
 });
+
+test("lets the Composer grow with a long prompt but caps it at half the viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 720 });
+  await page.setContent('<div class="composer"><textarea rows="2"></textarea></div>');
+  await page.addStyleTag({ path: stylesPath });
+  const textarea = page.locator(".composer textarea");
+
+  await textarea.fill("short prompt");
+  await textarea.evaluate((element) => {
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, window.innerHeight * 0.5)}px`;
+  });
+  await expect(textarea).toHaveCSS("height", "64px");
+
+  await textarea.fill(Array.from({ length: 80 }, (_, index) => `第 ${index + 1} 行 prompt`).join("\n"));
+  await textarea.evaluate((element) => {
+    element.style.height = "auto";
+    const maxHeight = window.innerHeight * 0.5;
+    const contentHeight = element.scrollHeight;
+    element.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+    element.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+  });
+
+  const size = await textarea.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    viewportHeight: window.innerHeight,
+    overflowY: getComputedStyle(element).overflowY,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(size.height).toBe(360);
+  expect(size.height).toBe(size.viewportHeight * 0.5);
+  expect(size.overflowY).toBe("auto");
+  expect(size.scrollHeight).toBeGreaterThan(size.height);
+});

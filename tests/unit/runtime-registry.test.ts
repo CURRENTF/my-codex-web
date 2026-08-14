@@ -23,6 +23,52 @@ function pending(registry: ThreadRuntimeRegistry, request: { id: number; method:
 }
 
 describe("runtime projection", () => {
+  it("restores a persisted Subagent tree when the WebUI process missed the live spawn events", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.restoreSubagents([
+      {
+        threadId: "child", parentThreadId: "parent", forkedFromId: "parent", contextMode: "forked", sourceKind: "threadSpawn",
+        depth: 0, agentPath: "/root/review", agentNickname: "reviewer", agentRole: "worker", createdAt: 1,
+        state: "running", activeFlags: [], agentStatus: "running",
+      },
+      {
+        threadId: "nested", parentThreadId: "child", forkedFromId: null, contextMode: "isolated", sourceKind: "threadSpawn",
+        depth: 1, agentPath: "/root/review/nested", agentNickname: "nested", agentRole: "worker", createdAt: 2,
+        state: "idle", activeFlags: [], agentStatus: "completed",
+      },
+    ]);
+
+    expect(registry.listSubagents()).toEqual([
+      expect.objectContaining({ threadId: "child", parentThreadId: "parent", state: "running", agentStatus: "running" }),
+      expect.objectContaining({ threadId: "nested", parentThreadId: "child", state: "idle", agentStatus: "completed" }),
+    ]);
+  });
+
+  it("does not let a stale unloaded snapshot overwrite a live spawn update", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    notify(registry, { method: "item/started", params: {
+      threadId: "parent", turnId: "turn-1", item: {
+        id: "spawn-1", type: "collabAgentToolCall", tool: "spawnAgent", status: "inProgress",
+        senderThreadId: "parent", receiverThreadIds: ["child"], prompt: "Review it", model: null,
+        reasoningEffort: null, agentsStates: { child: { status: "running", message: null } },
+      },
+    } });
+
+    registry.restoreSubagents([{
+      threadId: "child", parentThreadId: "parent", forkedFromId: null, contextMode: "isolated", sourceKind: "threadSpawn",
+      depth: 0, agentPath: "/root/review", agentNickname: "reviewer", agentRole: "worker", createdAt: 1,
+      state: "idle", activeFlags: [], agentStatus: "notLoaded",
+    }]);
+
+    expect(registry.listSubagents()).toEqual([
+      expect.objectContaining({ threadId: "child", state: "idle", agentStatus: "running", prompt: "Review it" }),
+    ]);
+  });
+
   it("publishes App Server Turn errors to the browser with retry metadata", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });

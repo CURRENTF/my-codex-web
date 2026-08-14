@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { AccessMode, Goal, ModelOption, SessionThread, SessionTurn, SkillOption } from "@codex-web/shared-types";
+import type { AccessMode, Goal, ModelOption, RuntimeState, SessionThread, SessionTurn, SkillOption, SubagentAgentStatus, SubagentDescriptor } from "@codex-web/shared-types";
 import type { Account } from "@codex-web/codex-schema/v2/Account";
 import type { GetAccountResponse } from "@codex-web/codex-schema/v2/GetAccountResponse";
 import type { ModelListResponse } from "@codex-web/codex-schema/v2/ModelListResponse";
@@ -18,7 +18,7 @@ import type { ThreadStartResponse } from "@codex-web/codex-schema/v2/ThreadStart
 import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
 import type { TurnStartResponse } from "@codex-web/codex-schema/v2/TurnStartResponse";
 import { JsonRpcError, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, type RpcServerRequest } from "./json-rpc-transport.js";
-import { projectAdapterEvent } from "./adapter-events.js";
+import { projectAdapterEvent, projectSubagentDescriptor } from "./adapter-events.js";
 import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
 import { projectThread, projectTurn } from "./ui-projection.js";
@@ -55,6 +55,12 @@ export interface ResumedSession {
 export interface ListedSession {
   id: string; preview: string; name: string | null; cwd: string; sourceKind: string;
   createdAt: number; updatedAt: number; forkedFromId: string | null; threadSource?: string | null;
+}
+
+export interface ListedSubagent extends SubagentDescriptor {
+  state: RuntimeState;
+  activeFlags: string[];
+  agentStatus: SubagentAgentStatus;
 }
 
 export interface GoalUpdate {
@@ -326,6 +332,35 @@ export class CodexAdapter extends EventEmitter {
       ...(input.searchTerm ? { searchTerm: input.searchTerm } : {}),
     });
     return { data: response.data.map((thread) => ({ id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId, threadSource: thread.threadSource })), nextCursor: response.nextCursor };
+  }
+
+  async listSubagents(cursor: string | null = null, limit = 100): Promise<{ data: ListedSubagent[]; nextCursor: string | null }> {
+    const response = await this.supervisor.transport.request<ThreadListResponse>("thread/list", {
+      cursor,
+      limit,
+      sortKey: "updated_at",
+      sortDirection: "desc",
+      sourceKinds: ["subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther"],
+      archived: false,
+    });
+    return {
+      data: response.data.flatMap((thread) => {
+        const descriptor = projectSubagentDescriptor(thread);
+        if (!descriptor) return [];
+        const activeFlags = thread.status.type === "active" ? thread.status.activeFlags.map(String) : [];
+        const waitingForInput = activeFlags.some((flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput");
+        const state: RuntimeState = thread.status.type === "active"
+          ? waitingForInput ? "waitingForInput" : "running"
+          : thread.status.type === "systemError" ? "failed" : "idle";
+        const agentStatus: SubagentAgentStatus = thread.status.type === "active"
+          ? "running"
+          : thread.status.type === "systemError"
+            ? "errored"
+            : thread.status.type === "idle" ? "completed" : "notLoaded";
+        return [{ ...descriptor, state, activeFlags, agentStatus }];
+      }),
+      nextCursor: response.nextCursor,
+    };
   }
 
   async readSession(threadId: string): Promise<SessionThread> {

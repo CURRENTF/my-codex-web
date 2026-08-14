@@ -26,6 +26,7 @@ import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
 import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, streamLocalFile } from "./attachment-store.js";
 import { acceptsSpaDocument } from "./spa-fallback.js";
 import { initialCodeServerStatus, probeCodeServer } from "./code-server.js";
+import { restoreSubagentSnapshot } from "./subagent-restoration.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
@@ -93,6 +94,13 @@ export async function createServer() {
   const projectLocks = new KeyedOperationLock();
   const indexer = new ProjectIndexer(repositories, adapter, projectLocks);
   const sessions = new SessionService(repositories, adapter, indexer, runtimes, projectLocks, attachments);
+  const restoreSubagentsSafely = async (context: "startup" | "reconnect") => {
+    try {
+      await restoreSubagentSnapshot(adapter, runtimes);
+    } catch (error) {
+      app.log.warn({ error: safeErrorForLog(error), context }, "Failed to restore Subagent status");
+    }
+  };
   const mutations = new RequestDeduplicator();
   const once = <T>(request: { method: string; url: string }, clientRequestId: string, action: () => Promise<T> | T) =>
     mutations.run(`${request.method}\u0000${request.url}\u0000${clientRequestId}`, action);
@@ -108,6 +116,7 @@ export async function createServer() {
     onRecovered: () => {
       if (!startupPhase && adapter.account) {
         void indexer.scanStartupRoots()
+          .then(() => restoreSubagentsSafely("reconnect"))
           .then(() => indexer.scanAllInBackground())
           .catch((error) => app.log.warn({ error: safeErrorForLog(error) }, "Failed to scan Projects after App Server reconnect"));
       }
@@ -479,6 +488,7 @@ export async function createServer() {
   startupPhase = false;
   if (adapter.account && (connectionState as AppServerConnectionState) === "connected") {
     await indexer.scanStartupRoots();
+    await restoreSubagentsSafely("startup");
     indexer.scanAllInBackground();
   }
 

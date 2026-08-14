@@ -41,7 +41,7 @@ function subagentSourceKind(source: unknown): SubagentSourceKind {
   return "unknown";
 }
 
-function projectSubagentDescriptor(thread: Thread): SubagentDescriptor | undefined {
+export function projectSubagentDescriptor(thread: Thread): SubagentDescriptor | undefined {
   if (!thread.parentThreadId) return undefined;
   const subagentSource = thread.source && typeof thread.source === "object" && "subAgent" in thread.source
     ? thread.source.subAgent

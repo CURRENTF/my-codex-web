@@ -2,6 +2,35 @@ import { describe, expect, it, vi } from "vitest";
 import { CodexAdapter, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, NON_IDEMPOTENT_MUTATION_TIMEOUT, OperationUncertainError } from "@codex-web/codex-adapter";
 
 describe("Codex Adapter initialization", () => {
+  it("lists Subagents separately with their parent, identity, context, and runtime state", async () => {
+    const thread = (id: string, status: { type: "active"; activeFlags: string[] } | { type: "idle" } | { type: "notLoaded" }) => ({
+      id, sessionId: "session-1", forkedFromId: "parent", parentThreadId: "parent", preview: "", ephemeral: false,
+      modelProvider: "openai", createdAt: 2, updatedAt: 3, recencyAt: 3, status, path: null,
+      cwd: "/tmp/project", cliVersion: "test", source: { subAgent: { thread_spawn: {
+        parent_thread_id: "parent", depth: 1, agent_path: `/root/${id}`, agent_nickname: id, agent_role: "worker",
+      } } }, threadSource: null, agentNickname: id, agentRole: "worker", gitInfo: null, name: null, turns: [],
+    });
+    const request = vi.fn(async (_method: string, params: { cursor?: string | null }) => params.cursor === null
+      ? { data: [thread("active-child", { type: "active", activeFlags: ["waitingOnUserInput"] })], nextCursor: "page-2" }
+      : { data: [thread("done-child", { type: "idle" }), thread("unloaded-child", { type: "notLoaded" })], nextCursor: null });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    const first = await adapter.listSubagents();
+    const second = await adapter.listSubagents(first.nextCursor);
+
+    expect(first.data[0]).toMatchObject({
+      threadId: "active-child", parentThreadId: "parent", agentNickname: "active-child",
+      contextMode: "forked", state: "waitingForInput", agentStatus: "running",
+    });
+    expect(second.data[0]).toMatchObject({ threadId: "done-child", state: "idle", agentStatus: "completed" });
+    expect(second.data[1]).toMatchObject({ threadId: "unloaded-child", state: "idle", agentStatus: "notLoaded" });
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
+      cursor: null,
+      sourceKinds: ["subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther"],
+    });
+  });
+
   it("uses a disconnecting watchdog instead of retrying non-idempotent mutations", async () => {
     const request = vi.fn(async (method: string) => {
       if (method === "turn/start") return { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: null, completedAt: null, durationMs: null, error: null } };
