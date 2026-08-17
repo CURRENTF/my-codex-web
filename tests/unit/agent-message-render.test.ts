@@ -15,6 +15,16 @@ function render(text: string, localImageUrls?: Record<string, string>, localPath
 }
 
 describe("Agent message Markdown rendering", () => {
+  it("preserves Markdown heading levels", () => {
+    const html = render("# 一级标题\n\n## 二级标题\n\n### 三级标题\n\n#### 四级标题\n\n##### 五级标题\n\n###### 六级标题");
+    expect(html).toContain("<h1>一级标题</h1>");
+    expect(html).toContain("<h2>二级标题</h2>");
+    expect(html).toContain("<h3>三级标题</h3>");
+    expect(html).toContain("<h4>四级标题</h4>");
+    expect(html).toContain("<h5>五级标题</h5>");
+    expect(html).toContain("<h6>六级标题</h6>");
+  });
+
   it("preserves ordered, unordered, and nested list structure", () => {
     const html = render("- 一级\n  - 二级\n    1. 三级有序\n    2. 三级有序二\n- 一级二\n\n1. 有序一级\n2. 有序一级二");
     const compact = html.replace(/>\s+</g, "><").replace(/\s+(?=<)/g, "");
