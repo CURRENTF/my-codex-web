@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentMessage } from "../../apps/web/src/components/AgentMessage";
+
+const require = createRequire(import.meta.url);
+
+function packageVersion(packageJsonPath: string): string {
+  return (JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version: string }).version;
+}
 
 function render(text: string, localImageUrls?: Record<string, string>, localPathUrls?: Record<string, string>, localPathKinds?: Record<string, "file" | "directory">) {
   return renderToStaticMarkup(createElement(AgentMessage, {
@@ -43,6 +51,15 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain("katex");
     expect(html).toContain("katex-display");
     expect(html).toContain("operatorname");
+  });
+
+  it("uses KaTeX CSS from the same version as the rehype renderer", () => {
+    const webRequire = createRequire(new URL("../../apps/web/src/components/AgentMessage.tsx", import.meta.url));
+    const cssPackage = webRequire.resolve("katex/package.json");
+    const rehypeRequire = createRequire(require.resolve("rehype-katex"));
+    const rendererPackage = rehypeRequire.resolve("katex/package.json");
+
+    expect(packageVersion(cssPackage)).toBe(packageVersion(rendererPackage));
   });
 
   it("renders standalone bracketed LaTeX emitted without math delimiters", () => {
