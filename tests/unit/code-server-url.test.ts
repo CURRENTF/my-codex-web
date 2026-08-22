@@ -8,8 +8,18 @@ describe("code-server URLs", () => {
   });
 
   it("opens a file and line with the VS Code Web startup parameters", () => {
-    expect(codeServerFileUrl("https://0513jtrc.beer:12334", "/home/haojitai/project/a b.ts", "/home/haojitai/project", 19))
-      .toBe("https://0513jtrc.beer:12334/?folder=/home/haojitai/project&payload=%5B%5B%22openFile%22%2C%22vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fhome%2Fhaojitai%2Fproject%2Fa%2520b.ts%3A19%22%5D%2C%5B%22gotoLineMode%22%2C%22true%22%5D%5D");
+    const url = new URL(codeServerFileUrl(
+      "https://0513jtrc.beer:12334",
+      "/home/haojitai/project/a b.ts",
+      "/home/haojitai/project",
+      19,
+    ));
+
+    expect(url.searchParams.get("folder")).toBe("/home/haojitai/project");
+    expect(JSON.parse(url.searchParams.get("payload")!)).toEqual([
+      ["gotoLineMode", "true"],
+      ["openFile", "vscode-remote://0513jtrc.beer:12334/home/haojitai/project/a%20b.ts:19"],
+    ]);
   });
 
   it("preserves a configured code-server base path", () => {

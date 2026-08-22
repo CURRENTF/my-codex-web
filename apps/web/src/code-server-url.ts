@@ -15,8 +15,9 @@ export function codeServerFolderUrl(baseUrl: string, folderPath: string): string
 export function codeServerFileUrl(baseUrl: string, filePath: string, folderPath: string, line: number | null = null): string {
   const url = codeServerBaseUrl(baseUrl);
   const target = `vscode-remote://${url.host}${codeServerPathQuery(filePath)}${line === null ? "" : `:${Math.max(1, Math.trunc(line))}`}`;
-  const payload = [["openFile", target]];
-  if (line !== null) payload.push(["gotoLineMode", "true"]);
+  const payload = line === null
+    ? [["openFile", target]]
+    : [["gotoLineMode", "true"], ["openFile", target]];
   url.search = `?folder=${codeServerPathQuery(folderPath)}&payload=${encodeURIComponent(JSON.stringify(payload))}`;
   return url.toString();
 }
