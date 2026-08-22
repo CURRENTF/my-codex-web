@@ -124,6 +124,17 @@ function isEscaped(value: string, index: number): boolean {
   return slashes % 2 === 1;
 }
 
+function displayMathContent(contentLines: string[], indent: string): string {
+  return contentLines
+    .map((line) => line.startsWith(indent) ? line.slice(indent.length) : line)
+    .join("\n")
+    .trim();
+}
+
+function displayMathBlock(content: string, indent: string): string[] {
+  return [indent + "$$", ...content.split("\n").map((line) => indent + line), indent + "$$"];
+}
+
 export function normalizeLooseDisplayMath(text: string): string {
   const lines = text.split("\n");
   const normalized: string[] = [];
@@ -169,9 +180,9 @@ export function normalizeLooseDisplayMath(text: string): string {
         const contentLines = lines.slice(lineIndex, closingLine + 1);
         contentLines[0] = contentLines[0]!.slice(openColumn + 2);
         contentLines[contentLines.length - 1] = contentLines.at(-1)!.slice(0, closingLine === lineIndex ? closingColumn - openColumn - 2 : closingColumn);
-        const content = contentLines.join("\n").trim();
+        const content = displayMathContent(contentLines, indent);
         if (content) {
-          normalized.push(`${indent}$$`, content, `${indent}$$`);
+          normalized.push(...displayMathBlock(content, indent));
           lineIndex = closingLine;
           continue;
         }
@@ -219,12 +230,12 @@ export function normalizeLooseDisplayMath(text: string): string {
     const contentLines = lines.slice(lineIndex, closingLine + 1);
     contentLines[0] = contentLines[0]!.slice(openColumn + 1);
     contentLines[contentLines.length - 1] = contentLines.at(-1)!.slice(0, closingLine === lineIndex ? closingColumn - openColumn - 1 : closingColumn);
-    const content = contentLines.join("\n").trim();
+    const content = displayMathContent(contentLines, indent);
     if (!displayMathCommand.test(content)) {
       normalized.push(line);
       continue;
     }
-    normalized.push(`${indent}$$`, content, `${indent}$$`);
+    normalized.push(...displayMathBlock(content, indent));
     lineIndex = closingLine;
   }
   return normalized.join("\n");

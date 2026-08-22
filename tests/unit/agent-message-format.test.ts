@@ -66,4 +66,20 @@ describe("Agent message Codex directives", () => {
     expect(normalizeLooseDisplayMath("```text\n\\[\n\\frac{a}{b}\n\\]\n```")).toBe("```text\n\\[\n\\frac{a}{b}\n\\]\n```");
     expect(normalizeLooseDisplayMath("\\\\[ordinary escaped text\\\\]")).toBe("\\\\[ordinary escaped text\\\\]");
   });
+
+  it("preserves list indentation while normalizing display math", () => {
+    expect(normalizeLooseDisplayMath([
+      "- Decode:",
+      "  \\[",
+      "  B \\times H",
+      "  \\]",
+      "  explanation",
+    ].join("\n"))).toBe([
+      "- Decode:",
+      "  $$",
+      "  B \\times H",
+      "  $$",
+      "  explanation",
+    ].join("\n"));
+  });
 });

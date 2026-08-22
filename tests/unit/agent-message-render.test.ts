@@ -77,6 +77,50 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain("mfrac");
   });
 
+  it("renders indented display math without swallowing adjacent list items", () => {
+    const message = [
+      "核心区别是：",
+      "",
+      "- Decode：Lq = 1，Q 维度没有并行度，所以常沿 KV 长度切分：",
+      "  \\[",
+      "  B \\times H \\times \\lceil L_{k,\\text{pad}} / P \\rceil",
+      "  \\]",
+      "  因此 graph 固定 128K、实际 40K 时会产生空 CTA 和 partial workspace。",
+      "",
+      "- Prefill：Lq 通常较大，天然按 Q block 并行：",
+      "  \\[",
+      "  \\lceil L_{q,\\max}/B_M\\rceil \\times B \\times H",
+      "  \\]",
+      "  每个 Q block 在 kernel 内循环实际 KV blocks，通常不需要 partial output + merge。",
+    ].join("\n");
+    const html = render(message);
+
+    expect(html.match(/class="katex-display"/g)).toHaveLength(2);
+    expect(html.match(/<li>/g)).toHaveLength(2);
+    expect(html).toContain("因此 graph 固定 128K");
+    expect(html).toContain("每个 Q block 在 kernel 内循环实际 KV blocks");
+    expect(html).not.toContain("<p>B \\times H");
+  });
+
+  it("supports correctly indented dollar-delimited display math inside lists", () => {
+    const html = render([
+      "- Decode:",
+      "  $$",
+      "  B \\times H",
+      "  $$",
+      "  explanation",
+      "",
+      "- Prefill:",
+      "  $$",
+      "  Q \\times H",
+      "  $$",
+      "  explanation",
+    ].join("\n"));
+
+    expect(html.match(/class="katex-display"/g)).toHaveLength(2);
+    expect(html.match(/<li>/g)).toHaveLength(2);
+  });
+
   it("does not render raw HTML from an agent message", () => {
     const html = render('<script>alert("owned")</script><img src=x onerror=alert(1)>');
     expect(html).not.toContain("<script");
