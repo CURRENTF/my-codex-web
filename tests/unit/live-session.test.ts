@@ -70,6 +70,23 @@ describe("applySessionEvent", () => {
     expect(completed.thread.turns[0]?.items[1]).toMatchObject({ type: "agentMessage", text: "world" });
   });
 
+  it("hands streamed agent text to a sparse completion item before its live delta is cleared", () => {
+    const started = applySessionEvent(session, event("turn.started", { turn: {
+      id: "turn-1", status: "inProgress", items: [{ type: "agentMessage", id: "agent-1", text: "" }],
+      startedAt: 10, completedAt: null, durationMs: null,
+    } }))!;
+    const completed = applySessionEvent(started, event("item.upserted", {
+      turnId: "turn-1",
+      completed: true,
+      item: { type: "agentMessage", id: "agent-1", text: "" },
+    }), { "agent-1": "streamed answer" })!;
+
+    expect(completed.thread.turns[0]?.items[0]).toMatchObject({
+      type: "agentMessage",
+      text: "streamed answer",
+    });
+  });
+
   it("preserves the user-message client ID and restored attachment metadata across sparse live snapshots", () => {
     const withRestoredAttachment: SessionPayload = {
       ...session,

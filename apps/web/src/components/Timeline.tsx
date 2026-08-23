@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, WarningCircle, Wrench, X, XCircle } from "@phosphor-icons/react";
 import { Virtuoso } from "react-virtuoso";
-import type { CodeServerStatus } from "@codex-web/shared-types";
+import { mergeStreamingText, type CodeServerStatus } from "@codex-web/shared-types";
 import type { CodexItem, CodexTurn } from "../api";
 import { commandOutputText, commandResultDisplay } from "../command-output";
 import { forkBoundaryForTurn } from "../fork-boundary";
@@ -78,7 +78,7 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
 function Item({ item, turnStatus, onOpenDiff, codeServer, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; codeServer: CodeServerStatus; cwd: string; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
   if (item.type === "userMessage") return <UserMessage item={item} />;
-  if (item.type === "agentMessage") return <AgentMessage text={`${item.text}${delta ?? ""}`} codeServer={codeServer} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
+  if (item.type === "agentMessage") return <AgentMessage text={mergeStreamingText(item.text, delta)} codeServer={codeServer} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
     if (grouped) return <section className="activity-reasoning"><div className="activity-reasoning-label"><Wrench size={14} />思考摘要</div>{content}</section>;

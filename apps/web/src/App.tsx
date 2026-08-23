@@ -193,15 +193,16 @@ export function App() {
         if (disposed) return false;
         client.setQueryData(["bootstrap"], fresh);
         client.setQueryData(["projects"], fresh.projects);
+        await Promise.all([
+          client.invalidateQueries({ queryKey: ["sessions"] }),
+          client.invalidateQueries({ queryKey: ["session"] }),
+        ]);
+        if (disposed) return false;
         initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq, fresh.sessionPrefills, fresh.subagents);
         const replay = bufferedEvents.filter((event) => event.seq > fresh.eventSeq).sort((left, right) => left.seq - right.seq);
         bufferedEvents = [];
         buffering = false;
         for (const event of replay) applyEvent(event);
-        await Promise.all([
-          client.invalidateQueries({ queryKey: ["sessions"] }),
-          client.invalidateQueries({ queryKey: ["session"] }),
-        ]);
         return true;
       })().finally(() => {
         snapshotRefresh = null;

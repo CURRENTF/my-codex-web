@@ -12,6 +12,9 @@ function terminalizeTurn(turn: CodexTurn): CodexTurn {
 }
 
 function mergeItemSnapshot(existing: CodexItem, incoming: CodexItem): CodexItem {
+  if (existing.type === "agentMessage" && incoming.type === "agentMessage") {
+    return { ...existing, ...incoming, text: mergeStreamingText(existing.text, incoming.text) };
+  }
   if (existing.type === "commandExecution" && incoming.type === "commandExecution") {
     return { ...existing, ...incoming, aggregatedOutput: mergeStreamingText(existing.aggregatedOutput, incoming.aggregatedOutput) || null };
   }
@@ -139,9 +142,12 @@ export function applySessionEvent(
   if (event.type === "item.upserted") {
     const { turnId, item, startedAtMs } = event.payload as Partial<ItemUiEventPayload>;
     if (!turnId || !item) return current;
-    const hydratedItem = item.type === "commandExecution" && liveDeltas[item.id]
-      ? { ...item, aggregatedOutput: mergeStreamingText(liveDeltas[item.id], item.aggregatedOutput) || null }
-      : item;
+    const liveDelta = liveDeltas[item.id];
+    const hydratedItem = liveDelta && item.type === "agentMessage"
+      ? { ...item, text: mergeStreamingText(liveDelta, item.text) }
+      : liveDelta && item.type === "commandExecution"
+        ? { ...item, aggregatedOutput: mergeStreamingText(liveDelta, item.aggregatedOutput) || null }
+        : item;
     return { ...current, thread: { ...current.thread, turns: upsertItem(current.thread.turns, turnId, hydratedItem, startedAtMs) } };
   }
   if (event.type === "item.delta") {

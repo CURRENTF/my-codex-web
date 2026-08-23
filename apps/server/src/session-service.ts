@@ -311,6 +311,7 @@ export class SessionService extends EventEmitter {
   private readonly settings = new Map<string, SessionSettings>();
   private readonly sessionSnapshots = new Map<string, SessionSnapshot>();
   private readonly commandOutputDeltas = new Map<string, string>();
+  private readonly agentMessageDeltas = new Map<string, string>();
   private readonly goalPresence = new Map<string, boolean>();
   private readonly goalPresenceLoading = new Set<string>();
   private readonly removedThreads = new Set<string>();
@@ -1539,9 +1540,7 @@ export class SessionService extends EventEmitter {
     this.uncertainTurnDrafts.delete(threadId);
     this.uncertainTurnAttachmentIds.delete(threadId);
     this.uncertainSteers.delete(threadId);
-    for (const key of this.commandOutputDeltas.keys()) {
-      if (key.startsWith(`${threadId}\u0000`)) this.commandOutputDeltas.delete(key);
-    }
+    this.clearStreamingDeltaBuffers(threadId);
     this.markSessionRemoved(threadId);
     this.runtimes.removeThread?.(threadId);
   }
@@ -1660,18 +1659,30 @@ export class SessionService extends EventEmitter {
     if (!threadId || !this.sessionSnapshots.has(threadId)) return;
     if (event.type === "turnStarted" || event.type === "turnCompleted") {
       this.upsertSnapshotTurn(threadId, event.turn);
+      if (event.type === "turnCompleted") this.clearStreamingDeltaBuffers(threadId);
       return;
     }
     if (event.type === "itemUpserted") {
-      const item = event.item.type === "commandExecution" ? this.withBufferedCommandOutput(threadId, event.item) : event.item;
+      const item = event.item.type === "commandExecution"
+        ? this.withBufferedCommandOutput(threadId, event.item)
+        : event.item.type === "agentMessage"
+          ? this.withBufferedAgentMessage(threadId, event.item)
+          : event.item;
       this.upsertSnapshotItem(threadId, event.turnId, item);
       if (event.completed && item.type === "commandExecution") {
-        this.commandOutputDeltas.delete(this.commandDeltaKey(threadId, item.id));
+        this.commandOutputDeltas.delete(this.streamingDeltaKey(threadId, item.id));
+      }
+      if (event.completed && item.type === "agentMessage") {
+        this.agentMessageDeltas.delete(this.streamingDeltaKey(threadId, item.id));
       }
       return;
     }
     if (event.type === "itemDelta" && event.delta.kind === "commandOutput" && event.turnId) {
       this.appendSnapshotCommandDelta(threadId, event.turnId, event.delta.itemId, event.delta.delta);
+      return;
+    }
+    if (event.type === "itemDelta" && event.delta.kind === "agentMessage" && event.turnId) {
+      this.appendSnapshotAgentDelta(threadId, event.turnId, event.delta.itemId, event.delta.delta);
     }
   }
 
@@ -1712,13 +1723,15 @@ export class SessionService extends EventEmitter {
       const current = items[index]!;
       items[index] = current.type === "commandExecution" && item.type === "commandExecution"
         ? mergeCommandExecution(current, item)
-        : item;
+        : current.type === "agentMessage" && item.type === "agentMessage"
+          ? { ...current, ...item, text: mergeStreamingText(current.text, item.text) }
+          : item;
     }
     this.upsertSnapshotTurn(threadId, { ...turn, items });
   }
 
   private appendSnapshotCommandDelta(threadId: string, turnId: string, itemId: string, delta: string): void {
-    const key = this.commandDeltaKey(threadId, itemId);
+    const key = this.streamingDeltaKey(threadId, itemId);
     const buffered = (this.commandOutputDeltas.get(key) ?? "") + delta;
     this.commandOutputDeltas.set(key, buffered);
     const snapshot = this.sessionSnapshots.get(threadId);
@@ -1735,11 +1748,43 @@ export class SessionService extends EventEmitter {
     threadId: string,
     item: Extract<SnapshotItem, { type: "commandExecution" }>,
   ): Extract<SnapshotItem, { type: "commandExecution" }> {
-    const buffered = this.commandOutputDeltas.get(this.commandDeltaKey(threadId, item.id));
+    const buffered = this.commandOutputDeltas.get(this.streamingDeltaKey(threadId, item.id));
     return buffered ? { ...item, aggregatedOutput: mergeStreamingText(buffered, item.aggregatedOutput) || null } : item;
   }
 
-  private commandDeltaKey(threadId: string, itemId: string): string {
+  private appendSnapshotAgentDelta(threadId: string, turnId: string, itemId: string, delta: string): void {
+    const key = this.streamingDeltaKey(threadId, itemId);
+    const buffered = (this.agentMessageDeltas.get(key) ?? "") + delta;
+    this.agentMessageDeltas.set(key, buffered);
+    const snapshot = this.sessionSnapshots.get(threadId);
+    const turn = snapshot?.turns.find((candidate) => candidate.id === turnId);
+    const message = turn?.items.find((item) => item.id === itemId && item.type === "agentMessage");
+    if (!turn || !message || message.type !== "agentMessage") return;
+    this.upsertSnapshotItem(threadId, turnId, {
+      ...message,
+      text: mergeStreamingText(message.text, buffered),
+    });
+  }
+
+  private withBufferedAgentMessage(
+    threadId: string,
+    item: Extract<SnapshotItem, { type: "agentMessage" }>,
+  ): Extract<SnapshotItem, { type: "agentMessage" }> {
+    const buffered = this.agentMessageDeltas.get(this.streamingDeltaKey(threadId, item.id));
+    return buffered ? { ...item, text: mergeStreamingText(buffered, item.text) } : item;
+  }
+
+  private clearStreamingDeltaBuffers(threadId: string): void {
+    const prefix = `${threadId}\u0000`;
+    for (const key of this.commandOutputDeltas.keys()) {
+      if (key.startsWith(prefix)) this.commandOutputDeltas.delete(key);
+    }
+    for (const key of this.agentMessageDeltas.keys()) {
+      if (key.startsWith(prefix)) this.agentMessageDeltas.delete(key);
+    }
+  }
+
+  private streamingDeltaKey(threadId: string, itemId: string): string {
     return `${threadId}\u0000${itemId}`;
   }
 

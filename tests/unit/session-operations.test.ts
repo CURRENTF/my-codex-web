@@ -1252,6 +1252,30 @@ describe("session operation rules", () => {
     expect(refreshed.thread.turns[0]?.items.map((item) => item.id)).toEqual(["command-1", "command-2"]);
   });
 
+  it("serves streamed agent text from the live Session snapshot before rollout materialization", async () => {
+    const base = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [{ id: "turn-1", status: "inProgress" as const, items: [], startedAt: 1, completedAt: null, durationMs: null }] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ thread: base, settings: { model: null, reasoning: null, accessMode: "fullAccess" as const } })), readSession: vi.fn(async () => base), getGoal: vi.fn(async () => null),
+    });
+    const repositories = { markThreadViewed: vi.fn(), getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })), getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })) };
+    const runtimes = { markViewed: vi.fn(), get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeFlags: [], pendingRequestIds: [] })), getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    await service.readSession("thread-1");
+    service.handleEvent(projectAdapterEvent({ method: "item/started", params: {
+      threadId: "thread-1", turnId: "turn-1", item: { type: "agentMessage", id: "agent-1", text: "", phase: "final_answer" },
+    } })!);
+    service.handleEvent(projectAdapterEvent({ method: "item/agentMessage/delta", params: {
+      threadId: "thread-1", turnId: "turn-1", itemId: "agent-1", delta: "streamed answer",
+    } })!);
+
+    const refreshed = await service.readSession("thread-1");
+    expect(refreshed.thread.turns[0]?.items).toContainEqual(expect.objectContaining({
+      type: "agentMessage",
+      id: "agent-1",
+      text: "streamed answer",
+    }));
+  });
+
   it("does not leak a rejected serial-lock tracking promise", async () => {
     const adapter = Object.assign(new EventEmitter(), { interruptTurn: vi.fn(async () => undefined) });
     const runtimes = {
