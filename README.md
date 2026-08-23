@@ -20,6 +20,8 @@ codex-web
 
 默认地址为 `http://127.0.0.1:7373`。`codex-web` 会自动打开浏览器；设置 `CODEX_WEB_OPEN_BROWSER=0` 可关闭此行为。
 
+通过反向 SSH 隧道和 HTTPS 反向代理部署到远程 Linux/WSL 主机时，参见 [Worker-A 远程部署运行手册](docs/DEPLOYMENT_LINUX_REVERSE_TUNNEL.md)。
+
 ## 数据目录与 CODEX_HOME
 
 默认数据布局：
