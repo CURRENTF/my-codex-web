@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const styles = readFileSync(fileURLToPath(new URL("../../apps/web/src/styles.css", import.meta.url)), "utf8");
 const composerSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Composer.tsx", import.meta.url)), "utf8");
+const sessionPaneSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/SessionPane.tsx", import.meta.url)), "utf8");
 const timelineSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Timeline.tsx", import.meta.url)), "utf8");
 
 function rule(selector: string): string {
@@ -56,6 +57,13 @@ describe("viewport layout CSS", () => {
 
   it("keeps the portaled Goal editor inside the viewport", () => {
     expect(rule(".goal-popover")).toContain("width: min(390px, calc(100vw - 24px))");
+  });
+
+  it("keeps Goal in the Session header action row and collapses it to an icon in narrow panes", () => {
+    expect(sessionPaneSource).toMatch(/<header className="session-header">[\s\S]*<GoalBar[\s\S]*Side Chat[\s\S]*code-server[\s\S]*<\/header>/);
+    expect(rule(".session-pane")).not.toContain('"goal"');
+    expect(rule(".goal-bar")).toContain("max-width: min(310px, 31cqw)");
+    expect(styles).toMatch(/@container session-pane \(max-width: 760px\)[\s\S]*\.goal-bar \{ width: 32px; max-width: 32px; flex: 0 0 32px; \}/);
   });
 
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
