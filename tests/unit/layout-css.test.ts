@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const styles = readFileSync(fileURLToPath(new URL("../../apps/web/src/styles.css", import.meta.url)), "utf8");
+const appSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/App.tsx", import.meta.url)), "utf8");
 const composerSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Composer.tsx", import.meta.url)), "utf8");
 const sessionPaneSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/SessionPane.tsx", import.meta.url)), "utf8");
 const timelineSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Timeline.tsx", import.meta.url)), "utf8");
@@ -64,6 +65,14 @@ describe("viewport layout CSS", () => {
     expect(rule(".session-pane")).not.toContain('"goal"');
     expect(rule(".goal-bar")).toContain("max-width: min(310px, 31cqw)");
     expect(styles).toMatch(/@container session-pane \(max-width: 760px\)[\s\S]*\.goal-bar \{ width: 32px; max-width: 32px; flex: 0 0 32px; \}/);
+  });
+
+  it("groups the empty Session state into icon, copy, and action spacing", () => {
+    expect(appSource).toContain('className="no-selection-mark"');
+    expect(appSource).toContain('className="no-selection-copy"');
+    expect(rule(".no-selection-mark")).toContain("margin-bottom: 18px");
+    expect(rule(".no-selection-copy")).toContain("gap: 7px");
+    expect(rule(".no-selection .button")).toContain("margin-top: 22px");
   });
 
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
