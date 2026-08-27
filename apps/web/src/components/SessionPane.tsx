@@ -10,6 +10,7 @@ import { questionForTurn } from "../fork-boundary";
 import { shouldShowFullAccessNotice } from "../full-access-notice";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
 import { canBranchSession } from "../session-selection";
+import { fetchMergedSession } from "../session-query";
 import { useAppStore } from "../store";
 import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
 import { Composer } from "./Composer";
@@ -29,7 +30,7 @@ export function SessionPane({ threadId, project, projects, models, codeServer, s
 }) {
   const queryClient = useQueryClient(); const restorePrefill = useAppStore((state) => state.restorePrefill);
   const reconcileOptimisticUserMessages = useAppStore((state) => state.reconcileOptimisticUserMessages);
-  const query = useQuery({ queryKey: ["session", threadId], queryFn: ({ signal }) => endpoints.session(threadId, signal), refetchInterval: false, retry: sideChat ? false : 2 });
+  const query = useQuery({ queryKey: ["session", threadId], queryFn: ({ signal }) => fetchMergedSession(queryClient, threadId, signal), refetchInterval: false, retry: sideChat ? false : 2 });
   const liveRuntime = useAppStore((state) => state.runtimes[threadId]); const connectionState = useAppStore((state) => state.connectionState); const payload = query.data;
   const runtime = liveRuntime ?? payload?.runtime; const state: RuntimeState = connectionState === "connected" ? (runtime?.state ?? "idle") : "disconnected";
   const title = sideChat ? "Side Chat" : payload?.thread.name || payload?.thread.preview || "Session";

@@ -5,6 +5,8 @@ import { useLocation, useNavigate } from "react-router";
 import type { Preferences, Project, SessionSummary, TurnUiEventPayload, UiEvent } from "@codex-web/shared-types";
 import { api, authenticateWebUi, bootstrap, endpoints, isPasswordRequiredError, newClientRequestId, type SessionPayload } from "./api";
 import { applySessionEvent } from "./live-session";
+import { fetchMergedSession } from "./session-query";
+import { synchronizeLiveSnapshot } from "./snapshot-refresh";
 import { COMPOSER_FOCUS_RETRY_DELAYS, shouldRestoreComposerFocus } from "./composer-focus";
 import { shouldWarnAboutParallelFullAccess } from "./parallel-write-warning";
 import { resizedSideChatWidth } from "./side-chat-layout";
@@ -132,8 +134,8 @@ export function App() {
   useEffect(() => setSideCloseError(null), [sideThreadId]);
   const mainRuntime = useAppStore((state) => selectedThreadId ? state.runtimes[selectedThreadId] : undefined);
   const sideRuntime = useAppStore((state) => sideThreadId ? state.runtimes[sideThreadId] : undefined);
-  const mainSessionForWarning = useQuery({ queryKey: ["session", selectedThreadId], queryFn: ({ signal }) => endpoints.session(selectedThreadId!, signal), enabled: !!selectedThreadId && !!sideThreadId });
-  const sideSessionForWarning = useQuery({ queryKey: ["session", sideThreadId], queryFn: ({ signal }) => endpoints.session(sideThreadId!, signal), enabled: !!sideThreadId, retry: false });
+  const mainSessionForWarning = useQuery({ queryKey: ["session", selectedThreadId], queryFn: ({ signal }) => fetchMergedSession(client, selectedThreadId!, signal), enabled: !!selectedThreadId && !!sideThreadId });
+  const sideSessionForWarning = useQuery({ queryKey: ["session", sideThreadId], queryFn: ({ signal }) => fetchMergedSession(client, sideThreadId!, signal), enabled: !!sideThreadId, retry: false });
   const parallelWriteWarning = shouldWarnAboutParallelFullAccess(
     mainRuntime && mainSessionForWarning.data ? { state: mainRuntime.state, accessMode: mainSessionForWarning.data.settings.accessMode } : null,
     sideRuntime && sideSessionForWarning.data ? { state: sideRuntime.state, accessMode: sideSessionForWarning.data.settings.accessMode } : null,
@@ -188,23 +190,26 @@ export function App() {
     const refreshSnapshot = () => {
       if (snapshotRefresh) return snapshotRefresh;
       buffering = true;
-      snapshotRefresh = (async () => {
-        const fresh = await bootstrap();
-        if (disposed) return false;
-        client.setQueryData(["bootstrap"], fresh);
-        client.setQueryData(["projects"], fresh.projects);
-        await Promise.all([
-          client.invalidateQueries({ queryKey: ["sessions"] }),
-          client.invalidateQueries({ queryKey: ["session"] }),
-        ]);
-        if (disposed) return false;
-        initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq, fresh.sessionPrefills, fresh.subagents);
-        const replay = bufferedEvents.filter((event) => event.seq > fresh.eventSeq).sort((left, right) => left.seq - right.seq);
-        bufferedEvents = [];
-        buffering = false;
-        for (const event of replay) applyEvent(event);
-        return true;
-      })().finally(() => {
+      snapshotRefresh = synchronizeLiveSnapshot({
+        loadSnapshot: bootstrap,
+        applySnapshotAndResumeEvents: (fresh) => {
+          if (disposed) return false;
+          client.setQueryData(["bootstrap"], fresh);
+          client.setQueryData(["projects"], fresh.projects);
+          initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq, fresh.sessionPrefills, fresh.subagents);
+          const replay = bufferedEvents.filter((event) => event.seq > fresh.eventSeq).sort((left, right) => left.seq - right.seq);
+          bufferedEvents = [];
+          buffering = false;
+          for (const event of replay) applyEvent(event);
+          return true;
+        },
+        refreshQueries: async () => {
+          await Promise.all([
+            client.invalidateQueries({ queryKey: ["sessions"] }),
+            client.invalidateQueries({ queryKey: ["session"] }),
+          ]);
+        },
+      }).finally(() => {
         snapshotRefresh = null;
         if (buffering) {
           buffering = false;

@@ -11,12 +11,16 @@ function terminalizeTurn(turn: CodexTurn): CodexTurn {
   return { ...turn, items: turn.items.map((item) => terminalizeItem(item, turn.status)) };
 }
 
-function mergeItemSnapshot(existing: CodexItem, incoming: CodexItem): CodexItem {
+function mergeItemSnapshot(existing: CodexItem, incoming: CodexItem, preserveExistingProgress = false): CodexItem {
   if (existing.type === "agentMessage" && incoming.type === "agentMessage") {
-    return { ...existing, ...incoming, text: mergeStreamingText(existing.text, incoming.text) };
+    return preserveExistingProgress
+      ? { ...incoming, ...existing, text: mergeStreamingText(incoming.text, existing.text) }
+      : { ...existing, ...incoming, text: mergeStreamingText(existing.text, incoming.text) };
   }
   if (existing.type === "commandExecution" && incoming.type === "commandExecution") {
-    return { ...existing, ...incoming, aggregatedOutput: mergeStreamingText(existing.aggregatedOutput, incoming.aggregatedOutput) || null };
+    return preserveExistingProgress
+      ? { ...incoming, ...existing, aggregatedOutput: mergeStreamingText(incoming.aggregatedOutput, existing.aggregatedOutput) || null }
+      : { ...existing, ...incoming, aggregatedOutput: mergeStreamingText(existing.aggregatedOutput, incoming.aggregatedOutput) || null };
   }
   if (existing.type === "userMessage" && incoming.type === "userMessage") {
     const content = Array.from({ length: Math.max(existing.content.length, incoming.content.length) }, (_, index) => {
@@ -44,15 +48,26 @@ function upsertTurn(turns: CodexTurn[], incoming: CodexTurn): CodexTurn[] {
   const current = turns[index]!;
   const next = [...turns];
   const items = [...current.items];
+  const incomingRegressesTerminalTurn = current.status !== "inProgress" && incoming.status === "inProgress";
   for (const item of incoming.items) {
     const itemIndex = itemSnapshotIndex(items, item);
     if (itemIndex < 0) items.push(item);
     else {
-      items[itemIndex] = mergeItemSnapshot(items[itemIndex]!, item);
+      items[itemIndex] = mergeItemSnapshot(items[itemIndex]!, item, incomingRegressesTerminalTurn);
     }
   }
   const errors = mergeTurnErrors(current.errors, incoming.errors);
-  next[index] = terminalizeTurn({ ...current, ...incoming, ...(errors.length ? { errors } : {}), items });
+  next[index] = terminalizeTurn({
+    ...current,
+    ...incoming,
+    ...(incomingRegressesTerminalTurn ? {
+      status: current.status,
+      completedAt: current.completedAt,
+      durationMs: current.durationMs,
+    } : {}),
+    ...(errors.length ? { errors } : {}),
+    items,
+  });
   return next;
 }
 
@@ -156,4 +171,22 @@ export function applySessionEvent(
     return { ...current, thread: { ...current.thread, turns: appendCommandDelta(current.thread.turns, itemId, delta) } };
   }
   return current;
+}
+
+export function mergeSessionSnapshot(
+  current: SessionPayload | undefined,
+  incoming: SessionPayload,
+): SessionPayload {
+  if (!current || current.thread.id !== incoming.thread.id) return incoming;
+  let turns = current.thread.turns;
+  for (const turn of incoming.thread.turns) turns = upsertTurn(turns, turn);
+  return {
+    ...current,
+    ...incoming,
+    thread: {
+      ...current.thread,
+      ...incoming.thread,
+      turns,
+    },
+  };
 }

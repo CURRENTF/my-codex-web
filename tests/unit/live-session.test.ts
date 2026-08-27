@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UiEvent } from "@codex-web/shared-types";
 import type { SessionPayload } from "../../apps/web/src/api";
-import { applySessionEvent } from "../../apps/web/src/live-session";
+import { applySessionEvent, mergeSessionSnapshot } from "../../apps/web/src/live-session";
 
 function event(type: string, payload: unknown): UiEvent {
   return { seq: 1, type, threadId: "thread-1", emittedAt: Date.now(), payload };
@@ -311,6 +311,49 @@ describe("applySessionEvent", () => {
       type: "commandExecution",
       status: "interrupted",
       aggregatedOutput: "started\n",
+    });
+  });
+});
+
+describe("mergeSessionSnapshot", () => {
+  it("does not let a late in-progress snapshot erase a completed streamed answer", () => {
+    const completed: SessionPayload = {
+      ...session,
+      thread: {
+        ...session.thread,
+        turns: [{
+          id: "turn-1",
+          status: "completed",
+          startedAt: 10,
+          completedAt: 12,
+          durationMs: 2_000,
+          items: [{ type: "agentMessage", id: "agent-1", text: "complete answer" }],
+        }],
+      },
+    };
+    const stale: SessionPayload = {
+      ...session,
+      thread: {
+        ...session.thread,
+        turns: [{
+          id: "turn-1",
+          status: "inProgress",
+          startedAt: 10,
+          completedAt: null,
+          durationMs: null,
+          items: [{ type: "agentMessage", id: "agent-1", text: "complete" }],
+        }],
+      },
+      runtime: { threadId: "thread-1", state: "running", activeTurnId: "turn-1", activeFlags: [], pendingRequestIds: [] },
+    };
+
+    const merged = mergeSessionSnapshot(completed, stale);
+
+    expect(merged.thread.turns[0]).toMatchObject({
+      status: "completed",
+      completedAt: 12,
+      durationMs: 2_000,
+      items: [{ type: "agentMessage", id: "agent-1", text: "complete answer" }],
     });
   });
 });
