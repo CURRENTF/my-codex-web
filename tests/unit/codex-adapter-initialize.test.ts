@@ -41,11 +41,11 @@ describe("Codex Adapter initialization", () => {
     const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
     (adapter.supervisor as unknown as { transportValue: typeof transport }).transportValue = transport;
 
-    await adapter.startTurn("parent", "/tmp", "hello", { model: null, reasoning: null, accessMode: "fullAccess" }, "message-1");
-    await adapter.forkSession("parent", "turn-0", { model: null, reasoning: null, accessMode: "fullAccess" }, false, "/tmp", "codex-web-fork:request-1");
+    await adapter.startTurn("parent", "/tmp", "hello", { model: null, reasoning: null, serviceTier: "priority", accessMode: "fullAccess" }, "message-1");
+    await adapter.forkSession("parent", "turn-0", { model: null, reasoning: null, serviceTier: "priority", accessMode: "fullAccess" }, false, "/tmp", "codex-web-fork:request-1");
 
-    expect(request).toHaveBeenCalledWith("turn/start", expect.any(Object), NON_IDEMPOTENT_MUTATION_TIMEOUT);
-    expect(request).toHaveBeenCalledWith("thread/fork", expect.objectContaining({ threadSource: "codex-web-fork:request-1" }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
+    expect(request).toHaveBeenCalledWith("turn/start", expect.objectContaining({ serviceTier: "priority" }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
+    expect(request).toHaveBeenCalledWith("thread/fork", expect.objectContaining({ serviceTier: "priority", threadSource: "codex-web-fork:request-1" }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
   });
 
   it("keeps JSON-RPC timeout details behind the stable Adapter error boundary", async () => {
@@ -125,7 +125,7 @@ describe("Codex Adapter initialization", () => {
       inputModalities: ["text"],
       supportsPersonality: false,
       additionalSpeedTiers: [],
-      serviceTiers: [],
+      serviceTiers: [{ id: "priority", name: "Fast", description: "1.5x speed, increased usage" }],
       defaultServiceTier: null,
       isDefault: id === "model-a",
     });
@@ -139,8 +139,8 @@ describe("Codex Adapter initialization", () => {
     (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
 
     await expect(adapter.listModels()).resolves.toEqual([
-      expect.objectContaining({ id: "model-a", isDefault: true }),
-      expect.objectContaining({ id: "model-b", isDefault: false }),
+      expect.objectContaining({ id: "model-a", isDefault: true, serviceTiers: [{ id: "priority", name: "Fast", description: "1.5x speed, increased usage" }], defaultServiceTier: null }),
+      expect.objectContaining({ id: "model-b", isDefault: false, serviceTiers: [{ id: "priority", name: "Fast", description: "1.5x speed, increased usage" }], defaultServiceTier: null }),
     ]);
     expect(request.mock.calls).toEqual([
       ["model/list", { cursor: null, limit: 100, includeHidden: false }],

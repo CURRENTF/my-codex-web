@@ -181,7 +181,7 @@ describe("session operation rules", () => {
     await expect(Promise.all([first, retry])).resolves.toHaveLength(2);
     expect(adapter.startTurn).toHaveBeenCalledTimes(1);
     expect(repositories.setSessionTurnSettings).toHaveBeenCalledOnce();
-    expect(repositories.setSessionTurnSettings).toHaveBeenCalledWith("thread-1", { model: "gpt-test", reasoning: "high" });
+    expect(repositories.setSessionTurnSettings).toHaveBeenCalledWith("thread-1", { model: "gpt-test", reasoning: "high", serviceTier: null });
     expect(runtimes.setActiveTurn).toHaveBeenCalledTimes(1);
   });
 
@@ -208,7 +208,7 @@ describe("session operation rules", () => {
     expect(adapter.listSkills).toHaveBeenCalledWith("/tmp/project");
     expect(adapter.startTurn).toHaveBeenCalledWith(
       "thread-1", "/tmp/project", "redesign this",
-      { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" }, "message-skill",
+      { model: "gpt-test", reasoning: "high", serviceTier: null, accessMode: "fullAccess" }, "message-skill",
       [{ name: "design-taste-frontend", path: "/skills/design/SKILL.md" }],
     );
   });
@@ -246,7 +246,7 @@ describe("session operation rules", () => {
     expect(repositories.setMessageAttachmentReferences).toHaveBeenCalledWith("thread-1", "message-attachments", ["attachment-image", "attachment-file"]);
     expect(adapter.startTurn).toHaveBeenCalledWith(
       "thread-1", "/tmp/project", "",
-      { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" }, "message-attachments", [],
+      { model: "gpt-test", reasoning: "high", serviceTier: null, accessMode: "fullAccess" }, "message-attachments", [],
       [
         { kind: "image", name: "screen.png", path: "/data/attachments/screen.png" },
         { kind: "file", name: "report.pdf", path: "/data/attachments/report.pdf" },
@@ -512,7 +512,7 @@ describe("session operation rules", () => {
 
     expect(adapter.startSession).toHaveBeenCalledWith(
       "/tmp/project",
-      { model: null, reasoning: "high", accessMode: "fullAccess" },
+      { model: null, reasoning: "high", serviceTier: null, accessMode: "fullAccess" },
       false,
       "codex-web-session:project-1:create-request",
     );
@@ -1073,15 +1073,15 @@ describe("session operation rules", () => {
 
   it("resolves explicit, current Session, and Project settings in that order", () => {
     const project = { defaultModel: "project-model", defaultReasoning: "medium", defaultAccessMode: "fullAccess" as const };
-    const current = { model: "session-model", reasoning: "high", accessMode: "workspaceWrite" as const };
+    const current = { model: "session-model", reasoning: "high", serviceTier: "priority", accessMode: "workspaceWrite" as const };
     expect(resolveSessionSettings(project, {}, current)).toEqual(current);
-    expect(resolveSessionSettings(project, { model: "turn-model", reasoning: "low", accessMode: "readOnly" }, current)).toEqual({ model: "turn-model", reasoning: "low", accessMode: "readOnly" });
-    expect(resolveSessionSettings(project, {})).toEqual({ model: "project-model", reasoning: "medium", accessMode: "fullAccess" });
+    expect(resolveSessionSettings(project, { model: "turn-model", reasoning: "low", serviceTier: null, accessMode: "readOnly" }, current)).toEqual({ model: "turn-model", reasoning: "low", serviceTier: null, accessMode: "readOnly" });
+    expect(resolveSessionSettings(project, {})).toEqual({ model: "project-model", reasoning: "medium", serviceTier: null, accessMode: "fullAccess" });
   });
 
   it("defaults reasoning to high when no Turn, Session, or Project setting exists", () => {
     const project = { defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" as const };
-    expect(resolveSessionSettings(project, {})).toEqual({ model: null, reasoning: "high", accessMode: "fullAccess" });
+    expect(resolveSessionSettings(project, {})).toEqual({ model: null, reasoning: "high", serviceTier: null, accessMode: "fullAccess" });
   });
 
   it("applies the Project access default to a cold Session while preserving its model and reasoning", async () => {
@@ -1105,7 +1105,7 @@ describe("session operation rules", () => {
     const result = await service.readSession("thread-1");
 
     expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", { accessMode: "fullAccess" });
-    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "fullAccess" });
+    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", serviceTier: null, accessMode: "fullAccess" });
   });
 
   it("restores a cold Session from its latest successful Turn settings instead of Project defaults", async () => {
@@ -1118,7 +1118,7 @@ describe("session operation rules", () => {
     const repositories = {
       getProjectSession: vi.fn(() => ({
         thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project",
-        last_model: "gpt-5.6-sol", last_reasoning: "max", access_mode_override: null,
+        last_model: "gpt-5.6-sol", last_reasoning: "max", last_service_tier: "priority", has_last_service_tier: 1, access_mode_override: null,
       })),
       getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess" as const })),
     };
@@ -1131,22 +1131,22 @@ describe("session operation rules", () => {
     const result = await service.readSession("thread-1");
 
     expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", {
-      model: "gpt-5.6-sol", reasoning: "max", accessMode: "fullAccess",
+      model: "gpt-5.6-sol", reasoning: "max", serviceTier: "priority", accessMode: "fullAccess",
     });
-    expect(result.settings).toEqual({ model: "gpt-5.6-sol", reasoning: "max", accessMode: "fullAccess" });
+    expect(result.settings).toEqual({ model: "gpt-5.6-sol", reasoning: "max", serviceTier: "priority", accessMode: "fullAccess" });
   });
 
   it("backfills App Server settings for a legacy Session that already has Turns", async () => {
     const snapshot = { id: "thread-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [turn("turn-max", "completed")] };
     const adapter = Object.assign(new EventEmitter(), {
-      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "gpt-5.6-sol", reasoning: "max", accessMode: "workspaceWrite" as const } })),
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "gpt-5.6-sol", reasoning: "max", serviceTier: "priority", accessMode: "workspaceWrite" as const } })),
       readSession: vi.fn(async () => snapshot),
       getGoal: vi.fn(async () => null),
     });
     const repositories = {
       getProjectSession: vi.fn(() => ({
         thread_id: "thread-1", project_id: "project-1", cwd_snapshot: "/tmp/project",
-        last_model: null, last_reasoning: null, access_mode_override: null,
+        last_model: null, last_reasoning: null, last_service_tier: null, has_last_service_tier: 0, access_mode_override: null,
       })),
       getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess" as const })),
       setSessionTurnSettings: vi.fn(),
@@ -1159,8 +1159,8 @@ describe("session operation rules", () => {
 
     const result = await service.readSession("thread-1");
 
-    expect(result.settings).toEqual({ model: "gpt-5.6-sol", reasoning: "max", accessMode: "fullAccess" });
-    expect(repositories.setSessionTurnSettings).toHaveBeenCalledWith("thread-1", { model: "gpt-5.6-sol", reasoning: "max" });
+    expect(result.settings).toEqual({ model: "gpt-5.6-sol", reasoning: "max", serviceTier: "priority", accessMode: "fullAccess" });
+    expect(repositories.setSessionTurnSettings).toHaveBeenCalledWith("thread-1", { model: "gpt-5.6-sol", reasoning: "max", serviceTier: "priority" });
   });
 
   it("applies a persisted Session access override before the Project default", async () => {
@@ -1183,7 +1183,7 @@ describe("session operation rules", () => {
     const result = await service.readSession("thread-1");
 
     expect(adapter.resumeSession).toHaveBeenCalledWith("thread-1", { accessMode: "readOnly" });
-    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", accessMode: "readOnly" });
+    expect(result.settings).toEqual({ model: "app-default", reasoning: "low", serviceTier: null, accessMode: "readOnly" });
   });
 
   it("serves the live snapshot while a newly started Session rollout is still materializing", async () => {
@@ -2482,7 +2482,7 @@ describe("session operation rules", () => {
   it("inherits a cold parent's current settings when creating Side Chat", async () => {
     const parent = { id: "parent", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
     const child = { ...parent, id: "side-1", ephemeral: true, forkedFromId: "parent" };
-    const protocolSettings = { model: "parent-model", reasoning: "low", accessMode: "readOnly" as const };
+    const protocolSettings = { model: "parent-model", reasoning: "low", serviceTier: null, accessMode: "readOnly" as const };
     const adapter = Object.assign(new EventEmitter(), {
       resumeSession: vi.fn(async () => ({ thread: parent, settings: protocolSettings })),
       createSideChat: vi.fn(async () => ({ thread: child })),
@@ -2579,13 +2579,13 @@ describe("session operation rules", () => {
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
     await service.readSession("parent");
     const normalized = service.handleEvent(projectAdapterEvent({ method: "thread/settings/updated", params: { threadId: "parent", threadSettings: {
-      model: "new-model", effort: "low", approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly", networkAccess: false },
+      model: "new-model", serviceTier: "priority", effort: "low", approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly", networkAccess: false },
     } } })!);
 
     await service.createSideChat("parent", null);
 
-    expect(normalized).toMatchObject({ type: "settingsUpdated", settings: { model: "new-model", reasoning: "low", accessMode: "fullAccess" } });
-    expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, { model: "new-model", reasoning: "low", accessMode: "fullAccess" }, "/tmp/project");
+    expect(normalized).toMatchObject({ type: "settingsUpdated", settings: { model: "new-model", reasoning: "low", serviceTier: "priority", accessMode: "fullAccess" } });
+    expect(adapter.createSideChat).toHaveBeenCalledWith("parent", null, { model: "new-model", reasoning: "low", serviceTier: "priority", accessMode: "fullAccess" }, "/tmp/project");
   });
 
   it("updates an ephemeral Side Chat access mode without requiring a persistent mapping", async () => {

@@ -216,6 +216,8 @@ export interface ModelOption {
   isDefault: boolean;
   defaultReasoning: string;
   supportedReasoning: Array<{ effort: string; description?: string }>;
+  serviceTiers: Array<{ id: string; name: string; description: string }>;
+  defaultServiceTier: string | null;
   inputModalities: string[];
 }
 
@@ -256,6 +258,24 @@ export interface CodeServerStatus {
   url: string | null;
   state: "checking" | "available" | "unavailable" | "unconfigured";
   checkedAt: number | null;
+}
+
+export type SelfUpdateState = "unavailable" | "idle" | "running" | "upToDate" | "restarting" | "succeeded" | "failed";
+export type SelfUpdateStep = "unavailable" | "idle" | "checking" | "installing" | "validating" | "deploying" | "restarting" | "complete";
+
+export interface SelfUpdateStatus {
+  enabled: boolean;
+  state: SelfUpdateState;
+  step: SelfUpdateStep;
+  repository: string;
+  remote: string;
+  branch: string;
+  runId: string | null;
+  currentCommit: string | null;
+  targetCommit: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  message: string;
 }
 
 export function mergeStreamingText(base: string | null | undefined, update: string | null | undefined): string {

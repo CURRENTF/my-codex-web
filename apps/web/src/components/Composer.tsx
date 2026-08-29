@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Paperclip, ShieldCheck, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Lightning, Paperclip, ShieldCheck, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ContextUsage, Goal, ModelOption, Project, RuntimeState, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 import { ApiError, api, endpoints, newClientRequestId } from "../api";
@@ -7,6 +7,7 @@ import { commandArgumentSuggestions, composerTrigger, isCompletedSkillTrigger, i
 import { expectedSteerTurnId, isTurnFinishedConflict } from "../composer-intent";
 import { resizeComposerTextarea } from "../composer-textarea";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
+import { fastServiceTierForModel, serviceTierForModel } from "../service-tier";
 import { useAppStore, type QueuedUserMessage } from "../store";
 
 function requestId(): string { return crypto.randomUUID(); }
@@ -50,7 +51,7 @@ function normalizeAccessMode(value: string): AccessMode | null {
 export function Composer({ threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
-  initialSettings: { model: string | null; reasoning: string | null; accessMode: AccessMode };
+  initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode };
   goal?: Goal | null; contextUsage?: ContextUsage; latestCompletedTurnId?: string | null;
   compact?: boolean; disabled?: boolean; onTextareaReady?(element: HTMLTextAreaElement | null): void;
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(): void; onOpenSideChat?(): void;
@@ -75,6 +76,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const [model, setModel] = useState(initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "");
   const selectedModel = useMemo(() => models.find((item) => item.model === model || item.id === model), [models, model]);
   const [reasoning, setReasoning] = useState(initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(selectedModel));
+  const [serviceTier, setServiceTier] = useState<string | null>(serviceTierForModel(selectedModel, initialSettings.serviceTier));
   const [accessMode, setAccessMode] = useState<AccessMode>(initialSettings.accessMode ?? project.defaultAccessMode);
   const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null); const [cursor, setCursor] = useState(0);
@@ -95,11 +97,15 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     const option = models.find((item) => item.model === nextModel || item.id === nextModel);
     setModel(nextModel);
     setReasoning(initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(option));
+    setServiceTier(serviceTierForModel(option, initialSettings.serviceTier));
     setAccessMode(initialSettings.accessMode ?? project.defaultAccessMode);
     steerDraftTurnId.current = null;
     setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setAttachments([]); setUploadingCount(0); setDraggingFiles(false);
-  }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
+  }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.serviceTier, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
   useEffect(() => { if (selectedModel && !selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) setReasoning(selectedModel.defaultReasoning); }, [selectedModel, reasoning]);
+  useEffect(() => { setServiceTier((current) => serviceTierForModel(selectedModel, current)); }, [selectedModel]);
+  const fastServiceTier = useMemo(() => fastServiceTierForModel(selectedModel), [selectedModel]);
+  const fastMode = !!fastServiceTier && serviceTier === fastServiceTier.id;
   useLayoutEffect(() => {
     if (textarea.current) resizeComposerTextarea(textarea.current);
   }, [draft]);
@@ -237,7 +243,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     if (command === "model") {
       const option = models.find((item) => item.model === args || item.id === args);
       if (!option) throw new Error("请选择 /model 菜单中列出的模型。");
-      setModel(option.model); setReasoning(preferredReasoningForModel(option)); setFeedback({ tone: "success", text: `模型已切换为 ${option.displayName}；将在下一 Turn 生效。` }); return;
+      setModel(option.model); setReasoning(preferredReasoningForModel(option)); setServiceTier((current) => serviceTierForModel(option, current)); setFeedback({ tone: "success", text: `模型已切换为 ${option.displayName}；将在下一 Turn 生效。` }); return;
     }
     if (command === "reasoning") {
       if (!selectedModel?.supportedReasoning.some((item) => item.effort === args)) throw new Error("请选择当前模型支持的 Reasoning 强度。");
@@ -252,10 +258,10 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     if (command === "status") {
       if (args) throw new Error("/status 不接受参数。");
       const context = contextUsage ? `${contextUsage.usedTokens.toLocaleString()} / ${contextUsage.maxTokens?.toLocaleString() ?? "?"} tokens` : "尚无数据";
-      setFeedback({ tone: "info", text: `${runtimeState} · ${selectedModel?.displayName ?? model} · reasoning ${reasoning || "default"} · ${accessModeLabel(accessMode)} · 上下文 ${context}` }); return;
+      setFeedback({ tone: "info", text: `${runtimeState} · ${selectedModel?.displayName ?? model} · ${fastMode ? "Fast" : "Standard"} · reasoning ${reasoning || "default"} · ${accessModeLabel(accessMode)} · 上下文 ${context}` }); return;
     }
     updateDraft("$", 1); setFeedback(null);
-  }, [accessMode, contextUsage, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
+  }, [accessMode, contextUsage, fastMode, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
 
   const send = useMutation({ mutationFn: async ({ expectedTurnId }: { expectedTurnId?: string | null } = {}) => {
     const submittedDraft = draft; const submittedAttachments = [...attachments]; const text = submittedDraft.trim(); if (!text && !submittedAttachments.length) return;
@@ -273,7 +279,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
         steerDraftTurnId.current = null;
       }
     }
-    return api(`/api/sessions/${threadId}/turns`, { method: "POST", body: JSON.stringify({ text, skillNames, attachmentIds: submittedAttachments.map((attachment) => attachment.id), model, reasoning, accessMode, clientRequestId: expectedTurnId ? requestId() : clientRequestId, clientUserMessageId }) });
+    return api(`/api/sessions/${threadId}/turns`, { method: "POST", body: JSON.stringify({ text, skillNames, attachmentIds: submittedAttachments.map((attachment) => attachment.id), model, reasoning, serviceTier, accessMode, clientRequestId: expectedTurnId ? requestId() : clientRequestId, clientUserMessageId }) });
   }, onSuccess: () => { const sent = new Set(submittedAttachmentIds.current); submittedAttachmentIds.current = []; steerDraftTurnId.current = null; acceptSubmission(threadId); setAttachments((current) => current.filter((attachment) => !sent.has(attachment.id))); setResolutionMessage(null); setFeedback(null); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); }, onError: (error) => {
     void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     if (apiErrorCode(error) === "operation_uncertain") { markSubmissionUncertain(threadId); return; }
@@ -291,6 +297,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
         attachmentIds: (message.attachments ?? []).map((attachment) => attachment.id),
         model: message.model,
         reasoning: message.reasoning,
+        serviceTier: message.serviceTier,
         accessMode: message.accessMode,
         clientRequestId: message.clientRequestId,
         clientUserMessageId: message.clientUserMessageId,
@@ -378,6 +385,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       skillNames: referencedSkillNames(text, skills.data ?? []),
       model,
       reasoning,
+      serviceTier,
       accessMode,
       clientRequestId: newClientRequestId(),
       clientUserMessageId: requestId(),
@@ -385,7 +393,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     };
     steerDraftTurnId.current = null;
     queueUserMessage(threadId, message); updateDraft(""); setAttachments([]); setFeedback({ tone: "info", text: "需求已排队，将在当前 Turn 完成后自动发送。" });
-  }, [accessMode, attachments, model, queueUserMessage, queuedSlashCommand, queuedUserMessage, reasoning, skills.data, threadId, updateDraft]);
+  }, [accessMode, attachments, model, queueUserMessage, queuedSlashCommand, queuedUserMessage, reasoning, serviceTier, skills.data, threadId, updateDraft]);
 
   const rememberSteerIntent = () => { if (deliveryMode === "steer" && running && activeTurnId) steerDraftTurnId.current ??= activeTurnId; };
   const submit = () => {
@@ -471,8 +479,9 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
           <div className="access-control"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><span aria-hidden="true">{accessModeLabel(accessMode)}</span><select aria-label="权限" value={accessMode} onChange={(event) => { const next = event.target.value as AccessMode; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div>
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
-              <label className="inline-select model-select"><span aria-hidden="true">{selectedModel?.displayName ?? model}</span><select aria-label="模型" value={model} onChange={(event) => { const next = event.target.value; setModel(next); setReasoning(preferredReasoningForModel(models.find((item) => item.model === next || item.id === next))); }} disabled={running || blocked}>{models.map((item) => <option key={item.id} value={item.model}>{item.displayName}</option>)}</select></label>
+              <label className="inline-select model-select"><span aria-hidden="true">{selectedModel?.displayName ?? model}</span><select aria-label="模型" value={model} onChange={(event) => { const next = event.target.value; const option = models.find((item) => item.model === next || item.id === next); setModel(next); setReasoning(preferredReasoningForModel(option)); setServiceTier((current) => serviceTierForModel(option, current)); }} disabled={running || blocked}>{models.map((item) => <option key={item.id} value={item.model}>{item.displayName}</option>)}</select></label>
               <label className="inline-select reasoning-select"><span aria-hidden="true">{reasoning}</span><select aria-label="Reasoning effort" value={reasoning} onChange={(event) => setReasoning(event.target.value)} disabled={running || blocked}>{selectedModel?.supportedReasoning.map((item) => <option key={item.effort} value={item.effort}>{item.effort}</option>)}</select></label>
+              {fastServiceTier && <button type="button" className={`service-tier-toggle ${fastMode ? "active" : ""}`} role="switch" aria-checked={fastMode} aria-label={`Fast 模式${fastMode ? "已开启" : "已关闭"}`} title={`${fastServiceTier.name}：${fastServiceTier.description}`} disabled={running || blocked} onClick={() => setServiceTier(fastMode ? null : fastServiceTier.id)}><Lightning size={13} weight={fastMode ? "fill" : "regular"} /><span>{fastServiceTier.name}</span></button>}
             </div>
             <div className="composer-actions">
               <input ref={fileInput} className="attachment-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => void uploadFiles([...(event.target.files ?? [])])} />

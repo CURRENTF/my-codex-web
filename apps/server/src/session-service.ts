@@ -72,7 +72,7 @@ function sessionSummaryMatchesSearch(summary: Pick<SessionSummary, "title" | "pr
   return `${summary.title}\n${summary.preview}`.toLocaleLowerCase().includes(term);
 }
 
-interface TurnSettings { model?: string | null; reasoning?: string | null; accessMode?: AccessMode }
+interface TurnSettings { model?: string | null; reasoning?: string | null; serviceTier?: string | null; accessMode?: AccessMode }
 interface ProjectSettings { defaultModel: string | null; defaultReasoning: string | null; defaultAccessMode: AccessMode }
 type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
@@ -137,10 +137,11 @@ export function assertValidForkBoundary(turns: SnapshotTurn[], lastTurnId: strin
   if (turn.status !== "completed") throw new ForkBoundaryError("Only a completed Turn can be used as a Fork boundary");
 }
 
-export function resolveSessionSettings(project: ProjectSettings, input: TurnSettings, current?: { model: string | null; reasoning: string | null; accessMode: AccessMode }) {
+export function resolveSessionSettings(project: ProjectSettings, input: TurnSettings, current?: SessionSettings) {
   return {
     model: input.model ?? current?.model ?? project.defaultModel,
     reasoning: input.reasoning ?? current?.reasoning ?? project.defaultReasoning ?? "high",
+    serviceTier: input.serviceTier !== undefined ? input.serviceTier : current?.serviceTier ?? null,
     accessMode: input.accessMode ?? current?.accessMode ?? project.defaultAccessMode,
   };
 }
@@ -1467,6 +1468,7 @@ export class SessionService extends EventEmitter {
     const persistedTurnSettings = {
       ...(mapping.last_model ? { model: mapping.last_model } : {}),
       ...(mapping.last_reasoning ? { reasoning: mapping.last_reasoning } : {}),
+      ...(mapping.has_last_service_tier === 1 ? { serviceTier: mapping.last_service_tier } : {}),
       accessMode: coldAccessMode,
     };
     let resumed;
@@ -1482,9 +1484,10 @@ export class SessionService extends EventEmitter {
     const settings = resolveSessionSettings(project, {}, current ?? {
       model: mapping.last_model ?? resumed.settings.model,
       reasoning: mapping.last_reasoning ?? resumed.settings.reasoning,
+      serviceTier: mapping.has_last_service_tier === 1 ? mapping.last_service_tier : resumed.settings.serviceTier ?? null,
       accessMode: coldAccessMode,
     });
-    if (resumed.thread?.turns.length > 0 && (mapping.last_model == null || mapping.last_reasoning == null)) {
+    if (resumed.thread?.turns.length > 0 && (mapping.last_model == null || mapping.last_reasoning == null || mapping.has_last_service_tier !== 1)) {
       this.persistLastTurnSettings(threadId, settings);
     }
     const cachedSnapshot = this.sessionSnapshots.get(threadId);
@@ -1496,7 +1499,7 @@ export class SessionService extends EventEmitter {
 
   private persistLastTurnSettings(threadId: string, settings: SessionSettings): void {
     try {
-      this.repositories.setSessionTurnSettings?.(threadId, { model: settings.model, reasoning: settings.reasoning });
+      this.repositories.setSessionTurnSettings?.(threadId, { model: settings.model, reasoning: settings.reasoning, serviceTier: settings.serviceTier ?? null });
     } catch (error) {
       this.emit("settingsPersistenceError", error);
     }

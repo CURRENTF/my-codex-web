@@ -36,6 +36,8 @@ export interface ProjectSessionRow {
   access_mode_override: AccessMode | null;
   last_model: string | null;
   last_reasoning: string | null;
+  last_service_tier: string | null;
+  has_last_service_tier: number;
   added_at: number;
   last_seen_at: number;
   hidden: number;
@@ -117,7 +119,7 @@ export class Repositories {
     })();
   }
 
-  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden" | "access_mode_override" | "last_model" | "last_reasoning"> & { hidden?: number }): void {
+  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden" | "access_mode_override" | "last_model" | "last_reasoning" | "last_service_tier" | "has_last_service_tier"> & { hidden?: number }): void {
     this.db.prepare(`INSERT INTO project_sessions (
       thread_id, project_id, cwd_snapshot, source_kind, origin, parent_thread_id,
       fork_turn_id, added_at, last_seen_at, hidden
@@ -168,9 +170,9 @@ export class Repositories {
     return mapping;
   }
 
-  setSessionTurnSettings(threadId: string, settings: { model: string | null; reasoning: string | null }): ProjectSessionRow {
-    const result = this.db.prepare("UPDATE project_sessions SET last_model = ?, last_reasoning = ? WHERE thread_id = ?")
-      .run(settings.model, settings.reasoning, threadId);
+  setSessionTurnSettings(threadId: string, settings: { model: string | null; reasoning: string | null; serviceTier: string | null }): ProjectSessionRow {
+    const result = this.db.prepare("UPDATE project_sessions SET last_model = ?, last_reasoning = ?, last_service_tier = ?, has_last_service_tier = 1 WHERE thread_id = ?")
+      .run(settings.model, settings.reasoning, settings.serviceTier, threadId);
     if (!result.changes) throw new Error("Session mapping not found");
     const mapping = this.getProjectSession(threadId);
     if (!mapping) throw new Error("Session mapping not found");
@@ -305,7 +307,8 @@ export class Repositories {
         thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, cwd_snapshot TEXT,
         source_kind TEXT, origin TEXT NOT NULL, parent_thread_id TEXT, fork_turn_id TEXT,
         access_mode_override TEXT CHECK (access_mode_override IN ('fullAccess', 'workspaceWrite', 'readOnly')),
-        last_model TEXT, last_reasoning TEXT,
+        last_model TEXT, last_reasoning TEXT, last_service_tier TEXT,
+        has_last_service_tier INTEGER NOT NULL DEFAULT 0 CHECK (has_last_service_tier IN (0, 1)),
         added_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, hidden INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
@@ -336,6 +339,12 @@ export class Repositories {
     }
     if (!projectSessionColumns.some((column) => column.name === "last_reasoning")) {
       this.db.exec("ALTER TABLE project_sessions ADD COLUMN last_reasoning TEXT");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "last_service_tier")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN last_service_tier TEXT");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "has_last_service_tier")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN has_last_service_tier INTEGER NOT NULL DEFAULT 0 CHECK (has_last_service_tier IN (0, 1))");
     }
   }
 }

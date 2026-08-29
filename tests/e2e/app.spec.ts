@@ -576,9 +576,9 @@ test("discovers an existing App Server Session, applies Project defaults, and re
     const persisted = await page.evaluate(async (threadId) => {
       const response = await fetch(`/api/sessions/${threadId}`);
       if (!response.ok) throw new Error(`Session read failed: ${response.status}`);
-      return response.json() as Promise<{ settings: { model: string | null; reasoning: string | null; accessMode: string } }>;
+      return response.json() as Promise<{ settings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: string } }>;
     }, setup.threadId);
-    expect(persisted.settings).toEqual({ model: setup.model, reasoning: setup.reasoning, accessMode: "workspaceWrite" });
+    expect(persisted.settings).toEqual({ model: setup.model, reasoning: setup.reasoning, serviceTier: null, accessMode: "workspaceWrite" });
 
     await Promise.all([
       page.waitForResponse((response) => response.url().endsWith(`/api/sessions/${setup.threadId}/settings`) && response.request().method() === "PATCH" && response.ok()),

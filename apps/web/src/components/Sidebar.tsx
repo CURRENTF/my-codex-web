@@ -6,6 +6,7 @@ import { codeServerFolderUrl } from "../code-server-url";
 import { useAppStore } from "../store";
 import { StatusIcon } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
+import { SelfUpdateControl } from "./SelfUpdateControl";
 
 export function relativeTime(timestamp: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - timestamp) / 1_000));
@@ -50,8 +51,9 @@ export function Sidebar(props: SidebarProps) {
       : props.notificationState === "unsupported" ? "当前浏览器不支持系统通知" : "开启 Session 完成通知";
   return <aside className="sidebar">
     <div className="sidebar-top">
-      <button className="new-session-button" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建 Session</button>
+      <button className="new-session-button" aria-label="新建 Session" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建</button>
       <button className={`icon-button notification-button ${props.notificationState}`} aria-label={notificationLabel} title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} weight={props.notificationState === "enabled" ? "fill" : "regular"} />}</button>
+      <SelfUpdateControl />
       <button className="icon-button" aria-label="添加 Project" onClick={props.onAddProject}><FolderOpen size={18} /></button>
     </div>
     <label className="search-field"><MagnifyingGlass size={15} /><input value={props.search} onChange={(event) => props.onSearch(event.target.value)} placeholder="搜索 Session" aria-label="搜索 Session" />{props.search && <button onClick={() => props.onSearch("")} aria-label="清除搜索"><X size={13} /></button>}</label>

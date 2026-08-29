@@ -53,8 +53,14 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 | `CODEX_WEB_SESSION_COOKIE_NAME` | `my_codex_web_session` | 登录 Cookie 名；同一域名部署多个 Web UI 时应保持唯一 |
 | `CODEX_WEB_CODE_SERVER_URL` | 未设置 | 浏览器打开 B 上文件时使用的 code-server HTTP(S) URL，例如 `https://0513jtrc.beer:12334` |
 | `CODEX_WEB_CODE_SERVER_HEALTH_URL` | `<CODEX_WEB_CODE_SERVER_URL>/healthz` | 服务端健康探测 URL；同机部署建议使用 `http://127.0.0.1:12334/healthz` |
+| `CODEX_WEB_UPDATE_REPOSITORY` | `CODEX_WEB_PROJECT_ROOT` | 自动更新使用的干净 Git checkout 根目录 |
+| `CODEX_WEB_UPDATE_REMOTE` | `origin` | 自动更新拉取的 Git remote |
+| `CODEX_WEB_UPDATE_BRANCH` | `main` | 自动更新要求检出并快进的分支 |
+| `CODEX_WEB_UPDATE_RESTART_COMMAND_JSON` | 未设置 | 更新完成后的重启命令 JSON 参数数组；设置后才启用左上角更新按钮，例如 `["systemctl","--user","restart","my-codex-web.service"]` |
 
 配置 code-server 后，Project、普通文件链接和代码审查位置都只通过 code-server 打开。Web UI 每 15 秒从服务端探测一次健康状态；探测失败时入口会显示为不可用，不会回退到客户端的 `vscode://`。若 code-server 迁移端口，只需更新上述两个环境变量并重启 Web UI。
+
+自动更新只接受当前配置分支上的干净 Git checkout，并且只部署 `remote/branch` 的快进后继。服务端先在 `CODEX_WEB_DATA_DIR/updates` 创建隔离 worktree，依次执行 `npm ci`、TypeScript 检查、完整测试和生产构建；候选版本全部通过后，才快进运行目录、重新安装/构建并执行预先配置的重启命令。存在未提交或未跟踪文件、运行中的 Turn、分支不匹配或非快进历史时都会拒绝更新。进度保存在 `CODEX_WEB_DATA_DIR/self-update.json`，详细日志写入 `CODEX_WEB_DATA_DIR/logs/update-<run-id>.log`。浏览器在重启完成后自动刷新到新版本。
 
 ## 开发
 

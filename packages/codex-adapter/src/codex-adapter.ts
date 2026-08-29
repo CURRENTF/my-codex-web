@@ -44,6 +44,7 @@ export interface ListSessionsInput {
 export interface SessionSettings {
   model: string | null;
   reasoning: string | null;
+  serviceTier?: string | null;
   accessMode: AccessMode;
 }
 
@@ -157,7 +158,7 @@ export async function retryThreadMaterialization<T>(
   }
 }
 
-type ProtocolSessionSettings = Pick<ThreadSettings, "model" | "effort" | "approvalPolicy" | "sandboxPolicy">;
+type ProtocolSessionSettings = Pick<ThreadSettings, "model" | "effort" | "serviceTier" | "approvalPolicy" | "sandboxPolicy">;
 
 export function projectSessionSettings(settings: ProtocolSessionSettings): SessionSettings {
   const accessMode: AccessMode = settings.sandboxPolicy.type === "dangerFullAccess" && settings.approvalPolicy === "never"
@@ -168,6 +169,7 @@ export function projectSessionSettings(settings: ProtocolSessionSettings): Sessi
   return {
     model: settings.model || null,
     reasoning: settings.effort ?? null,
+    serviceTier: settings.serviceTier ?? null,
     accessMode,
   };
 }
@@ -176,6 +178,7 @@ function projectResumeSettings(response: ThreadResumeResponse): SessionSettings 
   return projectSessionSettings({
     model: response.model,
     effort: response.reasoningEffort,
+    serviceTier: response.serviceTier,
     approvalPolicy: response.approvalPolicy,
     sandboxPolicy: response.sandbox,
   });
@@ -306,6 +309,8 @@ export class CodexAdapter extends EventEmitter {
         effort: option.reasoningEffort,
         description: option.description,
       })),
+      serviceTiers: model.serviceTiers,
+      defaultServiceTier: model.defaultServiceTier,
       inputModalities: model.inputModalities,
     }));
   }
@@ -372,6 +377,7 @@ export class CodexAdapter extends EventEmitter {
     const response = await this.supervisor.transport.request<ThreadResumeResponse>("thread/resume", {
       threadId,
       ...(settings?.model ? { model: settings.model } : {}),
+      ...(settings?.serviceTier !== undefined ? { serviceTier: settings.serviceTier } : {}),
       ...(settings?.accessMode ? { approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request", sandbox: sandboxMode(settings.accessMode) } : {}),
       ...(settings?.reasoning ? { config: reasoningConfig({ reasoning: settings.reasoning }) } : {}),
     });
@@ -382,6 +388,7 @@ export class CodexAdapter extends EventEmitter {
     const response = await this.nonIdempotentMutation<ThreadStartResponse>("thread/start", {
       cwd,
       model: settings.model ?? null,
+      serviceTier: settings.serviceTier ?? null,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
       ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
@@ -398,6 +405,7 @@ export class CodexAdapter extends EventEmitter {
       input: promptInput(text, skills, attachments),
       cwd,
       model: settings.model ?? null,
+      serviceTier: settings.serviceTier ?? null,
       effort: settings.reasoning ?? null,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandboxPolicy: sandboxPolicy(settings.accessMode, cwd),
@@ -423,6 +431,7 @@ export class CodexAdapter extends EventEmitter {
       threadId,
       ...(lastTurnId ? { lastTurnId } : {}),
       ...(settings.model ? { model: settings.model } : {}),
+      serviceTier: settings.serviceTier ?? null,
       cwd,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
@@ -438,6 +447,7 @@ export class CodexAdapter extends EventEmitter {
       threadId,
       ...(lastTurnId ? { lastTurnId } : {}),
       ...(settings.model ? { model: settings.model } : {}),
+      serviceTier: settings.serviceTier ?? null,
       cwd,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
@@ -454,6 +464,7 @@ export class CodexAdapter extends EventEmitter {
     const response = await this.nonIdempotentMutation<ThreadStartResponse>("thread/start", {
       cwd,
       ...(settings.model ? { model: settings.model } : {}),
+      serviceTier: settings.serviceTier ?? null,
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandbox: sandboxMode(settings.accessMode),
       ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),

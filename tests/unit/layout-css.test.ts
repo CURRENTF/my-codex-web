@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 const styles = readFileSync(fileURLToPath(new URL("../../apps/web/src/styles.css", import.meta.url)), "utf8");
 const appSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/App.tsx", import.meta.url)), "utf8");
 const composerSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Composer.tsx", import.meta.url)), "utf8");
+const serviceTierSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/service-tier.ts", import.meta.url)), "utf8");
 const sessionPaneSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/SessionPane.tsx", import.meta.url)), "utf8");
+const sidebarSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Sidebar.tsx", import.meta.url)), "utf8");
+const selfUpdateSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/SelfUpdateControl.tsx", import.meta.url)), "utf8");
 const timelineSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/components/Timeline.tsx", import.meta.url)), "utf8");
 
 function rule(selector: string): string {
@@ -75,6 +78,12 @@ describe("viewport layout CSS", () => {
     expect(rule(".no-selection .button")).toContain("margin-top: 22px");
   });
 
+  it("keeps the global update action in the upper-left toolbar", () => {
+    expect(sidebarSource).toMatch(/sidebar-top[\s\S]*notification-button[\s\S]*<SelfUpdateControl \/>[\s\S]*添加 Project[\s\S]*<\/div>/);
+    expect(selfUpdateSource).toContain("self-update-trigger");
+    expect(rule(".self-update-trigger.running, .self-update-trigger.restarting")).toContain("color: var(--accent)");
+  });
+
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
     expect(rule(".composer-running-controls")).toContain("flex: 0 0 auto");
     expect(styles).not.toContain(".composer-running-controls.is-reserved");
@@ -85,6 +94,15 @@ describe("viewport layout CSS", () => {
     expect(rule(".composer-running-controls.is-idle .delivery-mode-toggle")).toContain("opacity: .68");
     expect(rule(".delivery-mode-toggle.queue")).toContain("color: var(--accent)");
     expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
+  });
+
+  it("shows Fast as a compact accessible service-tier switch", () => {
+    expect(serviceTierSource).toContain('tier.id === "priority"');
+    expect(composerSource).toContain('role="switch" aria-checked={fastMode}');
+    expect(composerSource).toContain('setServiceTier(fastMode ? null : fastServiceTier.id)');
+    expect(rule(".service-tier-toggle")).toContain("height: 27px");
+    expect(rule(".service-tier-toggle.active")).toContain("color: var(--accent)");
+    expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.service-tier-toggle > span \{ display: none; \}/);
   });
 
   it("keeps the running controls visible before a Turn starts so sending cannot reflow the toolbar", () => {

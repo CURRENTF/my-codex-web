@@ -1,4 +1,4 @@
-import type { BootstrapPayload, CodeServerStatus, Goal, Preferences, Project, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
+import type { BootstrapPayload, CodeServerStatus, Goal, Preferences, Project, SelfUpdateStatus, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
@@ -54,6 +54,8 @@ export async function authenticateWebUi(password: string): Promise<void> {
 
 export const endpoints = {
   codeServerStatus: () => api<CodeServerStatus>("/api/code-server/status", { cache: "no-store" }),
+  selfUpdateStatus: () => api<SelfUpdateStatus>("/api/system/update", { cache: "no-store" }),
+  startSelfUpdate: () => api<SelfUpdateStatus>("/api/system/update", { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }),
   projects: () => api<Project[]>("/api/projects"),
   skills: (projectId: string, signal?: AbortSignal) => api<SkillOption[]>(`/api/projects/${projectId}/skills`, { signal }),
   sessions: (search = "", sortDirection: "asc" | "desc" = "desc", signal?: AbortSignal) => api<SessionSummary[]>(`/api/sessions?sortDirection=${sortDirection}&search=${encodeURIComponent(search)}`, { signal }),
@@ -70,7 +72,7 @@ export interface SessionPayload {
   thread: CodexThread;
   goal: Goal | null;
   runtime: import("@codex-web/shared-types").ThreadRuntime;
-  settings: { model: string | null; reasoning: string | null; accessMode: import("@codex-web/shared-types").AccessMode };
+  settings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: import("@codex-web/shared-types").AccessMode };
 }
 
 export type { Goal };

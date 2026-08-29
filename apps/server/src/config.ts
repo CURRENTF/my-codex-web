@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
 import path from "node:path";
 import { defaultCodeServerHealthUrl, normalizeHttpUrl } from "./code-server.js";
+import { parseCommandJson } from "./self-update.js";
 
 const dataDir = process.env.CODEX_WEB_DATA_DIR ?? path.join(homedir(), ".codex-web");
+const projectRoot = process.env.CODEX_WEB_PROJECT_ROOT ?? path.resolve(import.meta.dirname, "../../..");
 const publicOrigins = (process.env.CODEX_WEB_PUBLIC_ORIGINS ?? process.env.CODEX_WEB_PUBLIC_ORIGIN ?? "")
   .split(",")
   .map((origin) => origin.trim())
@@ -22,7 +24,7 @@ export const config = {
   codexHome: process.env.CODEX_WEB_CODEX_HOME ?? process.env.CODEX_HOME ?? path.join(homedir(), ".codex"),
   databasePath: process.env.CODEX_WEB_DB_PATH ?? path.join(dataDir, "app.db"),
   logPath: path.join(dataDir, "logs", "server.log"),
-  projectRoot: process.env.CODEX_WEB_PROJECT_ROOT ?? path.resolve(import.meta.dirname, "../../.."),
+  projectRoot,
   openBrowser: process.env.CODEX_WEB_OPEN_BROWSER === "1",
   allowViteOrigin: process.env.CODEX_WEB_DEV_VITE_ORIGIN === "1",
   publicOrigins,
@@ -33,5 +35,9 @@ export const config = {
   codeServerUrl,
   codeServerHealthUrl,
   codexCommand: process.env.CODEX_WEB_CODEX_BIN ?? "codex",
+  updateRepository: process.env.CODEX_WEB_UPDATE_REPOSITORY ?? projectRoot,
+  updateRemote: process.env.CODEX_WEB_UPDATE_REMOTE ?? "origin",
+  updateBranch: process.env.CODEX_WEB_UPDATE_BRANCH ?? "main",
+  updateRestartCommand: parseCommandJson(process.env.CODEX_WEB_UPDATE_RESTART_COMMAND_JSON),
   version: "0.1.0",
 };

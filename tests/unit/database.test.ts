@@ -23,7 +23,7 @@ describe("SQLite repositories", () => {
 
     const repositories = new Repositories(databasePath); databases.push(repositories);
     const columns = repositories.db.prepare("PRAGMA table_info(project_sessions)").all() as Array<{ name: string }>;
-    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["last_model", "last_reasoning"]));
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["last_model", "last_reasoning", "last_service_tier", "has_last_service_tier"]));
   });
 
   it("round-trips preferences and deletes only project mappings", () => {
@@ -66,16 +66,18 @@ describe("SQLite repositories", () => {
     expect(repositories.getProject("p1")?.defaultAccessMode).toBe("fullAccess");
   });
 
-  it("persists the model and reasoning used by the latest successful Turn", () => {
+  it("persists the model, reasoning, and service tier used by the latest successful Turn", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
     const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
     repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: "project-model", defaultReasoning: "high", defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
     repositories.upsertProjectSession({ thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1 });
 
-    expect(repositories.getProjectSession("t1")).toMatchObject({ last_model: null, last_reasoning: null });
-    expect(repositories.setSessionTurnSettings("t1", { model: "gpt-5.6-sol", reasoning: "max" })).toMatchObject({
+    expect(repositories.getProjectSession("t1")).toMatchObject({ last_model: null, last_reasoning: null, last_service_tier: null, has_last_service_tier: 0 });
+    expect(repositories.setSessionTurnSettings("t1", { model: "gpt-5.6-sol", reasoning: "max", serviceTier: "priority" })).toMatchObject({
       last_model: "gpt-5.6-sol",
       last_reasoning: "max",
+      last_service_tier: "priority",
+      has_last_service_tier: 1,
     });
     expect(repositories.getProject("p1")).toMatchObject({ defaultModel: "project-model", defaultReasoning: "high" });
   });

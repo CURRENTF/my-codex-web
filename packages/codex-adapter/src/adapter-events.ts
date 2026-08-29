@@ -170,5 +170,5 @@ function projectSettings(settings: ThreadSettings): SessionSettings {
   const accessMode = settings.sandboxPolicy.type === "dangerFullAccess" && settings.approvalPolicy === "never"
     ? "fullAccess"
     : settings.sandboxPolicy.type === "workspaceWrite" ? "workspaceWrite" : "readOnly";
-  return { model: settings.model || null, reasoning: settings.effort ?? null, accessMode };
+  return { model: settings.model || null, reasoning: settings.effort ?? null, serviceTier: settings.serviceTier ?? null, accessMode };
 }

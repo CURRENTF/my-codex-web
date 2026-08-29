@@ -51,6 +51,7 @@ export interface QueuedUserMessage {
   skillNames: string[];
   model: string;
   reasoning: string;
+  serviceTier: string | null;
   accessMode: AccessMode;
   clientRequestId: string;
   clientUserMessageId: string;
@@ -92,10 +93,12 @@ function readQueuedUserMessages(): Record<string, QueuedUserMessage> {
       const candidate = message as Partial<QueuedUserMessage>;
       const validAccessMode = candidate.accessMode === "fullAccess" || candidate.accessMode === "workspaceWrite" || candidate.accessMode === "readOnly";
       const validAttachments = candidate.attachments === undefined || (Array.isArray(candidate.attachments) && candidate.attachments.every((attachment) => attachment && typeof attachment === "object" && typeof attachment.id === "string" && typeof attachment.name === "string"));
+      const validServiceTier = candidate.serviceTier === undefined || candidate.serviceTier === null || typeof candidate.serviceTier === "string";
       return typeof candidate.text === "string" && Array.isArray(candidate.skillNames) && candidate.skillNames.every((name) => typeof name === "string")
         && typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validAccessMode && validAttachments
+        && validServiceTier
         && typeof candidate.clientRequestId === "string" && typeof candidate.clientUserMessageId === "string" && typeof candidate.createdAt === "number"
-        ? [[threadId, { ...candidate, attachments: candidate.attachments ?? [] } as QueuedUserMessage]]
+        ? [[threadId, { ...candidate, serviceTier: candidate.serviceTier ?? null, attachments: candidate.attachments ?? [] } as QueuedUserMessage]]
         : [];
     }));
   } catch {

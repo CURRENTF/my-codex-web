@@ -27,12 +27,14 @@ import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, str
 import { acceptsSpaDocument } from "./spa-fallback.js";
 import { initialCodeServerStatus, probeCodeServer } from "./code-server.js";
 import { restoreSubagentSnapshot } from "./subagent-restoration.js";
+import { countUpdateBlockingExecutions, SelfUpdateConflictError, SelfUpdateManager, SelfUpdateUnavailableError } from "./self-update.js";
 
 const idSchema = z.string().min(1).max(200);
 const requestIdSchema = z.string().uuid().or(z.string().min(12).max(200));
 const settingsSchema = z.object({
   model: z.string().nullable().optional(),
   reasoning: z.string().nullable().optional(),
+  serviceTier: z.string().nullable().optional(),
   accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]).optional(),
 });
 const skillNamesSchema = z.array(z.string().trim().min(1).max(200)).max(20).default([]);
@@ -91,6 +93,19 @@ export async function createServer() {
   };
   const events = new EventGateway(authenticateSocket);
   const runtimes = new ThreadRuntimeRegistry(events, repositories);
+  const activeUpdateBlockers = () => countUpdateBlockingExecutions(runtimes.list(), runtimes.listSubagents());
+  const selfUpdater = new SelfUpdateManager({
+    repository: config.updateRepository,
+    dataDir: config.dataDir,
+    remote: config.updateRemote,
+    branch: config.updateBranch,
+    restartCommand: config.updateRestartCommand,
+    assertSafeToDeploy: () => {
+      const activeExecutions = activeUpdateBlockers();
+      if (activeExecutions > 0) throw new Error(`验证期间启动了 ${activeExecutions} 个执行，已取消部署。请等待完成后重试更新。`);
+    },
+  });
+  await selfUpdater.initialize();
   const projectLocks = new KeyedOperationLock();
   const indexer = new ProjectIndexer(repositories, adapter, projectLocks);
   const sessions = new SessionService(repositories, adapter, indexer, runtimes, projectLocks, attachments);
@@ -165,6 +180,10 @@ export async function createServer() {
     if (request.method !== "GET" && request.method !== "HEAD" && connectionState !== "connected") {
       return reply.code(503).send({ error: "Codex App Server is still reconnecting" });
     }
+    const updateState = selfUpdater.getStatus().state;
+    if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/system/update" && (updateState === "running" || updateState === "restarting")) {
+      return reply.code(503).send({ error: "update_in_progress", message: "Codex Web 正在更新，完成后页面会自动刷新。" });
+    }
   });
 
   app.addHook("onSend", async (_request, reply, payload) => {
@@ -200,6 +219,8 @@ export async function createServer() {
     if (error instanceof UncertainTurnAppliedError) return reply.code(409).send({ error: "uncertain_turn_applied", message: error.message });
     if (error instanceof SideChatCloseTimeoutError) return reply.code(409).send({ error: "side_chat_still_running", message: error.message });
     if (error instanceof UnknownSkillError) return reply.code(400).send({ error: "unknown_skill", message: error.message, skillNames: error.skillNames });
+    if (error instanceof SelfUpdateUnavailableError) return reply.code(409).send({ error: "update_unavailable", message: error.message });
+    if (error instanceof SelfUpdateConflictError) return reply.code(409).send({ error: "update_in_progress", message: error.message });
     if (error instanceof OperationUncertainError) {
       return reply.code(503).send({
         error: "operation_uncertain",
@@ -257,6 +278,17 @@ export async function createServer() {
   app.get("/api/code-server/status", async (_request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");
     return probeCodeServer(config.codeServerUrl, config.codeServerHealthUrl);
+  });
+  app.get("/api/system/update", async (_request, reply) => {
+    reply.header("cache-control", "no-store, max-age=0");
+    return selfUpdater.getStatus();
+  });
+  app.post("/api/system/update", async (request, reply) => {
+    const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
+    const activeExecutions = activeUpdateBlockers();
+    if (activeExecutions > 0) return reply.code(409).send({ error: "active_turns", message: `仍有 ${activeExecutions} 个执行在运行，请等待完成后再更新。` });
+    const status = await once(request, clientRequestId, () => selfUpdater.start());
+    return reply.code(202).send(status);
   });
   app.post("/api/attachments", async (request, reply) => {
     const part = await request.file();
@@ -493,7 +525,7 @@ export async function createServer() {
   }
 
   return {
-    app, adapter, events, repositories,
+    app, adapter, events, repositories, selfUpdater,
     async close() {
       recovery.stop();
       sessions.dispose();

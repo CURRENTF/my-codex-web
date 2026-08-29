@@ -40,6 +40,14 @@ Browser
 
 Deploy the same clean commit as the local active branch. The current host was bootstrapped from a `git archive`, so updates should likewise copy an exact archive rather than assuming the remote default branch.
 
+The Web UI update button requires the source path to be a clean Git checkout on `main` with a working `origin` credential. An archive-based deployment must be migrated to that layout explicitly before enabling the button; the updater will refuse to alter a non-Git directory. Once the checkout is ready, add this environment entry to `my-codex-web.service` and restart the service once:
+
+```ini
+Environment='CODEX_WEB_UPDATE_RESTART_COMMAND_JSON=["systemctl","--user","restart","my-codex-web.service"]'
+```
+
+The button fetches `origin/main`, validates the target in an isolated worktree with `npm ci`, `npm run check`, `npm test`, and `npm run build`, then performs a fast-forward-only deployment and restarts only `my-codex-web.service`. It never restarts the tunnel service. Update state and bounded command logs remain under `/home/k/.codex-web` across the application restart.
+
 On Worker-A, after replacing the tracked source files:
 
 ```bash
