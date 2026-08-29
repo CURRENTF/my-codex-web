@@ -632,7 +632,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .compact-workspace-header { position: absolute; top: 0; left: 0; z-index: 3; display: grid; width: 100%; border-bottom: 1px solid var(--line); background: var(--bg); }
   .mobile-pane-tabs { display: grid; width: 100%; height: 40px; grid-template-columns: 1fr 1fr; padding: 4px; }
   .mobile-pane-tabs button { border-radius: 7px; background: transparent; color: var(--text-soft); font-size: 11px; font-weight: 650; cursor: pointer; }
-  .mobile-pane-tabs button.active { background: var(--surface); box-shadow: inset 0 -2px 0 var(--accent); color: var(--text); }
+  .mobile-pane-tabs button.active { background: var(--accent-soft); color: color-mix(in srgb, var(--accent) 72%, var(--text)); }
   .compact-parallel-warning { display: flex; height: 28px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; color: var(--warning); font-size: 10px; }
   .compact-parallel-warning span { overflow: hidden; color: var(--text-soft); text-overflow: ellipsis; white-space: nowrap; }
   .side-pane .parallel-write-warning { display: none; }
@@ -648,7 +648,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .compact-workspace-header { position: absolute; top: 0; left: 0; z-index: 3; display: grid; width: 100%; border-bottom: 1px solid var(--line); background: var(--bg); }
   .mobile-pane-tabs { display: grid; width: 100%; height: 40px; grid-template-columns: 1fr 1fr; padding: 4px; }
   .mobile-pane-tabs button { border-radius: 7px; background: transparent; color: var(--text-soft); font-size: 11px; font-weight: 650; cursor: pointer; }
-  .mobile-pane-tabs button.active { background: var(--surface); box-shadow: inset 0 -2px 0 var(--accent); color: var(--text); }
+  .mobile-pane-tabs button.active { background: var(--accent-soft); color: color-mix(in srgb, var(--accent) 72%, var(--text)); }
   .compact-parallel-warning { display: flex; height: 28px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; color: var(--warning); font-size: 10px; }
   .compact-parallel-warning span { overflow: hidden; color: var(--text-soft); text-overflow: ellipsis; white-space: nowrap; }
   .side-pane .parallel-write-warning { display: none; }

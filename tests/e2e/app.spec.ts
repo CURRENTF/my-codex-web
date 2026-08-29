@@ -429,7 +429,7 @@ test("adapts the workspace controls and navigation to the available width", asyn
   await expect(sidebar).not.toBeInViewport();
 });
 
-test("keeps the selected Side Chat tab visually connected to the mobile conversation", async ({ page }) => {
+test("makes the selected Side Chat tab unambiguous on mobile", async ({ page }) => {
   test.setTimeout(60_000);
   const outputDir = path.resolve("output/playwright/side-chat-selection");
   await page.setViewportSize({ width: 1024, height: 768 });
@@ -455,22 +455,35 @@ test("keeps the selected Side Chat tab visually connected to the mobile conversa
   await expect(page.locator("#side-chat-pane")).toBeVisible();
 
   const surfaceColors = async () => page.evaluate(() => {
-    const background = (selector: string) => getComputedStyle(document.querySelector(selector)!).backgroundColor;
+    const style = (selector: string) => getComputedStyle(document.querySelector(selector)!);
     return {
-      mainTab: background('.mobile-pane-tabs button[aria-controls="main-session-pane"]'),
-      sideTab: background('.mobile-pane-tabs button[aria-controls="side-chat-pane"]'),
-      sidePane: background("#side-chat-pane .session-pane"),
+      mainTab: style('.mobile-pane-tabs button[aria-controls="main-session-pane"]').backgroundColor,
+      sideTab: style('.mobile-pane-tabs button[aria-controls="side-chat-pane"]').backgroundColor,
+      sideText: style('.mobile-pane-tabs button[aria-controls="side-chat-pane"]').color,
+      sidePane: style("#side-chat-pane .session-pane").backgroundColor,
     };
   });
-  await expect.poll(async () => (await surfaceColors()).sideTab).toBe((await surfaceColors()).sidePane);
-  expect((await surfaceColors()).mainTab).not.toBe((await surfaceColors()).sidePane);
+  const contrastRatio = (foreground: string, background: string) => {
+    const luminance = (color: string) => {
+      const values = color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+      const channels = (color.startsWith("color(srgb") ? values : values.map((channel) => channel / 255)).map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+    };
+    const foregroundLuminance = luminance(foreground);
+    const backgroundLuminance = luminance(background);
+    return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+  };
+  await expect.poll(async () => (await surfaceColors()).sideTab).not.toBe((await surfaceColors()).sidePane);
+  expect((await surfaceColors()).mainTab).not.toBe((await surfaceColors()).sideTab);
+  expect(contrastRatio((await surfaceColors()).sideText, (await surfaceColors()).sideTab)).toBeGreaterThanOrEqual(4.5);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(sidebar).not.toBeInViewport();
   await page.screenshot({ path: path.join(outputDir, "side-selected-light-390.png"), fullPage: true });
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect.poll(async () => (await surfaceColors()).sideTab).toBe((await surfaceColors()).sidePane);
-  expect((await surfaceColors()).mainTab).not.toBe((await surfaceColors()).sidePane);
+  await expect.poll(async () => (await surfaceColors()).sideTab).not.toBe((await surfaceColors()).sidePane);
+  expect((await surfaceColors()).mainTab).not.toBe((await surfaceColors()).sideTab);
+  expect(contrastRatio((await surfaceColors()).sideText, (await surfaceColors()).sideTab)).toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: path.join(outputDir, "side-selected-dark-390.png"), fullPage: true });
 
   await mainTab.click();

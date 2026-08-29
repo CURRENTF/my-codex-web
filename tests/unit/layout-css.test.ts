@@ -84,7 +84,7 @@ describe("viewport layout CSS", () => {
     expect(rule(".self-update-trigger.running, .self-update-trigger.restarting")).toContain("color: var(--accent)");
   });
 
-  it("makes the selected compact Side Chat tab match the visible conversation surface", () => {
+  it("gives the selected compact Side Chat tab a clear accent-soft surface", () => {
     expect(appSource).toContain('className="mobile-pane-tabs" role="group"');
     expect(appSource).toContain('aria-pressed={mobilePane === "main"} aria-controls="main-session-pane"');
     expect(appSource).toContain('aria-pressed={mobilePane === "side"} aria-controls="side-chat-pane"');
@@ -92,8 +92,9 @@ describe("viewport layout CSS", () => {
     expect(appSource).toContain('id="side-chat-pane"');
     expect(styles).toMatch(/@container workspace \(max-width: 1100px\)[\s\S]*\.compact-workspace-header \{[^}]*background: var\(--bg\);/);
     expect(styles).toMatch(/@container workspace \(max-width: 1100px\)[\s\S]*\.mobile-pane-tabs button \{[^}]*background: transparent;[^}]*color: var\(--text-soft\);/);
-    expect(styles).toMatch(/@container workspace \(max-width: 1100px\)[\s\S]*\.mobile-pane-tabs button\.active \{[^}]*background: var\(--surface\);[^}]*box-shadow: inset 0 -2px 0 var\(--accent\);/);
-    expect(styles).toMatch(/@media \(max-width: 1100px\)[\s\S]*\.mobile-pane-tabs button\.active \{[^}]*background: var\(--surface\);/);
+    expect(styles).toMatch(/@container workspace \(max-width: 1100px\)[\s\S]*\.mobile-pane-tabs button\.active \{[^}]*background: var\(--accent-soft\);[^}]*color: color-mix\(in srgb, var\(--accent\) 72%, var\(--text\)\);/);
+    expect(styles).toMatch(/@media \(max-width: 1100px\)[\s\S]*\.mobile-pane-tabs button\.active \{[^}]*background: var\(--accent-soft\);/);
+    expect(styles).not.toMatch(/\.mobile-pane-tabs button\.active \{[^}]*box-shadow:/);
   });
 
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
