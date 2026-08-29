@@ -429,6 +429,64 @@ test("adapts the workspace controls and navigation to the available width", asyn
   await expect(sidebar).not.toBeInViewport();
 });
 
+test("keeps the selected Side Chat tab visually connected to the mobile conversation", async ({ page }) => {
+  test.setTimeout(60_000);
+  const outputDir = path.resolve("output/playwright/side-chat-selection");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await ensureProject(page);
+  const sidebar = page.locator(".sidebar");
+  test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
+
+  await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  const previousSessionUrl = page.url();
+  await Promise.all([
+    page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 30_000 }),
+    page.getByRole("button", { name: "新建 Session", exact: true }).click(),
+  ]);
+  await page.locator(".main-pane").getByRole("button", { name: "Side Chat", exact: true }).click();
+
+  const tabs = page.getByRole("group", { name: "选择聊天面板" });
+  const mainTab = tabs.getByRole("button", { name: "Main Session" });
+  const sideTab = tabs.getByRole("button", { name: "Side Chat" });
+  await expect(tabs).toBeVisible({ timeout: 30_000 });
+  await expect(mainTab).toHaveAttribute("aria-pressed", "false");
+  await expect(sideTab).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#main-session-pane")).toBeHidden();
+  await expect(page.locator("#side-chat-pane")).toBeVisible();
+
+  const surfaceColors = async () => page.evaluate(() => {
+    const background = (selector: string) => getComputedStyle(document.querySelector(selector)!).backgroundColor;
+    return {
+      mainTab: background('.mobile-pane-tabs button[aria-controls="main-session-pane"]'),
+      sideTab: background('.mobile-pane-tabs button[aria-controls="side-chat-pane"]'),
+      sidePane: background("#side-chat-pane .session-pane"),
+    };
+  });
+  await expect.poll(async () => (await surfaceColors()).sideTab).toBe((await surfaceColors()).sidePane);
+  expect((await surfaceColors()).mainTab).not.toBe((await surfaceColors()).sidePane);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(sidebar).not.toBeInViewport();
+  await page.screenshot({ path: path.join(outputDir, "side-selected-light-390.png"), fullPage: true });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(async () => (await surfaceColors()).sideTab).toBe((await surfaceColors()).sidePane);
+  expect((await surfaceColors()).mainTab).not.toBe((await surfaceColors()).sidePane);
+  await page.screenshot({ path: path.join(outputDir, "side-selected-dark-390.png"), fullPage: true });
+
+  await mainTab.click();
+  await expect(mainTab).toHaveAttribute("aria-pressed", "true");
+  await expect(sideTab).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#main-session-pane")).toBeVisible();
+  await expect(page.locator("#side-chat-pane")).toBeHidden();
+  await sideTab.click();
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect(tabs).toBeHidden();
+  await expect(page.locator("#main-session-pane")).toBeVisible();
+  await expect(page.locator("#side-chat-pane")).toBeVisible();
+  await page.getByRole("button", { name: "关闭 Side Chat" }).click();
+  await expect(page.locator("#side-chat-pane")).toHaveCount(0);
+});
+
 test("shows disconnection and recovers after the managed App Server crashes", async ({ page }) => {
   test.setTimeout(150_000);
   await ensureProject(page);

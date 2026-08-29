@@ -7,7 +7,6 @@ import type { RuntimeState, SelfUpdateStatus, SubagentAgentStatus } from "@codex
 const COMMAND_OUTPUT_LIMIT = 24_000;
 const GIT_TIMEOUT_MS = 2 * 60_000;
 const NPM_TIMEOUT_MS = 20 * 60_000;
-const RESTART_TIMEOUT_MS = 60_000;
 
 export interface ProcessRunOptions {
   cwd: string;
@@ -20,6 +19,26 @@ export interface ProcessRunResult {
 }
 
 export type ProcessRunner = (command: string, args: string[], options: ProcessRunOptions) => Promise<ProcessRunResult>;
+
+export interface RestartLaunchOptions {
+  cwd: string;
+}
+
+export type RestartLauncher = (command: string, args: string[], options: RestartLaunchOptions) => Promise<void>;
+
+export const launchRestartProcess: RestartLauncher = (command, args, options) => new Promise((resolve, reject) => {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    detached: true,
+    env: process.env,
+    stdio: "ignore",
+  });
+  child.once("error", reject);
+  child.once("spawn", () => {
+    child.unref();
+    resolve();
+  });
+});
 
 interface UpdateExecutionState {
   threadId: string;
@@ -101,6 +120,7 @@ export interface SelfUpdateManagerOptions {
   branch?: string;
   restartCommand: string[] | null;
   runner?: ProcessRunner;
+  restartLauncher?: RestartLauncher;
   npmCommand?: string;
   assertSafeToDeploy?: () => Promise<void> | void;
 }
@@ -115,6 +135,7 @@ export class SelfUpdateManager {
   private readonly branch: string;
   private readonly restartCommand: string[] | null;
   private readonly runner: ProcessRunner;
+  private readonly restartLauncher: RestartLauncher;
   private readonly npmCommand: string;
   private readonly assertSafeToDeploy: () => Promise<void> | void;
   private readonly statusPath: string;
@@ -129,6 +150,7 @@ export class SelfUpdateManager {
     this.branch = validateGitName(options.branch ?? "main", "CODEX_WEB_UPDATE_BRANCH");
     this.restartCommand = options.restartCommand;
     this.runner = options.runner ?? runProcess;
+    this.restartLauncher = options.restartLauncher ?? launchRestartProcess;
     this.npmCommand = options.npmCommand ?? "npm";
     this.assertSafeToDeploy = options.assertSafeToDeploy ?? (() => undefined);
     this.statusPath = path.join(this.dataDir, "self-update.json");
@@ -285,8 +307,10 @@ export class SelfUpdateManager {
 
     await this.patchStatus({ state: "restarting", step: "restarting", currentCommit: targetCommit, message: "部署完成，正在重新启动 Codex Web…" });
     const [command, ...args] = this.restartCommand!;
-    await this.loggedRun(runId, command!, args, this.repository, RESTART_TIMEOUT_MS);
-    await this.patchStatus({ state: "succeeded", step: "complete", finishedAt: Date.now(), message: "更新已完成；请刷新页面使用新版本。" });
+    await this.appendLog(runId, `[${new Date().toISOString()}] ${command} ${args.join(" ")}\n`);
+    await this.restartLauncher(command!, args, { cwd: this.repository });
+    // Do not wait for a command that restarts this process. The replacement
+    // server confirms the persisted `restarting` state during initialize().
   }
 
   private async gitOutput(args: string[]): Promise<string> {

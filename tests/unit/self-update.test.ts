@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { countUpdateBlockingExecutions, parseCommandJson, runProcess, SelfUpdateManager, type ProcessRunner } from "../../apps/server/src/self-update";
+import { countUpdateBlockingExecutions, launchRestartProcess, parseCommandJson, runProcess, SelfUpdateManager, type ProcessRunner, type RestartLauncher } from "../../apps/server/src/self-update";
 
 const temporaryDirectories: string[] = [];
 const currentCommit = "1111111111111111111111111111111111111111";
@@ -34,7 +34,10 @@ function fakeRunner(options: { dirty?: boolean; upToDate?: boolean; divergent?: 
     if (command === "git" && joined === `merge --ff-only ${targetCommit}`) { head = targetCommit; return { stdout: "Updating…\n", stderr: "" }; }
     return { stdout: "", stderr: "" };
   };
-  return { calls, runner };
+  const restartLauncher: RestartLauncher = async (command, args, runOptions) => {
+    calls.push({ command, args, cwd: runOptions.cwd });
+  };
+  return { calls, runner, restartLauncher };
 }
 
 describe("self update", () => {
@@ -54,6 +57,11 @@ describe("self update", () => {
     expect(parseCommandJson(undefined)).toBeNull();
     expect(() => parseCommandJson("systemctl restart app")).toThrow("JSON 字符串数组");
     expect(() => parseCommandJson("[]")).toThrow("1-32");
+  });
+
+  it("does not wait for a spawned restart process that exits by SIGTERM", async () => {
+    const directory = await testDirectory();
+    await expect(launchRestartProcess(process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"], { cwd: directory })).resolves.toBeUndefined();
   });
 
   it("stays unavailable until a server-owned restart command is configured", async () => {
@@ -89,14 +97,15 @@ describe("self update", () => {
 
   it("validates a detached candidate before fast-forwarding and restarting", async () => {
     const directory = await testDirectory();
-    const { calls, runner } = fakeRunner();
+    const { calls, runner, restartLauncher } = fakeRunner();
     const repository = path.join(directory, "repo");
-    const manager = new SelfUpdateManager({ repository, dataDir: path.join(directory, "data"), restartCommand: ["restart-app", "--now"], runner });
+    const dataDir = path.join(directory, "data");
+    const manager = new SelfUpdateManager({ repository, dataDir, restartCommand: ["restart-app", "--now"], runner, restartLauncher });
     await manager.initialize();
     await manager.start();
     await manager.waitForCompletion();
 
-    expect(manager.getStatus()).toMatchObject({ state: "succeeded", step: "complete", currentCommit: targetCommit, targetCommit });
+    expect(manager.getStatus()).toMatchObject({ state: "restarting", step: "restarting", currentCommit: targetCommit, targetCommit });
     const commands = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
     const worktreeIndex = commands.findIndex((command) => command.startsWith("git worktree add --detach"));
     const candidateTestIndex = commands.indexOf("npm test");
@@ -107,6 +116,27 @@ describe("self update", () => {
     expect(mergeIndex).toBeGreaterThan(candidateTestIndex);
     expect(restartIndex).toBeGreaterThan(mergeIndex);
     expect(calls.filter((call) => call.command === "npm" && call.args.join(" ") === "run build")).toHaveLength(2);
+
+    const replacement = new SelfUpdateManager({ repository, dataDir, restartCommand: ["restart-app", "--now"], runner, restartLauncher });
+    await replacement.initialize();
+    expect(replacement.getStatus()).toMatchObject({ state: "succeeded", step: "complete", currentCommit: targetCommit, targetCommit });
+  });
+
+  it("reports a restart command that cannot be launched without losing the deployed commit", async () => {
+    const directory = await testDirectory();
+    const { runner } = fakeRunner();
+    const manager = new SelfUpdateManager({
+      repository: path.join(directory, "repo"),
+      dataDir: path.join(directory, "data"),
+      restartCommand: ["missing-restart-command"],
+      runner,
+      restartLauncher: async () => { throw new Error("spawn ENOENT"); },
+    });
+    await manager.initialize();
+    await manager.start();
+    await manager.waitForCompletion();
+    expect(manager.getStatus()).toMatchObject({ state: "failed", step: "restarting", currentCommit: targetCommit, targetCommit });
+    expect(manager.getStatus().message).toContain("spawn ENOENT");
   });
 
   it("rejects a fetched history that is not a fast-forward successor", async () => {
@@ -167,12 +197,17 @@ describe("self update", () => {
 
     await writeFile(command, "#!/usr/bin/env node\nprocess.exit(0);\n");
     await chmod(command, 0o700);
-    const manager = new SelfUpdateManager({ repository: deployed, dataDir: path.join(directory, "data"), restartCommand: [command], npmCommand: command });
+    const dataDir = path.join(directory, "data");
+    const manager = new SelfUpdateManager({ repository: deployed, dataDir, restartCommand: [command], npmCommand: command });
     await manager.initialize();
     await manager.start();
     await manager.waitForCompletion();
 
-    expect(manager.getStatus()).toMatchObject({ state: "succeeded", currentCommit: targetHead, targetCommit: targetHead });
+    expect(manager.getStatus()).toMatchObject({ state: "restarting", currentCommit: targetHead, targetCommit: targetHead });
     expect((await run("git", ["rev-parse", "HEAD"], deployed)).stdout.trim()).toBe(targetHead);
+
+    const replacement = new SelfUpdateManager({ repository: deployed, dataDir, restartCommand: [command], npmCommand: command });
+    await replacement.initialize();
+    expect(replacement.getStatus()).toMatchObject({ state: "succeeded", currentCommit: targetHead, targetCommit: targetHead });
   });
 });
