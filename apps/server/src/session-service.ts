@@ -77,6 +77,26 @@ interface ProjectSettings { defaultModel: string | null; defaultReasoning: strin
 type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
 type SnapshotItem = SnapshotTurn["items"][number];
+const AUTO_TITLE_CONTEXT_MAX_LENGTH = 4_000;
+
+function truncateTitleContext(value: string): string {
+  const characters = Array.from(value.trim());
+  return characters.length > AUTO_TITLE_CONTEXT_MAX_LENGTH
+    ? characters.slice(0, AUTO_TITLE_CONTEXT_MAX_LENGTH).join("")
+    : characters.join("");
+}
+
+function autoTitleContext(turn: SnapshotTurn, fallbackPreview: string): { userRequest: string; assistantOutcome: string } | null {
+  const userMessage = turn.items.find((item) => item.type === "userMessage");
+  const userRequest = userMessage?.type === "userMessage"
+    ? userMessage.content.flatMap((part) => typeof part.text === "string" ? [part.text] : []).join("\n").trim()
+    : "";
+  const agentMessages = turn.items.flatMap((item) => item.type === "agentMessage" && item.text.trim() ? [item] : []);
+  const assistantMessage = [...agentMessages].reverse().find((item) => item.phase === "final_answer") ?? agentMessages.at(-1);
+  const normalizedUserRequest = truncateTitleContext(userRequest || fallbackPreview);
+  const assistantOutcome = truncateTitleContext(assistantMessage?.text ?? "");
+  return normalizedUserRequest && assistantOutcome ? { userRequest: normalizedUserRequest, assistantOutcome } : null;
+}
 
 function removeSkillMentions(text: string, names: readonly string[]): string {
   let next = text;
@@ -311,6 +331,7 @@ export class SessionService extends EventEmitter {
   private readonly userMessageResults = new Map<string, Promise<unknown>>();
   private readonly settings = new Map<string, SessionSettings>();
   private readonly sessionSnapshots = new Map<string, SessionSnapshot>();
+  private readonly autoTitleAttempts = new Set<string>();
   private readonly commandOutputDeltas = new Map<string, string>();
   private readonly agentMessageDeltas = new Map<string, string>();
   private readonly goalPresence = new Map<string, boolean>();
@@ -477,6 +498,7 @@ export class SessionService extends EventEmitter {
     return this.withLock(threadId, async () => {
       this.requireMapping(threadId);
       await this.adapter.renameSession(threadId, name);
+      this.setSnapshotName(threadId, name);
     });
   }
 
@@ -1065,6 +1087,7 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnAttachmentIds.delete(event.threadId);
     }
     this.updateSessionSnapshot(event);
+    if (event.type === "turnCompleted" && event.turn.status === "completed") this.scheduleAutoTitle(event.threadId, event.turn.id);
     return event;
   }
 
@@ -1534,6 +1557,7 @@ export class SessionService extends EventEmitter {
   private clearSessionCaches(threadId: string): void {
     this.settings.delete(threadId);
     this.sessionSnapshots.delete(threadId);
+    this.autoTitleAttempts.delete(threadId);
     this.sessionPrefills.delete(threadId);
     this.goalPresence.delete(threadId);
     this.goalPresenceLoading.delete(threadId);
@@ -1660,6 +1684,10 @@ export class SessionService extends EventEmitter {
     if (event.type === "goalUpdated") this.goalPresence.set(event.threadId, true);
     if (event.type === "goalCleared") this.goalPresence.set(event.threadId, false);
     if (!threadId || !this.sessionSnapshots.has(threadId)) return;
+    if (event.type === "nameUpdated") {
+      this.setSnapshotName(threadId, event.name ?? null);
+      return;
+    }
     if (event.type === "turnStarted" || event.type === "turnCompleted") {
       this.upsertSnapshotTurn(threadId, event.turn);
       if (event.type === "turnCompleted") this.clearStreamingDeltaBuffers(threadId);
@@ -1687,6 +1715,53 @@ export class SessionService extends EventEmitter {
     if (event.type === "itemDelta" && event.delta.kind === "agentMessage" && event.turnId) {
       this.appendSnapshotAgentDelta(threadId, event.turnId, event.delta.itemId, event.delta.delta);
     }
+  }
+
+  private setSnapshotName(threadId: string, name: string | null): void {
+    const snapshot = this.sessionSnapshots.get(threadId);
+    if (!snapshot) return;
+    this.sessionSnapshots.set(threadId, { ...snapshot, name, updatedAt: Math.floor(Date.now() / 1_000) });
+  }
+
+  private scheduleAutoTitle(threadId: string, completedTurnId: string): void {
+    if (this.autoTitleAttempts.has(threadId) || this.runtimes.getSideChat(threadId)) return;
+    const mapping = this.repositories.getProjectSession(threadId);
+    const snapshot = this.sessionSnapshots.get(threadId);
+    if (!mapping || !snapshot || snapshot.ephemeral || snapshot.name !== null) return;
+    const boundaryIndex = mapping.fork_turn_id
+      ? snapshot.turns.findIndex((turn) => turn.id === mapping.fork_turn_id)
+      : -1;
+    if (mapping.fork_turn_id && boundaryIndex < 0) return;
+    const sessionTurns = snapshot.turns.slice(boundaryIndex + 1);
+    const firstCompletedTurn = sessionTurns.find((turn) => turn.status === "completed");
+    if (!firstCompletedTurn || firstCompletedTurn.id !== completedTurnId) return;
+    const context = autoTitleContext(firstCompletedTurn, snapshot.preview);
+    if (!context) return;
+    this.autoTitleAttempts.add(threadId);
+    void this.generateAndApplyAutoTitle(threadId, snapshot.cwd, context)
+      .catch((error) => this.emit("autoTitleError", error));
+  }
+
+  private async generateAndApplyAutoTitle(
+    threadId: string,
+    cwd: string,
+    context: { userRequest: string; assistantOutcome: string },
+  ): Promise<void> {
+    const title = await this.adapter.generateSessionTitle(cwd, context.userRequest, context.assistantOutcome);
+    if (!title) return;
+    await this.withLock(threadId, async () => {
+      if (!this.repositories.getProjectSession(threadId)) return;
+      const snapshot = this.sessionSnapshots.get(threadId);
+      if (!snapshot || snapshot.ephemeral || snapshot.name !== null) return;
+      const persisted = await this.adapter.readSession(threadId);
+      if (persisted.name !== null) {
+        this.setSnapshotName(threadId, persisted.name);
+        return;
+      }
+      if (this.sessionSnapshots.get(threadId)?.name !== null) return;
+      await this.adapter.renameSession(threadId, title);
+      this.setSnapshotName(threadId, title);
+    });
   }
 
   private withPreferredAccessMode(event: AdapterEvent): AdapterEvent {

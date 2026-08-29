@@ -3161,4 +3161,186 @@ describe("session operation rules", () => {
 
     expect(runtimes.reconcileFromSnapshot).toHaveBeenCalledWith("thread-1", snapshot.turns);
   });
+
+  it("generates one automatic title after the first successful persistent Turn", async () => {
+    const firstTurn = {
+      ...turn("turn-1", "completed"),
+      items: [
+        { type: "userMessage" as const, id: "user-1", clientId: "message-1", content: [{ type: "text", text: "实现自动 Session 标题" }] },
+        { type: "agentMessage" as const, id: "agent-1", text: "已实现并完成测试", phase: "final_answer" },
+      ],
+    };
+    const snapshot = { id: "thread-1", preview: "实现自动 Session 标题", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(async () => "自动生成 Session 标题"),
+      readSession: vi.fn(async () => snapshot),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", fork_turn_id: null })),
+    };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("thread-1", snapshot);
+
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: firstTurn });
+    await vi.waitFor(() => expect(adapter.renameSession).toHaveBeenCalledWith("thread-1", "自动生成 Session 标题"));
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: { ...turn("turn-2", "completed"), items: [] } });
+
+    expect(adapter.generateSessionTitle).toHaveBeenCalledTimes(1);
+    expect(adapter.generateSessionTitle).toHaveBeenCalledWith("/tmp/project", "实现自动 Session 标题", "已实现并完成测试");
+  });
+
+  it("does not title Side Chats even after a completed Turn", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(async () => "不应生成"),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = { getProjectSession: vi.fn(() => ({ thread_id: "side-1", project_id: "project-1", fork_turn_id: null })) };
+    const runtimes = { getSideChat: vi.fn(() => ({ threadId: "side-1", parentThreadId: "parent" })) };
+    const snapshot = { id: "side-1", preview: "test", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: true, forkedFromId: "parent", turns: [] };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("side-1", snapshot);
+
+    service.handleEvent({ type: "turnCompleted", threadId: "side-1", turn: turn("failed", "failed") });
+    service.handleEvent({ type: "turnCompleted", threadId: "side-1", turn: turn("completed", "completed") });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(adapter.generateSessionTitle).not.toHaveBeenCalled();
+    expect(adapter.renameSession).not.toHaveBeenCalled();
+  });
+
+  it("waits through failed or interrupted Turns and titles the first successful Turn", async () => {
+    const successfulTurn = {
+      ...turn("successful", "completed"),
+      items: [
+        { type: "userMessage" as const, id: "user-success", clientId: "message-success", content: [{ type: "text", text: "修复后重试" }] },
+        { type: "agentMessage" as const, id: "agent-success", text: "重试成功", phase: "final_answer" },
+      ],
+    };
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(async () => "重试成功"),
+      readSession: vi.fn(async () => snapshot),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = { getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", fork_turn_id: null })) };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const snapshot = { id: "thread-1", preview: "修复后重试", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("thread-1", snapshot);
+
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: turn("failed", "failed") });
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: turn("interrupted", "interrupted") });
+    expect(adapter.generateSessionTitle).not.toHaveBeenCalled();
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: successfulTurn });
+    await vi.waitFor(() => expect(adapter.renameSession).toHaveBeenCalledWith("thread-1", "重试成功"));
+  });
+
+  it("titles a Fork from its first new successful Turn, not inherited history", async () => {
+    const newTurn = {
+      ...turn("child-turn", "completed"),
+      items: [
+        { type: "userMessage" as const, id: "child-user", clientId: "child-message", content: [{ type: "text", text: "继续修复" }] },
+        { type: "agentMessage" as const, id: "child-agent", text: "Fork 修复完成", phase: "final_answer" },
+      ],
+    };
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(async () => "Fork 修复"),
+      readSession: vi.fn(async () => snapshot),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = { getProjectSession: vi.fn(() => ({ thread_id: "child", project_id: "project-1", fork_turn_id: "boundary" })) };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const snapshot = { id: "child", preview: "继续修复", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: "parent", turns: [turn("boundary", "completed")] };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("child", snapshot);
+
+    service.handleEvent({ type: "turnCompleted", threadId: "child", turn: newTurn });
+    await vi.waitFor(() => expect(adapter.renameSession).toHaveBeenCalledWith("child", "Fork 修复"));
+    expect(adapter.generateSessionTitle).toHaveBeenCalledWith("/tmp/project", "继续修复", "Fork 修复完成");
+  });
+
+  it("contains title generation failures without affecting the completed Turn", async () => {
+    const completedTurn = {
+      ...turn("turn-1", "completed"),
+      items: [
+        { type: "userMessage" as const, id: "user-1", clientId: "message-1", content: [{ type: "text", text: "生成标题" }] },
+        { type: "agentMessage" as const, id: "agent-1", text: "任务完成", phase: "final_answer" },
+      ],
+    };
+    const failure = new Error("title model unavailable");
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(async () => { throw failure; }),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = { getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", fork_turn_id: null })) };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const snapshot = { id: "thread-1", preview: "生成标题", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    const errors: unknown[] = [];
+    service.on("autoTitleError", (error) => errors.push(error));
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("thread-1", snapshot);
+
+    expect(service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: completedTurn })).toEqual(expect.objectContaining({ type: "turnCompleted" }));
+    await vi.waitFor(() => expect(errors).toEqual([failure]));
+    expect(adapter.renameSession).not.toHaveBeenCalled();
+  });
+
+  it("never overwrites a manual rename that wins while title generation is pending", async () => {
+    let resolveGeneratedTitle!: (title: string) => void;
+    const generatedTitle = new Promise<string>((resolve) => { resolveGeneratedTitle = resolve; });
+    const completedTurn = {
+      ...turn("turn-1", "completed"),
+      items: [
+        { type: "userMessage" as const, id: "user-1", clientId: "message-1", content: [{ type: "text", text: "实现标题" }] },
+        { type: "agentMessage" as const, id: "agent-1", text: "实现完成", phase: "final_answer" },
+      ],
+    };
+    const snapshot = { id: "thread-1", preview: "实现标题", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(() => generatedTitle),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = { getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", fork_turn_id: null })) };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("thread-1", snapshot);
+
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: completedTurn });
+    await vi.waitFor(() => expect(adapter.generateSessionTitle).toHaveBeenCalledTimes(1));
+    await service.rename("thread-1", "我的手动标题");
+    resolveGeneratedTitle("迟到的自动标题");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(adapter.renameSession.mock.calls).toEqual([["thread-1", "我的手动标题"]]);
+    const cached = (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.get("thread-1");
+    expect(cached?.name).toBe("我的手动标题");
+  });
+
+  it("rechecks the persisted name before applying an automatic title", async () => {
+    const completedTurn = {
+      ...turn("turn-1", "completed"),
+      items: [
+        { type: "userMessage" as const, id: "user-1", clientId: "message-1", content: [{ type: "text", text: "实现标题" }] },
+        { type: "agentMessage" as const, id: "agent-1", text: "实现完成", phase: "final_answer" },
+      ],
+    };
+    const snapshot = { id: "thread-1", preview: "实现标题", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      generateSessionTitle: vi.fn(async () => "自动标题"),
+      readSession: vi.fn(async () => ({ ...snapshot, name: "另一客户端的手动标题" })),
+      renameSession: vi.fn(async () => undefined),
+    });
+    const repositories = { getProjectSession: vi.fn(() => ({ thread_id: "thread-1", project_id: "project-1", fork_turn_id: null })) };
+    const runtimes = { getSideChat: vi.fn(() => undefined) };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.set("thread-1", snapshot);
+
+    service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: completedTurn });
+    await vi.waitFor(() => expect(adapter.readSession).toHaveBeenCalledWith("thread-1"));
+
+    expect(adapter.renameSession).not.toHaveBeenCalled();
+    const cached = (service as unknown as { sessionSnapshots: Map<string, typeof snapshot> }).sessionSnapshots.get("thread-1");
+    expect(cached?.name).toBe("另一客户端的手动标题");
+  });
 });

@@ -163,6 +163,10 @@ export async function createServer() {
     { error: safeErrorForLog(error) },
     "Failed to persist the latest Session model and reasoning settings",
   ));
+  sessions.on("autoTitleError", (error) => app.log.warn(
+    { error: safeErrorForLog(error) },
+    "Failed to generate an automatic Session title",
+  ));
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;

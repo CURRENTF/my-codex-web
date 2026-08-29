@@ -6,6 +6,27 @@ import { requireIsolatedCodexHome } from "../../scripts/isolated-codex-home";
 const run = process.env.RUN_CODEX_INTEGRATION === "1" ? describe : describe.skip;
 
 run("real codex app-server with isolated CODEX_HOME", () => {
+  it("generates a title in an isolated ephemeral Thread", async () => {
+    const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
+    const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
+    const projectedEvents: AdapterEvent[] = [];
+    adapter.on("event", (event: AdapterEvent) => projectedEvents.push(event));
+    adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
+    await adapter.start();
+    try {
+      const title = await adapter.generateSessionTitle(
+        process.cwd(),
+        "为 Codex Web 添加自动生成 Session 标题功能",
+        "已实现首轮成功后生成标题，并保护用户手动标题",
+      );
+      expect(title).toBeTruthy();
+      expect(Array.from(title ?? "").length).toBeLessThanOrEqual(48);
+      expect(projectedEvents).toEqual([]);
+    } finally {
+      adapter.stop();
+    }
+  }, 150_000);
+
   it("returns the verified invalid-request code when steering without an active Turn", async () => {
     const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });

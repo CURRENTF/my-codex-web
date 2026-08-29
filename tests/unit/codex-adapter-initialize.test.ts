@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CodexAdapter, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, NON_IDEMPOTENT_MUTATION_TIMEOUT, OperationUncertainError } from "@codex-web/codex-adapter";
+import { CodexAdapter, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, NON_IDEMPOTENT_MUTATION_TIMEOUT, normalizeGeneratedTitle, OperationUncertainError } from "@codex-web/codex-adapter";
 
 describe("Codex Adapter initialization", () => {
   it("lists Subagents separately with their parent, identity, context, and runtime state", async () => {
@@ -264,5 +264,95 @@ describe("Codex Adapter initialization", () => {
     await adapter.initialize();
 
     expect(request.mock.calls.filter(([method]) => method === "account/read")).toHaveLength(2);
+  });
+
+  it("isolates ephemeral title generation from normal events and server requests", async () => {
+    let adapter!: CodexAdapter;
+    const respondError = vi.fn();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") {
+        adapter.supervisor.emit("notification", {
+          method: "thread/started",
+          params: { thread: { id: "title-thread", threadSource: "codex-web-title-generator" } },
+        });
+        return { thread: { id: "title-thread" } };
+      }
+      if (method === "turn/start") {
+        adapter.supervisor.emit("serverRequest", {
+          id: 91,
+          method: "item/tool/requestUserInput",
+          params: { threadId: "title-thread", turnId: "title-turn", questions: [] },
+        });
+        queueMicrotask(() => {
+          adapter.supervisor.emit("notification", {
+            method: "item/completed",
+            params: { threadId: "title-thread", turnId: "title-turn", item: { type: "agentMessage", id: "answer", text: "{\"title\":\"**自动标题部署。**\"}" } },
+          });
+          adapter.supervisor.emit("notification", {
+            method: "turn/completed",
+            params: { threadId: "title-thread", turn: { id: "title-turn", status: "completed", items: [] } },
+          });
+          adapter.supervisor.emit("notification", {
+            method: "serverRequest/resolved",
+            params: { requestId: 91 },
+          });
+        });
+        return { turn: { id: "title-turn", status: "inProgress", items: [] } };
+      }
+      return {};
+    });
+    const transport = { request, notify: vi.fn(), respondError, connected: true };
+    adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: typeof transport }).transportValue = transport;
+    const events: unknown[] = [];
+    const pendingRequests: unknown[] = [];
+    adapter.on("event", (event) => events.push(event));
+    adapter.on("pendingRequest", (requestValue) => pendingRequests.push(requestValue));
+
+    await expect(adapter.generateSessionTitle("/tmp/project", "添加标题", "功能已实现")).resolves.toBe("自动标题部署");
+
+    expect(events).toEqual([]);
+    expect(pendingRequests).toEqual([]);
+    expect(respondError).toHaveBeenCalledWith(91, -32_601, expect.stringContaining("title generation"));
+    expect(request).toHaveBeenCalledWith("thread/start", expect.objectContaining({
+      ephemeral: true,
+      threadSource: "codex-web-title-generator",
+      approvalPolicy: "never",
+      sandbox: "read-only",
+    }), 30_000);
+    expect(request).toHaveBeenCalledWith("turn/start", expect.objectContaining({
+      threadId: "title-thread",
+      effort: "low",
+      outputSchema: expect.objectContaining({ required: ["title"] }),
+      sandboxPolicy: { type: "readOnly", networkAccess: false },
+    }), 30_000);
+    expect(request).toHaveBeenCalledWith("thread/unsubscribe", { threadId: "title-thread" }, 30_000);
+  });
+
+  it("normalizes structured, Markdown, and overlong generated titles", () => {
+    expect(normalizeGeneratedTitle("```json\n{\"title\":\"**修复自动标题。**\"}\n```")).toBe("修复自动标题");
+    expect(normalizeGeneratedTitle("\"Deploy session title!\"")).toBe("Deploy session title");
+    expect(Array.from(normalizeGeneratedTitle("长".repeat(80)) ?? "")).toHaveLength(48);
+    expect(normalizeGeneratedTitle("。！？")).toBeNull();
+  });
+
+  it("cancels an in-flight ephemeral title Turn on App Server disconnect", async () => {
+    let connected = true;
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") return { thread: { id: "title-thread" } };
+      if (method === "turn/start") return { turn: { id: "title-turn", status: "inProgress", items: [] } };
+      return {};
+    });
+    const transport = { request, notify: vi.fn(), respondError: vi.fn(), get connected() { return connected; } };
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: typeof transport }).transportValue = transport;
+
+    const generation = adapter.generateSessionTitle("/tmp/project", "生成标题", "任务完成");
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("turn/start", expect.anything(), 30_000));
+    connected = false;
+    adapter.supervisor.emit("disconnected", { code: 1, signal: null });
+
+    await expect(generation).rejects.toThrow("disconnected during title generation");
+    expect(request).not.toHaveBeenCalledWith("thread/unsubscribe", expect.anything(), expect.anything());
   });
 });
