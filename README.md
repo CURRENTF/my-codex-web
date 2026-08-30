@@ -95,7 +95,7 @@ systemctl --user show my-codex-web.service \
 
 重新打开左上角更新对话框后，“当前版本”应显示 Git commit，“检查并更新”按钮应可用。若仍显示“当前版本：未知”，先在 `CODEX_WEB_UPDATE_REPOSITORY` 中运行 `git rev-parse HEAD`；若仍显示“未配置”，检查 `CODEX_WEB_UPDATE_RESTART_COMMAND_JSON` 是否作为合法 JSON 字符串数组传入了 Web 服务进程。
 
-更新器只接受 `remote/branch` 相对于当前 commit 的快进后继。它先在 `CODEX_WEB_DATA_DIR/updates` 创建隔离 worktree，依次执行 `npm ci`、TypeScript 检查、完整测试和生产构建；候选版本全部通过后，才快进运行 checkout、重新安装/构建并执行重启命令。存在未提交或未跟踪文件、运行中的 Turn、分支不匹配或非快进历史时都会拒绝更新。进度保存在 `CODEX_WEB_DATA_DIR/self-update.json`，详细日志写入 `CODEX_WEB_DATA_DIR/logs/update-<run-id>.log`。浏览器在重启完成后自动刷新到新版本。
+更新器只接受 `remote/branch` 相对于当前 commit 的快进后继。它先在 `CODEX_WEB_DATA_DIR/updates` 创建隔离 worktree，执行 `npm ci --include=dev`，再运行 TypeScript 检查、完整测试和生产构建；显式包含开发依赖可保证设置了 `NODE_ENV=production` 的 systemd 服务仍能获得 `tsc` 和测试工具。候选版本全部通过后，才快进运行 checkout、重新安装/构建并执行重启命令。存在未提交或未跟踪文件、运行中的 Turn、分支不匹配或非快进历史时都会拒绝更新。进度保存在 `CODEX_WEB_DATA_DIR/self-update.json`，详细日志写入 `CODEX_WEB_DATA_DIR/logs/update-<run-id>.log`。浏览器在重启完成后自动刷新到新版本。
 
 ## 开发
 

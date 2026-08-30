@@ -37,5 +37,6 @@ When changing the updater, preserve these guarantees:
 - Only fast-forward the configured branch from the configured remote.
 - Reject dirty, wrong-branch, divergent, or active-Turn deployments.
 - Validate the detached candidate before changing the running checkout.
+- Install development dependencies explicitly during candidate and live-checkout builds; the service may run with `NODE_ENV=production`, but validation still requires `tsc`, Vitest, and Vite.
 - Persist bounded status and logs under `CODEX_WEB_DATA_DIR` across restart.
 - Never restart the tunnel or reverse proxy as part of an application code update.

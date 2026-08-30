@@ -115,6 +115,7 @@ describe("self update", () => {
     expect(candidateTestIndex).toBeGreaterThan(worktreeIndex);
     expect(mergeIndex).toBeGreaterThan(candidateTestIndex);
     expect(restartIndex).toBeGreaterThan(mergeIndex);
+    expect(calls.filter((call) => call.command === "npm" && call.args.join(" ") === "ci --include=dev --no-audit --no-fund")).toHaveLength(2);
     expect(calls.filter((call) => call.command === "npm" && call.args.join(" ") === "run build")).toHaveLength(2);
 
     const replacement = new SelfUpdateManager({ repository, dataDir, restartCommand: ["restart-app", "--now"], runner, restartLauncher });

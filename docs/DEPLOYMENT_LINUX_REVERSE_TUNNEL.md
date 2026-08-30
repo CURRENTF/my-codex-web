@@ -46,7 +46,7 @@ The Web UI update button requires the source path to be a clean Git checkout on 
 Environment='CODEX_WEB_UPDATE_RESTART_COMMAND_JSON=["systemctl","--user","restart","my-codex-web.service"]'
 ```
 
-The button fetches `origin/main`, validates the target in an isolated worktree with `npm ci`, `npm run check`, `npm test`, and `npm run build`, then performs a fast-forward-only deployment and restarts only `my-codex-web.service`. It never restarts the tunnel service. Update state and bounded command logs remain under `/home/k/.codex-web` across the application restart.
+The button fetches `origin/main`, validates the target in an isolated worktree with `npm ci --include=dev`, `npm run check`, `npm test`, and `npm run build`, then performs a fast-forward-only deployment and restarts only `my-codex-web.service`. The explicit development-dependency install keeps `tsc` and Vitest available even when systemd sets `NODE_ENV=production`. It never restarts the tunnel service. Update state and bounded command logs remain under `/home/k/.codex-web` across the application restart.
 
 On Worker-A, after replacing the tracked source files:
 
@@ -56,7 +56,7 @@ export PATH=/home/k/.nvm/versions/node/v22.22.1/bin:$PATH
 export HTTP_PROXY=http://127.0.0.1:7890
 export HTTPS_PROXY=http://127.0.0.1:7890
 export ALL_PROXY=socks5://127.0.0.1:7891
-npm ci --no-audit --no-fund
+npm ci --include=dev --no-audit --no-fund
 npm run check
 npm test
 npm run build

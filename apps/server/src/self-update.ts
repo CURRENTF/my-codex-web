@@ -7,6 +7,7 @@ import type { RuntimeState, SelfUpdateStatus, SubagentAgentStatus } from "@codex
 const COMMAND_OUTPUT_LIMIT = 24_000;
 const GIT_TIMEOUT_MS = 2 * 60_000;
 const NPM_TIMEOUT_MS = 20 * 60_000;
+const NPM_CI_ARGS = ["ci", "--include=dev", "--no-audit", "--no-fund"];
 
 export interface ProcessRunOptions {
   cwd: string;
@@ -272,7 +273,7 @@ export class SelfUpdateManager {
       await this.patchStatus({ step: "installing", message: "正在隔离候选版本并安装依赖…" });
       await this.loggedRun(runId, "git", ["worktree", "add", "--detach", candidate, targetCommit], this.repository, GIT_TIMEOUT_MS);
       worktreeAdded = true;
-      await this.loggedRun(runId, this.npmCommand, ["ci", "--no-audit", "--no-fund"], candidate, NPM_TIMEOUT_MS);
+      await this.loggedRun(runId, this.npmCommand, NPM_CI_ARGS, candidate, NPM_TIMEOUT_MS);
       await this.patchStatus({ step: "validating", message: "正在检查、测试并构建候选版本…" });
       await this.loggedRun(runId, this.npmCommand, ["run", "check"], candidate, NPM_TIMEOUT_MS);
       await this.loggedRun(runId, this.npmCommand, ["test"], candidate, NPM_TIMEOUT_MS);
@@ -302,7 +303,7 @@ export class SelfUpdateManager {
     await this.assertSafeToDeploy();
     await this.patchStatus({ step: "deploying", message: fastForward ? "候选版本验证通过，正在快进部署…" : "正在恢复已验证版本的构建和重启…" });
     if (fastForward) await this.loggedRun(runId, "git", ["merge", "--ff-only", targetCommit], this.repository, GIT_TIMEOUT_MS);
-    await this.loggedRun(runId, this.npmCommand, ["ci", "--no-audit", "--no-fund"], this.repository, NPM_TIMEOUT_MS);
+    await this.loggedRun(runId, this.npmCommand, NPM_CI_ARGS, this.repository, NPM_TIMEOUT_MS);
     await this.loggedRun(runId, this.npmCommand, ["run", "build"], this.repository, NPM_TIMEOUT_MS);
 
     await this.patchStatus({ state: "restarting", step: "restarting", currentCommit: targetCommit, message: "部署完成，正在重新启动 Codex Web…" });
