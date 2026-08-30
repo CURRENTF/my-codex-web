@@ -70,6 +70,19 @@ describe("viewport layout CSS", () => {
     expect(styles).toMatch(/@container session-pane \(max-width: 760px\)[\s\S]*\.goal-bar \{ width: 32px; max-width: 32px; flex: 0 0 32px; \}/);
   });
 
+  it("keeps long Project and Session labels aligned on one header row", () => {
+    expect(sessionPaneSource).toContain('className="breadcrumb-project" title={projectLabel}');
+    expect(sessionPaneSource).toContain('className="breadcrumb-separator" aria-hidden="true"');
+    expect(rule(".breadcrumb")).toContain("flex: 0 1 auto");
+    expect(rule(".breadcrumb")).toContain("overflow: hidden");
+    expect(rule(".breadcrumb")).toContain("white-space: nowrap");
+    expect(rule(".breadcrumb-project")).toContain("text-overflow: ellipsis");
+    expect(rule(".breadcrumb-project")).toContain("white-space: nowrap");
+    expect(rule(".breadcrumb strong")).toContain("text-overflow: ellipsis");
+    expect(rule(".header-status")).toContain("flex: 0 0 auto");
+    expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.breadcrumb-project, \.breadcrumb-separator \{ display: none; \}/);
+  });
+
   it("groups the empty Session state into icon, copy, and action spacing", () => {
     expect(appSource).toContain('className="no-selection-mark"');
     expect(appSource).toContain('className="no-selection-copy"');

@@ -108,6 +108,25 @@ test("keeps Subagents, context usage, and code access compact in the session hea
   await page.screenshot({ path: path.resolve("output/playwright/session-header/session-header-1100.png"), fullPage: true });
 
   await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 980, height: 760 });
+  const projectLabel = page.locator(".main-pane .breadcrumb-project");
+  const sessionLabel = page.locator(".main-pane .breadcrumb strong");
+  await projectLabel.evaluate((element) => { element.textContent = "Sparse-vLLM-kernel-opt-with-an-even-longer-name"; });
+  await sessionLabel.evaluate((element) => { element.textContent = "Optimize-the-long-running-kernel-session"; });
+  const [compactHeaderBox, breadcrumbBox, statusBox] = await Promise.all([
+    page.locator(".main-pane .session-header").boundingBox(),
+    page.locator(".main-pane .breadcrumb").boundingBox(),
+    page.locator(".main-pane .header-status").boundingBox(),
+  ]);
+  expect(compactHeaderBox?.height).toBe(58);
+  expect(Math.abs((breadcrumbBox?.y ?? 0) + (breadcrumbBox?.height ?? 0) / 2 - ((statusBox?.y ?? 0) + (statusBox?.height ?? 0) / 2))).toBeLessThanOrEqual(1);
+  await expect(projectLabel).toHaveCSS("white-space", "nowrap");
+  await expect(sessionLabel).toHaveCSS("white-space", "nowrap");
+  expect(await projectLabel.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const compactHeaderOverflow = await page.locator(".main-pane .session-header").evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(compactHeaderOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: path.resolve("output/playwright/session-header/session-header-long-project-980.png"), fullPage: true });
+
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(async () => {
     const box = await page.locator(".sidebar").boundingBox();
