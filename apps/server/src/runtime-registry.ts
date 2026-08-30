@@ -453,7 +453,7 @@ export class ThreadRuntimeRegistry {
         this.events.publish("session.settings.updated", { settings: event.settings }, this.ids(threadId));
         break;
       case "nameUpdated":
-        this.events.publish("session.summary.updated", { reason: "renamed", ...(event.name ? { name: event.name } : {}) }, { threadId });
+        this.events.publish("session.summary.updated", { reason: "renamed", name: event.name ?? null }, { threadId });
         break;
       default:
         break;

@@ -367,72 +367,82 @@ export class SessionService extends EventEmitter {
     if (!mappings.length) return [];
     for (const mapping of mappings) this.restoreSession(mapping.thread_id);
     void this.ensureGoalPresence(mappings.map((mapping) => mapping.thread_id));
-    const mapped = new Map(mappings.map((item) => [item.thread_id, item]));
-    const threads = [];
-    let cursor: string | null = null;
-    do {
-      const page = await this.adapter.listSessions({ cursor, limit: 100, sortDirection: options.sortDirection ?? "desc", searchTerm: options.search });
-      threads.push(...page.data);
-      cursor = page.nextCursor;
-    } while (cursor);
     await this.ensureForkSnapshots(mappings);
-    const seen = new Set<string>();
-    const threadById = new Map(threads.map((thread) => [thread.id, thread]));
-    const summaries = threads.flatMap((thread): SessionSummary[] => {
-      const mapping = mapped.get(thread.id);
-      if (!mapping) return [];
-      seen.add(thread.id);
-      const forkSource = mapping.parent_thread_id ? threadById.get(mapping.parent_thread_id) : undefined;
-      const sourceSnapshot = mapping.parent_thread_id ? this.sessionSnapshots.get(mapping.parent_thread_id) : undefined;
-      const childSnapshot = this.sessionSnapshots.get(thread.id);
-      const boundaryTurns = sourceSnapshot?.turns ?? childSnapshot?.turns ?? [];
-      const forkTurnIndex = mapping.fork_turn_id ? boundaryTurns.findIndex((turn) => turn.id === mapping.fork_turn_id) : -1;
-      return [{
-        threadId: thread.id,
-        projectId: mapping.project_id,
-        title: thread.name || thread.preview || "Untitled session",
-        preview: thread.preview,
-        cwd: thread.cwd,
-        sourceKind: mapping.source_kind ?? "unknown",
-        createdAt: thread.createdAt * 1_000,
-        updatedAt: thread.updatedAt * 1_000,
-        origin: mapping.origin,
-        parentThreadId: mapping.parent_thread_id,
-        forkTurnId: mapping.fork_turn_id,
-        forkSourceTitle: forkSource?.name || forkSource?.preview || sourceSnapshot?.name || sourceSnapshot?.preview || null,
-        forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
-        runtimeState: this.runtimes.get(thread.id).state,
-        hasGoal: this.goalPresence.get(thread.id) ?? false,
-      }];
-    });
-    for (const mapping of mappings) {
-      if (seen.has(mapping.thread_id)) continue;
-      const snapshot = this.sessionSnapshots.get(mapping.thread_id);
-      if (!snapshot) continue;
-      const snapshotForkTurnIndex = mapping.fork_turn_id ? snapshot.turns.findIndex((turn) => turn.id === mapping.fork_turn_id) : -1;
-      summaries.push({
-        threadId: snapshot.id,
-        projectId: mapping.project_id,
-        title: snapshot.name || snapshot.preview || "Untitled session",
-        preview: snapshot.preview,
-        cwd: snapshot.cwd,
-        sourceKind: mapping.source_kind ?? "appServer",
-        createdAt: snapshot.createdAt * 1_000,
-        updatedAt: snapshot.updatedAt * 1_000,
-        origin: mapping.origin,
-        parentThreadId: mapping.parent_thread_id,
-        forkTurnId: mapping.fork_turn_id,
-        forkSourceTitle: mapping.parent_thread_id
-          ? threadById.get(mapping.parent_thread_id)?.name || threadById.get(mapping.parent_thread_id)?.preview || this.sessionSnapshots.get(mapping.parent_thread_id)?.name || this.sessionSnapshots.get(mapping.parent_thread_id)?.preview || null
-          : null,
-        forkTurnNumber: snapshotForkTurnIndex >= 0 ? snapshotForkTurnIndex + 1 : null,
-        runtimeState: this.runtimes.get(snapshot.id).state,
-        hasGoal: this.goalPresence.get(snapshot.id) ?? false,
-      });
-    }
+    const mapped = new Map(mappings.map((item) => [item.thread_id, item]));
+    const summaries = mappings.map((mapping) => this.sessionSummary(mapping, mapped));
     return summaries
       .filter((summary) => sessionSummaryMatchesSearch(summary, options.search))
       .sort((left, right) => (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
+  }
+
+  private sessionSummary(mapping: ProjectSessionRow, mapped = new Map<string, ProjectSessionRow>()): SessionSummary {
+    const snapshot = this.sessionSnapshots.get(mapping.thread_id);
+    const parentMapping = mapping.parent_thread_id
+      ? mapped.get(mapping.parent_thread_id) ?? this.repositories.getProjectSession?.(mapping.parent_thread_id)
+      : null;
+    const parentSnapshot = mapping.parent_thread_id ? this.sessionSnapshots.get(mapping.parent_thread_id) : undefined;
+    const boundaryTurns = parentSnapshot?.turns ?? snapshot?.turns ?? [];
+    const forkTurnIndex = mapping.fork_turn_id ? boundaryTurns.findIndex((turn) => turn.id === mapping.fork_turn_id) : -1;
+    const preview = snapshot?.preview ?? mapping.summary_preview ?? "";
+    return {
+      threadId: mapping.thread_id,
+      projectId: mapping.project_id,
+      title: snapshot?.name || snapshot?.preview || mapping.summary_title || preview || "Untitled session",
+      preview,
+      cwd: snapshot?.cwd ?? mapping.cwd_snapshot ?? "",
+      sourceKind: mapping.source_kind ?? "unknown",
+      createdAt: snapshot ? snapshot.createdAt * 1_000 : mapping.summary_created_at ?? mapping.added_at,
+      updatedAt: snapshot ? snapshot.updatedAt * 1_000 : mapping.summary_updated_at ?? mapping.last_seen_at,
+      origin: mapping.origin,
+      parentThreadId: mapping.parent_thread_id,
+      forkTurnId: mapping.fork_turn_id,
+      forkSourceTitle: mapping.parent_thread_id
+        ? parentSnapshot?.name || parentSnapshot?.preview || parentMapping?.summary_title || parentMapping?.summary_preview || null
+        : null,
+      forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
+      runtimeState: this.runtimes.get?.(mapping.thread_id)?.state ?? "idle",
+      hasGoal: this.goalPresence.get(mapping.thread_id) ?? false,
+    };
+  }
+
+  private snapshotSummary(
+    snapshot: SessionSnapshot,
+    metadata: Pick<SessionSummary, "projectId" | "origin" | "parentThreadId" | "forkTurnId">,
+  ): SessionSummary {
+    const parentSnapshot = metadata.parentThreadId ? this.sessionSnapshots.get(metadata.parentThreadId) : undefined;
+    const parentMapping = metadata.parentThreadId ? this.repositories.getProjectSession?.(metadata.parentThreadId) : null;
+    const boundaryTurns = parentSnapshot?.turns ?? snapshot.turns;
+    const forkTurnIndex = metadata.forkTurnId ? boundaryTurns.findIndex((turn) => turn.id === metadata.forkTurnId) : -1;
+    return {
+      threadId: snapshot.id,
+      projectId: metadata.projectId,
+      title: snapshot.name || snapshot.preview || "Untitled session",
+      preview: snapshot.preview,
+      cwd: snapshot.cwd,
+      sourceKind: "appServer",
+      createdAt: snapshot.createdAt * 1_000,
+      updatedAt: snapshot.updatedAt * 1_000,
+      origin: metadata.origin,
+      parentThreadId: metadata.parentThreadId,
+      forkTurnId: metadata.forkTurnId,
+      forkSourceTitle: metadata.parentThreadId
+        ? parentSnapshot?.name || parentSnapshot?.preview || parentMapping?.summary_title || parentMapping?.summary_preview || null
+        : null,
+      forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
+      runtimeState: this.runtimes.get?.(snapshot.id)?.state ?? "idle",
+      hasGoal: this.goalPresence.get(snapshot.id) ?? false,
+    };
+  }
+
+  private persistSessionSummary(threadId: string): void {
+    const snapshot = this.sessionSnapshots.get(threadId);
+    if (!snapshot) return;
+    this.repositories.setSessionSummary?.(threadId, {
+      title: snapshot.name || snapshot.preview || "Untitled session",
+      preview: snapshot.preview,
+      createdAt: snapshot.createdAt * 1_000,
+      updatedAt: snapshot.updatedAt * 1_000,
+    });
   }
 
   readSession(threadId: string) {
@@ -462,6 +472,7 @@ export class SessionService extends EventEmitter {
     thread = await this.withPersistedAttachmentReferences(threadId, thread);
     thread = this.attachments?.decorateThread(thread) ?? thread;
     this.sessionSnapshots.set(threadId, thread);
+    this.persistSessionSummary(threadId);
     this.clearPrefillAfterTurnStart(threadId, thread.turns);
     this.goalPresence.set(threadId, goal !== null);
     if (this.runtimes.get(threadId).state === "disconnected") thread = await this.reconcileRuntimeSnapshot(threadId, thread);
@@ -644,6 +655,10 @@ export class SessionService extends EventEmitter {
       this.repositories.upsertProjectSession({
         thread_id: thread.id, project_id: recovery.projectId, cwd_snapshot: thread.cwd,
         source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+        summary_title: thread.name || thread.preview || "Untitled session",
+        summary_preview: thread.preview,
+        summary_created_at: thread.createdAt * 1_000,
+        summary_updated_at: thread.updatedAt * 1_000,
         added_at: now, last_seen_at: now,
       });
     } catch (error) {
@@ -654,8 +669,9 @@ export class SessionService extends EventEmitter {
       throw error;
     }
     this.restoreSession(thread.id);
+    const summary = this.snapshotSummary(thread, { projectId: recovery.projectId, origin: "created", parentThreadId: null, forkTurnId: null });
     this.runtimes.notifySessionSummaryUpdated(thread.id, "session-created");
-    return { thread, settings: recovery.settings };
+    return { thread, settings: recovery.settings, summary };
   }
 
   async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string; skillNames?: string[]; attachmentIds?: string[] }, clientRequestId: string) {
@@ -849,6 +865,10 @@ export class SessionService extends EventEmitter {
         thread_id: thread.id, project_id: recovery.projectId,
         cwd_snapshot: thread.cwd, source_kind: "appServer", origin: "forked",
         parent_thread_id: recovery.parentThreadId, fork_turn_id: recovery.lastTurnId, added_at: now, last_seen_at: now,
+        summary_title: thread.name || thread.preview || "Untitled session",
+        summary_preview: thread.preview,
+        summary_created_at: thread.createdAt * 1_000,
+        summary_updated_at: thread.updatedAt * 1_000,
       });
     } catch (error) {
       if (rollbackOnFailure && !(await this.rollbackCreatedThread(thread.id))) {
@@ -859,9 +879,15 @@ export class SessionService extends EventEmitter {
     }
     this.restoreSession(thread.id);
     if (recovery.prefill) this.sessionPrefills.set(thread.id, recovery.prefill);
+    const summary = this.snapshotSummary(thread, {
+      projectId: recovery.projectId,
+      origin: "forked",
+      parentThreadId: recovery.parentThreadId,
+      forkTurnId: recovery.lastTurnId,
+    });
     if (recovery.prefill) this.runtimes.notifySessionSummaryUpdated(thread.id, "fork-created", { prefill: recovery.prefill });
     else this.runtimes.notifySessionSummaryUpdated(thread.id, "fork-created");
-    return { thread, settings: recovery.settings };
+    return { thread, settings: recovery.settings, summary };
   }
 
   private async recoverUncertainForks(): Promise<boolean> {
@@ -1690,6 +1716,7 @@ export class SessionService extends EventEmitter {
     }
     if (event.type === "turnStarted" || event.type === "turnCompleted") {
       this.upsertSnapshotTurn(threadId, event.turn);
+      this.persistSessionSummary(threadId);
       if (event.type === "turnCompleted") this.clearStreamingDeltaBuffers(threadId);
       return;
     }
@@ -1721,6 +1748,7 @@ export class SessionService extends EventEmitter {
     const snapshot = this.sessionSnapshots.get(threadId);
     if (!snapshot) return;
     this.sessionSnapshots.set(threadId, { ...snapshot, name, updatedAt: Math.floor(Date.now() / 1_000) });
+    this.persistSessionSummary(threadId);
   }
 
   private scheduleAutoTitle(threadId: string, completedTurnId: string): void {
@@ -1901,6 +1929,7 @@ export class SessionService extends EventEmitter {
           const snapshot = await this.adapter.readSession(threadId);
           if (this.removedThreads.has(threadId) || (this.sessionGenerations.get(threadId) ?? 0) !== generation) return;
           this.sessionSnapshots.set(threadId, snapshot);
+          this.persistSessionSummary(threadId);
         } catch {
           // Fork provenance is supplemental metadata. A transient read failure
           // must not prevent the Session list itself from rendering.

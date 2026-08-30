@@ -14,6 +14,7 @@ import { bootstrapGate } from "./bootstrap-gate";
 import { shouldRunFocusRescan } from "./focus-rescan";
 import { refreshProjectAvailability, refreshProjectAvailabilityAfterError } from "./project-refresh";
 import { recentSessionToAutoOpen, sessionCreationProjectId } from "./session-selection";
+import { applyCachedSessionSummaryEvent, removeCachedSessionSummary, upsertCachedSessionSummary } from "./session-summary-cache";
 import { browserNotificationControlState, currentBrowserNotificationPermission, persistTurnCompletionNotificationsEnabled, readTurnCompletionNotificationsEnabled, requestBrowserNotificationPermission, shouldNotifyTurnCompletion, showTurnCompletionNotification, type BrowserNotificationPermission } from "./browser-notifications";
 import { playCompletionNotificationSound, preloadCompletionNotificationSound, unlockCompletionNotificationSound } from "./notification-sound";
 import { queryClient } from "./main";
@@ -160,9 +161,25 @@ export function App() {
       if (eventConnectionState !== "connected") consume(event);
       if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
       if (event.type === "session.summary.updated" && event.threadId) {
-        const prefill = typeof event.payload === "object" && event.payload !== null && "prefill" in event.payload
-          ? (event.payload as { prefill?: unknown }).prefill
-          : undefined;
+        const summaryPayload = typeof event.payload === "object" && event.payload !== null
+          ? event.payload as { reason?: string; name?: string | null; prefill?: unknown; summary?: SessionSummary }
+          : {};
+        applyCachedSessionSummaryEvent(
+          client,
+          event.threadId,
+          summaryPayload,
+          useAppStore.getState().runtimes[event.threadId]?.state,
+          event.emittedAt,
+        );
+        if (summaryPayload.reason === "session-created" || summaryPayload.reason === "fork-created") {
+          void client.invalidateQueries({ queryKey: ["sessions"] });
+        }
+        if (summaryPayload.reason === "renamed" && summaryPayload.name !== undefined) {
+          client.setQueryData<SessionPayload>(["session", event.threadId], (current) => current
+            ? { ...current, thread: { ...current.thread, name: summaryPayload.name ?? null } }
+            : current);
+        }
+        const prefill = summaryPayload.prefill;
         if (typeof prefill === "string" && prefill) useAppStore.getState().restorePrefill(event.threadId, prefill);
       }
       if (event.type === "turn.completed" && event.threadId) {
@@ -185,7 +202,7 @@ export function App() {
       if (["turn.started", "turn.completed", "turn.error", "item.upserted", "item.delta", "goal.updated", "goal.cleared", "session.settings.updated"].includes(event.type) && event.threadId) {
         client.setQueryData<SessionPayload>(["session", event.threadId], (current) => applySessionEvent(current, event, liveDeltas));
       }
-      if (["session.summary.updated", "sessions.rescanned", "turn.completed", "turn.started", "goal.updated", "goal.cleared"].includes(event.type)) void client.invalidateQueries({ queryKey: ["sessions"] });
+      if (event.type === "sessions.rescanned") void client.invalidateQueries({ queryKey: ["sessions"] });
     };
     const refreshSnapshot = () => {
       if (snapshotRefresh) return snapshotRefresh;
@@ -357,8 +374,9 @@ export function App() {
     setSessionCreateError(null);
     try {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
-      const result = await api<{ thread: { id: string } }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ clientRequestId: crypto.randomUUID() }) });
-      await client.invalidateQueries({ queryKey: ["sessions"] }); navigate(`/sessions/${result.thread.id}`);
+      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ clientRequestId: crypto.randomUUID() }) });
+      upsertCachedSessionSummary(client, result.summary);
+      navigate(`/sessions/${result.thread.id}`);
     } catch (error) {
       await refreshProjectAvailabilityAfterError(error, (queryKey) => client.invalidateQueries({ queryKey }));
       setSessionCreateError(error instanceof Error ? error.message : "新建 Session 失败，请检查当前 Session 列表后重试。");
@@ -409,9 +427,9 @@ export function App() {
         client.cancelQueries({ queryKey: ["session", threadId] }),
         client.cancelQueries({ queryKey: ["sessions"] }),
       ]);
+      removeCachedSessionSummary(client, threadId);
       navigate("/", { replace: true });
       client.removeQueries({ queryKey: ["session", threadId] });
-      await client.invalidateQueries({ queryKey: ["sessions"] });
     } finally {
       suppressAutoOpen(false);
     }

@@ -38,6 +38,10 @@ export interface ProjectSessionRow {
   last_reasoning: string | null;
   last_service_tier: string | null;
   has_last_service_tier: number;
+  summary_title: string | null;
+  summary_preview: string | null;
+  summary_created_at: number | null;
+  summary_updated_at: number | null;
   added_at: number;
   last_seen_at: number;
   hidden: number;
@@ -119,21 +123,37 @@ export class Repositories {
     })();
   }
 
-  upsertProjectSession(row: Omit<ProjectSessionRow, "hidden" | "access_mode_override" | "last_model" | "last_reasoning" | "last_service_tier" | "has_last_service_tier"> & { hidden?: number }): void {
+  upsertProjectSession(row: Omit<ProjectSessionRow,
+    "hidden" | "access_mode_override" | "last_model" | "last_reasoning" | "last_service_tier" | "has_last_service_tier"
+    | "summary_title" | "summary_preview" | "summary_created_at" | "summary_updated_at"
+  > & Partial<Pick<ProjectSessionRow, "summary_title" | "summary_preview" | "summary_created_at" | "summary_updated_at">> & { hidden?: number }): void {
     this.db.prepare(`INSERT INTO project_sessions (
       thread_id, project_id, cwd_snapshot, source_kind, origin, parent_thread_id,
-      fork_turn_id, added_at, last_seen_at, hidden
+      fork_turn_id, summary_title, summary_preview, summary_created_at,
+      summary_updated_at, added_at, last_seen_at, hidden
     ) VALUES (@thread_id, @project_id, @cwd_snapshot, @source_kind, @origin,
-      @parent_thread_id, @fork_turn_id, @added_at, @last_seen_at, @hidden)
+      @parent_thread_id, @fork_turn_id, @summary_title, @summary_preview,
+      @summary_created_at, @summary_updated_at, @added_at, @last_seen_at, @hidden)
     ON CONFLICT(thread_id) DO UPDATE SET
       project_id=CASE WHEN project_sessions.origin = 'manual' THEN project_sessions.project_id ELSE excluded.project_id END,
       cwd_snapshot=excluded.cwd_snapshot,
       source_kind=excluded.source_kind,
       last_seen_at=excluded.last_seen_at,
       hidden=excluded.hidden,
+      summary_title=COALESCE(excluded.summary_title, project_sessions.summary_title),
+      summary_preview=COALESCE(excluded.summary_preview, project_sessions.summary_preview),
+      summary_created_at=COALESCE(excluded.summary_created_at, project_sessions.summary_created_at),
+      summary_updated_at=COALESCE(excluded.summary_updated_at, project_sessions.summary_updated_at),
       origin=CASE WHEN project_sessions.origin IN ('created','forked','manual') THEN project_sessions.origin ELSE excluded.origin END,
       parent_thread_id=COALESCE(project_sessions.parent_thread_id, excluded.parent_thread_id),
-      fork_turn_id=COALESCE(project_sessions.fork_turn_id, excluded.fork_turn_id)`).run({ hidden: 0, ...row });
+      fork_turn_id=COALESCE(project_sessions.fork_turn_id, excluded.fork_turn_id)`).run({
+        hidden: 0,
+        summary_title: null,
+        summary_preview: null,
+        summary_created_at: null,
+        summary_updated_at: null,
+        ...row,
+      });
   }
 
   listProjectSessions(projectId?: string): ProjectSessionRow[] {
@@ -177,6 +197,12 @@ export class Repositories {
     const mapping = this.getProjectSession(threadId);
     if (!mapping) throw new Error("Session mapping not found");
     return mapping;
+  }
+
+  setSessionSummary(threadId: string, summary: { title: string; preview: string; createdAt: number; updatedAt: number }): void {
+    this.db.prepare(`UPDATE project_sessions SET
+      summary_title = ?, summary_preview = ?, summary_created_at = ?, summary_updated_at = ?
+      WHERE thread_id = ?`).run(summary.title, summary.preview, summary.createdAt, summary.updatedAt, threadId);
   }
 
   setMessageSkillReferences(threadId: string, clientUserMessageId: string, skillNames: readonly string[]): void {
@@ -309,6 +335,8 @@ export class Repositories {
         access_mode_override TEXT CHECK (access_mode_override IN ('fullAccess', 'workspaceWrite', 'readOnly')),
         last_model TEXT, last_reasoning TEXT, last_service_tier TEXT,
         has_last_service_tier INTEGER NOT NULL DEFAULT 0 CHECK (has_last_service_tier IN (0, 1)),
+        summary_title TEXT, summary_preview TEXT,
+        summary_created_at INTEGER, summary_updated_at INTEGER,
         added_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, hidden INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
@@ -345,6 +373,18 @@ export class Repositories {
     }
     if (!projectSessionColumns.some((column) => column.name === "has_last_service_tier")) {
       this.db.exec("ALTER TABLE project_sessions ADD COLUMN has_last_service_tier INTEGER NOT NULL DEFAULT 0 CHECK (has_last_service_tier IN (0, 1))");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "summary_title")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN summary_title TEXT");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "summary_preview")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN summary_preview TEXT");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "summary_created_at")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN summary_created_at INTEGER");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "summary_updated_at")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN summary_updated_at INTEGER");
     }
   }
 }

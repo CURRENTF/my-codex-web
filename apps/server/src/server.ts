@@ -417,7 +417,7 @@ export async function createServer() {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
     const { name, clientRequestId } = z.object({ name: z.string().min(1).max(200), clientRequestId: requestIdSchema }).parse(request.body);
     await once(request, clientRequestId, () => sessions.rename(threadId, name));
-    return { ok: true };
+    return { ok: true, name };
   });
   app.patch("/api/sessions/:threadId/project", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);

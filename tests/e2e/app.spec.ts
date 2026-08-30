@@ -31,6 +31,100 @@ test("loads the local app and exposes a single-sidebar workspace", async ({ page
   }
 });
 
+test("keeps Subagents, context usage, and code access compact in the session header", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await ensureProject(page);
+  const sidebar = page.locator(".sidebar");
+  test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
+  await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  const parentThreadId = page.url().split("/sessions/")[1]!;
+
+  await page.route("**/api/bootstrap", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json() as {
+      runtimeStates: Array<Record<string, unknown>>;
+      subagents: Array<Record<string, unknown>>;
+      codeServer: Record<string, unknown>;
+    };
+    const runtime = payload.runtimeStates.find((entry) => entry.threadId === parentThreadId);
+    if (runtime) runtime.contextUsage = { usedTokens: 28_400, maxTokens: 258_000 };
+    else payload.runtimeStates.push({ threadId: parentThreadId, state: "idle", activeFlags: [], pendingRequestIds: [], contextUsage: { usedTokens: 28_400, maxTokens: 258_000 } });
+    payload.subagents = [{
+      threadId: "e2e-subagent",
+      parentThreadId,
+      forkedFromId: parentThreadId,
+      contextMode: "forked",
+      sourceKind: "threadSpawn",
+      depth: 0,
+      agentPath: "/root/visual_check",
+      agentNickname: "reviewer",
+      agentRole: "reviewer",
+      createdAt: Date.now(),
+      requestedModel: null,
+      requestedReasoning: "high",
+      model: "gpt-5.6-sol",
+      reasoning: "high",
+      prompt: "Review the compact session header",
+      state: "running",
+      activeFlags: [],
+      pendingRequestIds: [],
+      agentStatus: "running",
+      statusMessage: "Checking the header",
+    }];
+    payload.codeServer = { url: "https://code.example.test", state: "available", checkedAt: Date.now() };
+    await route.fulfill({ response, json: payload });
+  });
+  await page.route("**/api/code-server/status", (route) => route.fulfill({ json: {
+    url: "https://code.example.test",
+    state: "available",
+    checkedAt: Date.now(),
+  } }));
+  await page.reload();
+
+  const contextUsage = page.locator(".context-usage");
+  await expect(contextUsage).toBeVisible();
+  await expect(contextUsage).toHaveAttribute("aria-valuenow", /\d+/);
+  const liveContextPercent = await contextUsage.getAttribute("aria-valuenow");
+  expect(liveContextPercent).not.toBeNull();
+  await expect(contextUsage.locator(".context-usage-ring")).toHaveText(liveContextPercent!);
+  await expect(page.locator(".context-usage-track")).toHaveCount(0);
+  const contextBox = await contextUsage.boundingBox();
+  expect(contextBox?.width).toBeLessThanOrEqual(32);
+  expect(contextBox?.height).toBeLessThanOrEqual(32);
+
+  const codeLink = page.getByRole("link", { name: "code", exact: true });
+  await expect(codeLink).toBeVisible();
+  await expect(codeLink).toHaveAttribute("href", /code\.example\.test/);
+
+  const subagentTrigger = page.getByRole("button", { name: /Subagents，1 运行中，共 1 个/ });
+  await expect(subagentTrigger).toBeVisible();
+  await subagentTrigger.click();
+  const popover = page.locator(".subagent-popover");
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText("reviewer");
+  await expect(popover).toContainText("/root/visual_check");
+  await expect(popover).toContainText("gpt-5.6-sol");
+  await expect(popover).toContainText("正在执行");
+  await page.screenshot({ path: path.resolve("output/playwright/session-header/session-header-1100.png"), fullPage: true });
+
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => {
+    const box = await page.locator(".sidebar").boundingBox();
+    return box ? box.x + box.width : 0;
+  }).toBeLessThanOrEqual(1);
+  const headerOverflow = await page.locator(".session-header").evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(headerOverflow).toBeLessThanOrEqual(1);
+  await expect(contextUsage).toBeVisible();
+  await expect(subagentTrigger).toBeVisible();
+  await subagentTrigger.click();
+  await expect(popover).toBeVisible();
+  const mobilePopoverBox = await popover.boundingBox();
+  expect(mobilePopoverBox?.x).toBeGreaterThanOrEqual(0);
+  expect((mobilePopoverBox?.x ?? 0) + (mobilePopoverBox?.width ?? 0)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: path.resolve("output/playwright/session-header/session-header-390.png"), fullPage: true });
+});
+
 test("browses server folders in the Add Project dialog", async ({ page }) => {
   await ensureProject(page);
   const sidebar = page.locator(".sidebar");
@@ -64,25 +158,44 @@ test("browses server folders in the Add Project dialog", async ({ page }) => {
   await expect(dialog).not.toBeVisible();
 });
 
-test("leaves an archived current Session instead of keeping a stale Composer open", async ({ page }) => {
+test("creates, renames, and archives without waiting for a slow Session list refresh", async ({ page }) => {
   test.setTimeout(60_000);
   await ensureProject(page);
   const sidebar = page.locator(".sidebar");
   test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
   await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  let releaseSessionLists = () => undefined;
+  const sessionListGate = new Promise<void>((resolve) => { releaseSessionLists = resolve; });
+  let interceptedSessionLists = 0;
+  await page.route("**/api/sessions?*", async (route) => {
+    interceptedSessionLists += 1;
+    await sessionListGate;
+    await route.continue();
+  });
   const previousSessionUrl = page.url();
-  await Promise.all([
-    page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 30_000 }),
-    page.getByRole("button", { name: "新建 Session", exact: true }).click(),
-  ]);
-  const archivedUrl = page.url();
-  const archivedThreadId = archivedUrl.split("/sessions/")[1]!;
+  try {
+    await Promise.all([
+      page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 5_000 }),
+      page.getByRole("button", { name: "新建 Session", exact: true }).click(),
+    ]);
+    await expect.poll(() => interceptedSessionLists).toBeGreaterThan(0);
+    const archivedUrl = page.url();
+    const archivedThreadId = archivedUrl.split("/sessions/")[1]!;
+    const sessionRow = page.locator(`.session-row-shell[data-thread-id="${archivedThreadId}"]`);
 
-  await page.getByRole("button", { name: "更多" }).click();
-  await page.getByRole("menuitem", { name: "归档" }).click();
+    page.once("dialog", (dialog) => dialog.accept("FAST_CACHE_RENAME"));
+    await page.getByRole("button", { name: "更多" }).click();
+    await page.getByRole("menuitem", { name: "重命名" }).click();
+    await expect(sessionRow).toContainText("FAST_CACHE_RENAME", { timeout: 5_000 });
 
-  await expect(page).not.toHaveURL(archivedUrl);
-  await expect(page.locator(`.session-row-shell[data-thread-id="${archivedThreadId}"]`)).toHaveCount(0);
+    await page.getByRole("button", { name: "更多" }).click();
+    await page.getByRole("menuitem", { name: "归档" }).click();
+    await expect(page).not.toHaveURL(archivedUrl, { timeout: 5_000 });
+    await expect(sessionRow).toHaveCount(0, { timeout: 5_000 });
+  } finally {
+    releaseSessionLists();
+    await page.unrouteAll({ behavior: "wait" });
+  }
 });
 
 test("streams model tool activity into the timeline without a refresh", async ({ page }) => {

@@ -42,16 +42,17 @@ function subagentSourceKind(source: unknown): SubagentSourceKind {
 }
 
 export function projectSubagentDescriptor(thread: Thread): SubagentDescriptor | undefined {
-  if (!thread.parentThreadId) return undefined;
   const subagentSource = thread.source && typeof thread.source === "object" && "subAgent" in thread.source
     ? thread.source.subAgent
     : undefined;
   const spawn = subagentSource && typeof subagentSource === "object" && "thread_spawn" in subagentSource
     ? subagentSource.thread_spawn
     : undefined;
+  const parentThreadId = thread.parentThreadId ?? spawn?.parent_thread_id ?? null;
+  if (!parentThreadId) return undefined;
   return {
     threadId: thread.id,
-    parentThreadId: thread.parentThreadId,
+    parentThreadId,
     forkedFromId: thread.forkedFromId,
     contextMode: thread.forkedFromId ? "forked" : "isolated",
     sourceKind: subagentSourceKind(subagentSource),
@@ -85,12 +86,14 @@ export function projectAdapterEvent(notification: Notification): AdapterEvent | 
     const thread = params.thread as Parameters<typeof projectThread>[0];
     if (typeof thread.id !== "string") return null;
     const subagent = projectSubagentDescriptor(thread);
+    const parentThreadId = subagent?.parentThreadId
+      ?? (typeof thread.parentThreadId === "string" ? thread.parentThreadId : undefined);
     return {
       type: "threadStarted",
       threadId: thread.id,
       thread: projectThread(thread),
       ...(typeof thread.threadSource === "string" ? { threadSource: thread.threadSource } : {}),
-      ...(typeof thread.parentThreadId === "string" ? { parentThreadId: thread.parentThreadId } : {}),
+      ...(parentThreadId ? { parentThreadId } : {}),
       ...(subagent ? { subagent } : {}),
     };
   }

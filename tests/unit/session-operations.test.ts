@@ -103,11 +103,14 @@ describe("session operation rules", () => {
     await vi.waitFor(() => expect(runtimes.notifySessionSummaryUpdated).toHaveBeenCalledWith("thread-1", "goal-loaded"));
   });
 
-  it("paginates through every mapped Session instead of truncating large histories", async () => {
+  it("lists every mapped Session from the local summary index without scanning App Server history", async () => {
     const count = 2_001;
     const mappings = Array.from({ length: count }, (_, index) => ({
       thread_id: `thread-${index}`, project_id: "project-1", cwd_snapshot: "/tmp/project",
       source_kind: "appServer", origin: "discovered", parent_thread_id: null, fork_turn_id: null,
+      summary_title: `thread-${index}`, summary_preview: `thread-${index}`,
+      summary_created_at: index + 1, summary_updated_at: index + 1,
+      added_at: index + 1, last_seen_at: index + 1,
     }));
     const adapter = Object.assign(new EventEmitter(), {
       listSessions: vi.fn(async ({ cursor }: { cursor?: string | null }) => {
@@ -129,11 +132,11 @@ describe("session operation rules", () => {
     const sessions = await service.listSessions({ sortDirection: "asc" });
 
     expect(sessions).toHaveLength(count);
-    expect(adapter.listSessions).toHaveBeenCalledTimes(21);
+    expect(adapter.listSessions).not.toHaveBeenCalled();
     expect(sessions.at(-1)?.threadId).toBe("thread-2000");
   });
 
-  it("filters cached Session snapshots instead of reintroducing unrelated search results", async () => {
+  it("filters cached Session snapshots without querying App Server search", async () => {
     const mappings = ["matching", "unrelated"].map((threadId) => ({
       thread_id: threadId, project_id: "project-1", cwd_snapshot: "/tmp/project",
       source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
@@ -152,7 +155,7 @@ describe("session operation rules", () => {
 
     const sessions = await service.listSessions({ search: "safari_tool_start" });
 
-    expect(adapter.listSessions).toHaveBeenCalledWith(expect.objectContaining({ searchTerm: "safari_tool_start" }));
+    expect(adapter.listSessions).not.toHaveBeenCalled();
     expect(sessions.map((session) => session.threadId)).toEqual(["matching"]);
   });
 
@@ -1391,6 +1394,9 @@ describe("session operation rules", () => {
         thread_id: "child", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer",
         origin: "forked", parent_thread_id: "parent", fork_turn_id: "boundary", added_at: 1, last_seen_at: 2, hidden: 0,
       }]),
+      getProjectSession: vi.fn((threadId: string) => threadId === "parent" ? {
+        thread_id: "parent", summary_title: "Parent", summary_preview: "parent",
+      } : null),
     };
     const runtimes = {
       get: vi.fn(() => ({ threadId: "child", state: "idle", activeFlags: [], pendingRequestIds: [] })),

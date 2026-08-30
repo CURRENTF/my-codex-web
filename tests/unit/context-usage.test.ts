@@ -15,7 +15,7 @@ describe("context usage indicator", () => {
     });
   });
 
-  it("uses warning thresholds and caps only the visual progress bar", () => {
+  it("uses warning thresholds and caps only the visual progress ring", () => {
     expect(presentContextUsage({ usedTokens: 80, maxTokens: 100 })).toMatchObject({ percent: 80, progressPercent: 80, tone: "warning" });
     expect(presentContextUsage({ usedTokens: 103, maxTokens: 100 })).toMatchObject({ percent: 103, progressPercent: 100, tone: "danger" });
   });
@@ -34,6 +34,9 @@ describe("context usage indicator", () => {
     expect(html).toContain('class="context-usage normal"');
     expect(html).toContain('role="progressbar"');
     expect(html).toContain('aria-valuenow="11"');
+    expect(html).toContain('class="context-usage-ring"');
+    expect(html).toContain('--context-progress:11%');
+    expect(html).not.toContain("context-usage-track");
     expect(html).toContain("28.4k / 258k");
     expect(html).toContain("11%");
   });

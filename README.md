@@ -60,7 +60,42 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 
 配置 code-server 后，Project、普通文件链接和代码审查位置都只通过 code-server 打开。Web UI 每 15 秒从服务端探测一次健康状态；探测失败时入口会显示为不可用，不会回退到客户端的 `vscode://`。若 code-server 迁移端口，只需更新上述两个环境变量并重启 Web UI。
 
-自动更新只接受当前配置分支上的干净 Git checkout，并且只部署 `remote/branch` 的快进后继。服务端先在 `CODEX_WEB_DATA_DIR/updates` 创建隔离 worktree，依次执行 `npm ci`、TypeScript 检查、完整测试和生产构建；候选版本全部通过后，才快进运行目录、重新安装/构建并执行预先配置的重启命令。存在未提交或未跟踪文件、运行中的 Turn、分支不匹配或非快进历史时都会拒绝更新。进度保存在 `CODEX_WEB_DATA_DIR/self-update.json`，详细日志写入 `CODEX_WEB_DATA_DIR/logs/update-<run-id>.log`。浏览器在重启完成后自动刷新到新版本。
+## 启用更新按钮
+
+更新按钮只适用于“服务直接从 Git checkout 启动”的部署。`npm pack`、`npm install -g` 或 `git archive` 生成的目录没有可快进的 Git 元数据；即使另外指定一个 checkout，若 systemd 重启后仍从旧的全局安装目录启动，也不会切换到新版本。
+
+启用前确认：
+
+- 运行目录是检出目标分支的 Git checkout，且 `git status --short` 没有输出。
+- 服务重启后仍从这个 checkout 的 `bin/codex-web.mjs` 启动。
+- 服务用户可以执行 `git fetch <remote> <branch>`，并且 `node`、`npm`、`git` 在服务环境的 `PATH` 中可用。
+- 重启命令只重启 Web 应用，不要顺带重启独立的 SSH tunnel、Nginx 或其他服务。
+
+用户级 systemd 服务可以按下面的结构配置；所有路径和服务名都要替换为本机实际值：
+
+```ini
+[Service]
+WorkingDirectory=/absolute/path/to/my-codex-web
+ExecStart=/absolute/path/to/node /absolute/path/to/my-codex-web/bin/codex-web.mjs
+Environment=CODEX_WEB_OPEN_BROWSER=0
+Environment=CODEX_WEB_UPDATE_REPOSITORY=/absolute/path/to/my-codex-web
+Environment=CODEX_WEB_UPDATE_REMOTE=origin
+Environment=CODEX_WEB_UPDATE_BRANCH=main
+Environment='CODEX_WEB_UPDATE_RESTART_COMMAND_JSON=["systemctl","--user","restart","my-codex-web.service"]'
+```
+
+修改 unit 后执行：
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart my-codex-web.service
+systemctl --user show my-codex-web.service \
+  -p ActiveState -p SubState -p MainPID -p NRestarts
+```
+
+重新打开左上角更新对话框后，“当前版本”应显示 Git commit，“检查并更新”按钮应可用。若仍显示“当前版本：未知”，先在 `CODEX_WEB_UPDATE_REPOSITORY` 中运行 `git rev-parse HEAD`；若仍显示“未配置”，检查 `CODEX_WEB_UPDATE_RESTART_COMMAND_JSON` 是否作为合法 JSON 字符串数组传入了 Web 服务进程。
+
+更新器只接受 `remote/branch` 相对于当前 commit 的快进后继。它先在 `CODEX_WEB_DATA_DIR/updates` 创建隔离 worktree，依次执行 `npm ci`、TypeScript 检查、完整测试和生产构建；候选版本全部通过后，才快进运行 checkout、重新安装/构建并执行重启命令。存在未提交或未跟踪文件、运行中的 Turn、分支不匹配或非快进历史时都会拒绝更新。进度保存在 `CODEX_WEB_DATA_DIR/self-update.json`，详细日志写入 `CODEX_WEB_DATA_DIR/logs/update-<run-id>.log`。浏览器在重启完成后自动刷新到新版本。
 
 ## 开发
 

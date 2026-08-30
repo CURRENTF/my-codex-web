@@ -9,7 +9,7 @@ const databases: Repositories[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
 describe("SQLite repositories", () => {
-  it("adds latest-Turn setting columns to an existing project_sessions table", () => {
+  it("adds latest-Turn setting and local summary columns to an existing project_sessions table", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
     const databasePath = path.join(root, "app.db");
     const legacy = new Database(databasePath);
@@ -23,7 +23,10 @@ describe("SQLite repositories", () => {
 
     const repositories = new Repositories(databasePath); databases.push(repositories);
     const columns = repositories.db.prepare("PRAGMA table_info(project_sessions)").all() as Array<{ name: string }>;
-    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["last_model", "last_reasoning", "last_service_tier", "has_last_service_tier"]));
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "last_model", "last_reasoning", "last_service_tier", "has_last_service_tier",
+      "summary_title", "summary_preview", "summary_created_at", "summary_updated_at",
+    ]));
   });
 
   it("round-trips preferences and deletes only project mappings", () => {
@@ -80,6 +83,23 @@ describe("SQLite repositories", () => {
       has_last_service_tier: 1,
     });
     expect(repositories.getProject("p1")).toMatchObject({ defaultModel: "project-model", defaultReasoning: "high" });
+  });
+
+  it("persists the Session list summary independently from App Server pagination", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
+    repositories.upsertProjectSession({
+      thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "appServer", origin: "created",
+      parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1,
+      summary_title: "Initial", summary_preview: "first", summary_created_at: 10, summary_updated_at: 20,
+    });
+
+    expect(repositories.getProjectSession("t1")).toMatchObject({
+      summary_title: "Initial", summary_preview: "first", summary_created_at: 10, summary_updated_at: 20,
+    });
+    repositories.setSessionSummary("t1", { title: "Renamed", preview: "first", createdAt: 10, updatedAt: 30 });
+    expect(repositories.getProjectSession("t1")).toMatchObject({ summary_title: "Renamed", summary_updated_at: 30 });
   });
 
   it("persists message Skill and attachment display metadata and removes it with the Session mapping", () => {

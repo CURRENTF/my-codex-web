@@ -79,8 +79,8 @@ export function Sidebar(props: SidebarProps) {
                 <DropdownMenu.Item className="menu-item" disabled={!project.available} onSelect={() => props.onNew(project.id)}>新建 Session</DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRescan(project.id)}>重新扫描</DropdownMenu.Item>
                 {props.codeServer.state === "available" && props.codeServer.url && project.available
-                  ? <DropdownMenu.Item asChild><a className="menu-item" href={codeServerFolderUrl(props.codeServer.url, project.canonicalPath)} target="_blank" rel="noreferrer">在 code-server 中打开</a></DropdownMenu.Item>
-                  : <DropdownMenu.Item className="menu-item" disabled>{props.codeServer.state === "checking" ? "正在检查 code-server" : "code-server 不可用"}</DropdownMenu.Item>}
+                  ? <DropdownMenu.Item asChild><a className="menu-item" href={codeServerFolderUrl(props.codeServer.url, project.canonicalPath)} target="_blank" rel="noreferrer" title="在 code-server 中打开">code</a></DropdownMenu.Item>
+                  : <DropdownMenu.Item className="menu-item" disabled>{props.codeServer.state === "checking" ? "正在检查 code-server" : "code 不可用"}</DropdownMenu.Item>}
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRenameProject(project)}>修改显示名称</DropdownMenu.Item>
                 <DropdownMenu.Separator className="menu-separator" />
                 <DropdownMenu.Item className="menu-item danger-item" onSelect={() => props.onRemoveProject(project)}>从侧边栏移除</DropdownMenu.Item>

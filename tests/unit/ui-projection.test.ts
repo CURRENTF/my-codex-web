@@ -29,7 +29,7 @@ describe("Codex UI projection", () => {
       method: "thread/started",
       params: {
         thread: {
-          id: "child", sessionId: "session-1", forkedFromId: "parent", parentThreadId: "parent", preview: "", ephemeral: false,
+          id: "child", sessionId: "session-1", forkedFromId: "parent", parentThreadId: null, preview: "", ephemeral: false,
           modelProvider: "openai", createdAt: 2, updatedAt: 2, recencyAt: 2, status: { type: "active", activeFlags: [] }, path: null,
           cwd: "/tmp/project", cliVersion: "test", source: { subAgent: { thread_spawn: {
             parent_thread_id: "parent", depth: 1, agent_path: "review/nested", agent_nickname: "nested", agent_role: "reviewer",

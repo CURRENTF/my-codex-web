@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { SubagentRuntime } from "@codex-web/shared-types";
-import { SubagentStatusView } from "../../apps/web/src/components/SubagentStatus";
+import { SubagentAgentRow, SubagentStatusView } from "../../apps/web/src/components/SubagentStatus";
 import { descendantSubagents, effectiveSubagentSettings, subagentStateLabel } from "../../apps/web/src/subagent-presentation";
 
 function agent(overrides: Partial<SubagentRuntime> & Pick<SubagentRuntime, "threadId" | "parentThreadId">): SubagentRuntime {
@@ -66,7 +66,7 @@ describe("Subagent status", () => {
     expect(subagentStateLabel(agent({ threadId: "unloaded", parentThreadId: "root", agentStatus: "notLoaded" }))).toBe("未加载");
   });
 
-  it("renders an expanded active tree with context, model, effort, and inheritance", () => {
+  it("renders an active top-bar trigger and keeps detailed Subagent metadata available", () => {
     const child = agent({
       threadId: "child",
       parentThreadId: "root",
@@ -79,20 +79,28 @@ describe("Subagent status", () => {
       state: "running",
       requestedReasoning: "max",
     });
-    const html = renderToStaticMarkup(createElement(SubagentStatusView, {
+    const triggerHtml = renderToStaticMarkup(createElement(SubagentStatusView, {
       parentThreadId: "root",
       rootSettings: { model: "gpt-5.6-sol", reasoning: "high" },
       allAgents: [child],
     }));
+    const rowHtml = renderToStaticMarkup(createElement(SubagentAgentRow, {
+      agent: child,
+      nestingDepth: 0,
+      agentsById: new Map([[child.threadId, child]]),
+      rootSettings: { model: "gpt-5.6-sol", reasoning: "high" },
+    }));
 
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain("reviewer");
-    expect(html).toContain("review/nested");
-    expect(html).toContain("Fork 上下文");
-    expect(html).toContain("gpt-5.6-sol");
-    expect(html).toContain("max");
-    expect(html).toContain("继承");
-    expect(html).toContain('aria-label="正在执行"');
-    expect(html).toContain("正在执行");
+    expect(triggerHtml).toContain('aria-expanded="false"');
+    expect(triggerHtml).toContain("Subagents，1 运行中，共 1 个");
+    expect(triggerHtml).toContain("has-active");
+    expect(rowHtml).toContain("reviewer");
+    expect(rowHtml).toContain("review/nested");
+    expect(rowHtml).toContain("Fork 上下文");
+    expect(rowHtml).toContain("gpt-5.6-sol");
+    expect(rowHtml).toContain("max");
+    expect(rowHtml).toContain("继承");
+    expect(rowHtml).toContain('aria-label="正在执行"');
+    expect(rowHtml).toContain("正在执行");
   });
 });

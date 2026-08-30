@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { ContextUsage } from "@codex-web/shared-types";
 
 export type ContextUsageTone = "normal" | "warning" | "danger";
@@ -48,16 +49,15 @@ export function presentContextUsage(usage: ContextUsage): ContextUsagePresentati
 export function ContextUsageIndicator({ usage }: { usage?: ContextUsage }) {
   if (!usage) return null;
   const view = presentContextUsage(usage);
+  const ringLabel = view.progressPercent === null ? "?" : view.percent !== null && view.percent > 99 ? "99+" : String(view.progressPercent);
   const progressProps = view.progressPercent === null ? {} : {
     role: "progressbar",
     "aria-valuemin": 0,
     "aria-valuemax": 100,
     "aria-valuenow": view.progressPercent,
   };
+  const ringStyle = view.progressPercent === null ? undefined : { "--context-progress": `${view.progressPercent}%` } as CSSProperties;
   return <div className={`context-usage ${view.tone}`} title={view.accessibleLabel} aria-label={view.accessibleLabel} {...progressProps}>
-    <span className="context-usage-label">上下文</span>
-    <span className="context-usage-value">{view.usedLabel}{view.maxLabel ? ` / ${view.maxLabel}` : ""}</span>
-    {view.percent !== null && <strong>{view.percent}%</strong>}
-    {view.progressPercent !== null && <span className="context-usage-track" aria-hidden><i style={{ width: `${view.progressPercent}%` }} /></span>}
+    <span className="context-usage-ring" style={ringStyle} aria-hidden="true"><strong>{ringLabel}</strong></span>
   </div>;
 }

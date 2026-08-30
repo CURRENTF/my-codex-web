@@ -80,6 +80,10 @@ export class ProjectIndexer extends EventEmitter {
             origin: existing?.origin ?? "discovered",
             parent_thread_id: existing?.parent_thread_id ?? thread.forkedFromId,
             fork_turn_id: existing?.fork_turn_id ?? null,
+            summary_title: thread.name || thread.preview || "Untitled session",
+            summary_preview: thread.preview,
+            summary_created_at: thread.createdAt * 1_000,
+            summary_updated_at: thread.updatedAt * 1_000,
             added_at: existing?.added_at ?? now,
             last_seen_at: now,
           });
@@ -144,6 +148,10 @@ export class ProjectIndexer extends EventEmitter {
             origin: existing?.origin ?? "discovered",
             parent_thread_id: existing?.parent_thread_id ?? thread.forkedFromId,
             fork_turn_id: existing?.fork_turn_id ?? null,
+            summary_title: thread.name || thread.preview || "Untitled session",
+            summary_preview: thread.preview,
+            summary_created_at: thread.createdAt * 1_000,
+            summary_updated_at: thread.updatedAt * 1_000,
             added_at: existing?.added_at ?? now,
             last_seen_at: now,
           });

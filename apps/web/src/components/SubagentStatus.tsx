@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Brain, CaretRight, GitFork, UsersThree } from "@phosphor-icons/react";
+import { useMemo } from "react";
+import { Brain, GitFork, UsersThree } from "@phosphor-icons/react";
+import * as Popover from "@radix-ui/react-popover";
 import type { SubagentRuntime } from "@codex-web/shared-types";
 import { useAppStore } from "../store";
 import { descendantSubagents, displaySubagentState, effectiveSubagentSettings, subagentContextLabel, subagentDisplayName, subagentStateLabel } from "../subagent-presentation";
@@ -7,7 +8,7 @@ import { StatusIcon } from "./StatusIcon";
 
 const ACTIVE_STATES = new Set(["running", "waitingForInput"]);
 
-function AgentRow({ agent, nestingDepth, agentsById, rootSettings }: {
+export function SubagentAgentRow({ agent, nestingDepth, agentsById, rootSettings }: {
   agent: SubagentRuntime;
   nestingDepth: number;
   agentsById: ReadonlyMap<string, SubagentRuntime>;
@@ -38,26 +39,24 @@ export function SubagentStatusView({ parentThreadId, rootSettings, allAgents }: 
   const agentsById = useMemo(() => new Map(allAgents.map((agent) => [agent.threadId, agent])), [allAgents]);
   const activeCount = entries.filter(({ agent }) => ACTIVE_STATES.has(displaySubagentState(agent))).length;
   const failedCount = entries.filter(({ agent }) => displaySubagentState(agent) === "failed").length;
-  const [open, setOpen] = useState(activeCount > 0);
-  const previousActiveCount = useRef(activeCount);
-  useEffect(() => { setOpen(activeCount > 0); previousActiveCount.current = activeCount; }, [parentThreadId]);
-  useEffect(() => {
-    if (previousActiveCount.current === 0 && activeCount > 0) setOpen(true);
-    previousActiveCount.current = activeCount;
-  }, [activeCount]);
-  if (!entries.length) return null;
-  return <section className={`subagent-status ${activeCount ? "has-active" : ""}`} aria-label="Subagent 状态">
-    <button className="subagent-summary" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-      <CaretRight className="subagent-caret" size={13} weight="bold" />
-      <UsersThree size={16} />
-      <strong>Subagents</strong>
-      {activeCount > 0 ? <span className="subagent-summary-primary">{activeCount} 运行中</span> : <span>{entries.length} 个</span>}
-      {failedCount > 0 && <span className="subagent-summary-failed">{failedCount} 失败</span>}
-      <span className="subagent-summary-spacer" />
-      <span>{open ? "收起" : "查看详情"}</span>
-    </button>
-    {open && <div className="subagent-list" role="list">{entries.map(({ agent, nestingDepth }) => <AgentRow key={agent.threadId} agent={agent} nestingDepth={nestingDepth} agentsById={agentsById} rootSettings={rootSettings} />)}</div>}
-  </section>;
+  const summary = activeCount > 0
+    ? `${activeCount} 运行中，共 ${entries.length} 个`
+    : failedCount > 0 ? `${failedCount} 失败，共 ${entries.length} 个` : `${entries.length} 个`;
+  return <Popover.Root><Popover.Trigger asChild><button
+    className={`header-button subagent-trigger ${activeCount ? "has-active" : ""} ${failedCount ? "has-failed" : ""}`}
+    type="button"
+    aria-label={`Subagents，${summary}`}
+    title={`Subagents，${summary}`}
+  >
+    <UsersThree size={16} />
+    <span>Subagents</span>
+    <strong>{activeCount || entries.length}</strong>
+  </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content subagent-popover" sideOffset={8} align="end">
+    <header className="subagent-popover-header"><span><UsersThree size={17} /><strong>Subagents</strong></span><small>{summary}</small></header>
+    {entries.length
+      ? <div className="subagent-list" role="list">{entries.map(({ agent, nestingDepth }) => <SubagentAgentRow key={agent.threadId} agent={agent} nestingDepth={nestingDepth} agentsById={agentsById} rootSettings={rootSettings} />)}</div>
+      : <p className="subagent-empty">当前 Session 没有 Subagent</p>}
+  </Popover.Content></Popover.Portal></Popover.Root>;
 }
 
 export function SubagentStatus({ parentThreadId, rootSettings }: {
