@@ -174,7 +174,7 @@ describe("viewport layout CSS", () => {
     expect(rule(".access-control select")).toContain("inset: 0");
     expect(rule(".access-control select")).toContain("width: 100%");
     expect(rule(".access-control select")).toContain("opacity: 0");
-    expect(settingsSelectSource).toContain("CaretDown");
+    expect(settingsSelectSource).not.toContain("CaretDown");
     expect(settingsSelectSource).toContain("DropdownMenu.RadioItem");
     expect(settingsSelectSource).toContain("settings-select-option-copy");
     expect(rule(".settings-select-option[data-state=\"checked\"]")).toContain("var(--accent)");

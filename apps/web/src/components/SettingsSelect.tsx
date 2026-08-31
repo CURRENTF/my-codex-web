@@ -1,4 +1,4 @@
-import { CaretDown, Check } from "@phosphor-icons/react";
+import { Check } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
 const EMPTY_VALUE = "__codex_web_empty_setting__";
@@ -43,7 +43,6 @@ export function SettingsSelect({
         disabled={disabled}
       >
         <span className="settings-select-value">{(selected?.label ?? value) || placeholder}</span>
-        <CaretDown size={11} weight="bold" aria-hidden="true" />
       </button>
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>

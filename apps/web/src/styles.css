@@ -431,9 +431,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .attachment-picker:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
 .attachment-picker:active:not(:disabled) { transform: translateY(1px); }
 .attachment-picker:disabled { cursor: not-allowed; opacity: .4; }
-.access-control, .settings-select-trigger { position: relative; display: flex; min-width: 0; height: 28px; align-items: center; gap: 4px; border-radius: 7px; color: var(--text-soft); }
+.access-control, .settings-select-trigger { position: relative; display: flex; min-width: 0; height: 28px; align-items: center; border-radius: 7px; color: var(--text-soft); }
 .access-control { padding: 0 7px; }
-.settings-select-trigger { justify-content: space-between; border: 0; background: transparent; padding: 0 6px 0 8px; text-align: left; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
+.settings-select-trigger { justify-content: flex-start; border: 0; background: transparent; padding: 0 7px; text-align: left; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
 .access-control { max-width: 118px; flex: 0 1 max-content; }
 .model-select { max-width: 176px; flex: 0 1 auto; }
 .reasoning-select { max-width: 92px; flex: 0 1 auto; }
@@ -444,8 +444,6 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .settings-select-trigger:disabled { cursor: default; opacity: .5; }
 .access-control > span, .settings-select-value { display: block; min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-select-value { flex: 1 1 auto; color: inherit; }
-.settings-select-trigger > svg { flex: 0 0 auto; color: var(--text-faint); transition: transform 120ms ease; }
-.settings-select-trigger[data-state="open"] > svg { transform: rotate(180deg); color: var(--text-soft); }
 .access-control > span { padding-left: 19px; }
 .access-control select { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; appearance: none; border: 0; outline: 0; background: transparent; opacity: 0; cursor: pointer; }
 .access-control select:disabled { cursor: default; }
