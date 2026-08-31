@@ -9,6 +9,7 @@ import { resizeComposerTextarea } from "../composer-textarea";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
 import { fastServiceTierForModel, serviceTierForModel } from "../service-tier";
 import { useAppStore, type QueuedUserMessage } from "../store";
+import { SettingsSelect } from "./SettingsSelect";
 
 function requestId(): string { return crypto.randomUUID(); }
 function apiErrorCode(error: unknown): unknown {
@@ -32,6 +33,10 @@ function formatAttachmentSize(bytes: number): string {
 
 function preferredReasoningForModel(model: ModelOption | undefined): string {
   return model?.supportedReasoning.find((item) => item.effort === "high")?.effort ?? model?.defaultReasoning ?? "";
+}
+
+function reasoningLabel(effort: string): string {
+  return effort ? effort[0]!.toLocaleUpperCase() + effort.slice(1) : "Reasoning";
 }
 
 function accessModeLabel(mode: AccessMode): string {
@@ -106,6 +111,18 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   useEffect(() => { setServiceTier((current) => serviceTierForModel(selectedModel, current)); }, [selectedModel]);
   const fastServiceTier = useMemo(() => fastServiceTierForModel(selectedModel), [selectedModel]);
   const fastMode = !!fastServiceTier && serviceTier === fastServiceTier.id;
+  const modelSelectOptions = useMemo(() => models.map((item) => ({
+    value: item.model,
+    label: item.displayName,
+    description: item.description,
+    ...(item.isDefault ? { meta: "默认" } : {}),
+  })), [models]);
+  const reasoningSelectOptions = useMemo(() => (selectedModel?.supportedReasoning ?? []).map((item) => ({
+    value: item.effort,
+    label: reasoningLabel(item.effort),
+    description: item.description,
+    ...(item.effort === selectedModel?.defaultReasoning ? { meta: "默认" } : {}),
+  })), [selectedModel]);
   useLayoutEffect(() => {
     if (textarea.current) resizeComposerTextarea(textarea.current);
   }, [draft]);
@@ -479,8 +496,8 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
           <div className="access-control"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><span aria-hidden="true">{accessModeLabel(accessMode)}</span><select aria-label="权限" value={accessMode} onChange={(event) => { const next = event.target.value as AccessMode; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div>
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
-              <label className="inline-select model-select"><span aria-hidden="true">{selectedModel?.displayName ?? model}</span><select aria-label="模型" value={model} onChange={(event) => { const next = event.target.value; const option = models.find((item) => item.model === next || item.id === next); setModel(next); setReasoning(preferredReasoningForModel(option)); setServiceTier((current) => serviceTierForModel(option, current)); }} disabled={running || blocked}>{models.map((item) => <option key={item.id} value={item.model}>{item.displayName}</option>)}</select></label>
-              <label className="inline-select reasoning-select"><span aria-hidden="true">{reasoning}</span><select aria-label="Reasoning effort" value={reasoning} onChange={(event) => setReasoning(event.target.value)} disabled={running || blocked}>{selectedModel?.supportedReasoning.map((item) => <option key={item.effort} value={item.effort}>{item.effort}</option>)}</select></label>
+              <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked || modelSelectOptions.length === 0} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); setModel(next); setReasoning(preferredReasoningForModel(option)); setServiceTier((current) => serviceTierForModel(option, current)); }} />
+              <SettingsSelect className="reasoning-select" variant="reasoning" ariaLabel="Reasoning effort" menuLabel="Reasoning effort" value={reasoning} options={reasoningSelectOptions} placeholder="Reasoning" disabled={running || blocked || reasoningSelectOptions.length === 0} onValueChange={setReasoning} />
               {fastServiceTier && <button type="button" className={`service-tier-toggle ${fastMode ? "active" : ""}`} role="switch" aria-checked={fastMode} aria-label={`Fast 模式${fastMode ? "已开启" : "已关闭"}`} title={`${fastServiceTier.name}：${fastServiceTier.description}`} disabled={running || blocked} onClick={() => setServiceTier(fastMode ? null : fastServiceTier.id)}><Lightning size={13} weight={fastMode ? "fill" : "regular"} /><span>{fastServiceTier.name}</span></button>}
             </div>
             <div className="composer-actions">

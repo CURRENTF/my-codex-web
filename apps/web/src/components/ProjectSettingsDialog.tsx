@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ModelOption, Project } from "@codex-web/shared-types";
 import { api, newClientRequestId } from "../api";
+import { SettingsSelect } from "./SettingsSelect";
 
 export function ProjectSettingsDialog({ project, models, onClose }: { project: Project | null; models: ModelOption[]; onClose(): void }) {
   const queryClient = useQueryClient();
@@ -19,6 +20,19 @@ export function ProjectSettingsDialog({ project, models, onClose }: { project: P
     setAccessMode(project.defaultAccessMode);
   }, [project]);
   const selectedModel = useMemo(() => models.find((item) => item.model === model || item.id === model), [model, models]);
+  const modelOptions = useMemo(() => [
+    { value: "", label: "App Server 默认", description: "新 Session 跟随 App Server 当前默认模型" },
+    ...models.map((item) => ({ value: item.model, label: item.displayName, description: item.description, ...(item.isDefault ? { meta: "当前默认" } : {}) })),
+  ], [models]);
+  const reasoningOptions = useMemo(() => [
+    { value: "", label: "系统默认", description: "跟随所选模型的默认 Reasoning" },
+    ...(selectedModel?.supportedReasoning ?? []).map((item) => ({
+      value: item.effort,
+      label: item.effort ? item.effort[0]!.toLocaleUpperCase() + item.effort.slice(1) : "Reasoning",
+      description: item.description,
+      ...(item.effort === selectedModel?.defaultReasoning ? { meta: "模型默认" } : {}),
+    })),
+  ], [selectedModel]);
   useEffect(() => {
     if (selectedModel && reasoning && !selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) setReasoning(selectedModel.defaultReasoning);
   }, [reasoning, selectedModel]);
@@ -46,8 +60,8 @@ export function ProjectSettingsDialog({ project, models, onClose }: { project: P
         <Dialog.Description className="dialog-description" id="project-settings-description">新 Session 默认使用这些设置。普通 Fork 优先继承父 Session 当前设置。</Dialog.Description>
         <label className="field-label">显示名称<input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></label>
         <div className="settings-grid">
-          <label className="field-label">默认模型<select value={model} onChange={(event) => { const next = event.target.value; setModel(next); const option = models.find((item) => item.model === next || item.id === next); setReasoning(option?.supportedReasoning.find((item) => item.effort === "high")?.effort ?? option?.defaultReasoning ?? ""); }}><option value="">App Server 默认</option>{models.map((item) => <option key={item.id} value={item.model}>{item.displayName}</option>)}</select></label>
-          <label className="field-label">默认 Reasoning<select value={reasoning} onChange={(event) => setReasoning(event.target.value)}><option value="">High（系统默认）</option>{selectedModel?.supportedReasoning.map((item) => <option key={item.effort} value={item.effort}>{item.effort}</option>)}</select></label>
+          <label className="field-label">默认模型<SettingsSelect className="settings-dialog-select" variant="model" ariaLabel="默认模型" menuLabel="默认模型" value={model} options={modelOptions} placeholder="App Server 默认" onValueChange={(next) => { setModel(next); const option = models.find((item) => item.model === next || item.id === next); setReasoning(option?.supportedReasoning.find((item) => item.effort === "high")?.effort ?? option?.defaultReasoning ?? ""); }} /></label>
+          <label className="field-label">默认 Reasoning<SettingsSelect className="settings-dialog-select" variant="reasoning" ariaLabel="默认 Reasoning" menuLabel="默认 Reasoning" value={reasoning} options={reasoningOptions} placeholder="系统默认" onValueChange={setReasoning} /></label>
         </div>
         <label className="field-label">默认权限<div className="access-settings-field"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><select value={accessMode} onChange={(event) => setAccessMode(event.target.value as AccessMode)}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div></label>
         {save.isError && <p className="dialog-error">{save.error.message}</p>}

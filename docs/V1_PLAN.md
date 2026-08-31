@@ -51,7 +51,7 @@ Project 菜单只保留：新建 Session、重新扫描、在文件管理器显�
 
 命令默认只显示命令、cwd、退出码和最后几行，可展开完整输出。文件修改卡显示文件名与加减行数，点击在右侧临时 Diff 面板查看。
 
-历史首版使用稳定 `thread/read({includeTurns:true})`，前端用虚拟列表。实验 `thread/turns/list`、`thread/items/list` 不作为 MVP 依赖。
+历史读取按 App Server 的持久化契约分流：legacy Thread 使用 `thread/read({includeTurns:true})`；paginated Thread 先读取 metadata，再通过 `thread/turns/list({itemsView:"full"})` 分页加载。刚创建的空 paginated Thread 若索引明确不支持分页，或同一 App Server 在首条用户消息前报告 rollout 尚未 materialize，可退化为已加载的 metadata-only 空历史；已有内容的 Thread 不吞错。
 
 ## 六、Composer、模型和 Reasoning
 
@@ -125,7 +125,7 @@ EventGateway 只发送规范化 `UiEvent`，每个事件有单调 `seq`。常见
 
 ## 十四、协议版本管理
 
-MVP 不设置 `capabilities.experimentalApi`。`thread/turns/list`、`thread/items/list`、`beforeTurnId`、permission profiles、持久化 Side Chat 延后并用 Feature Flag。
+客户端设置 `capabilities.experimentalApi` 以支持 0.151 起的 paginated history。`thread/turns/list` 由 Adapter 按 `historyMode` 使用并保留 legacy 降级路径；`thread/items/list`、`beforeTurnId`、permission profiles、持久化 Side Chat 仍延后并用 Feature Flag。
 
 升级 Codex 时运行 `generate-ts` 与 `generate-json-schema`，生成物与验证过的 Codex 版本一起提交。CI 检查版本、重新生成 Schema、检测 Diff、跑协议 fixture 和真实 App Server 集成测试。
 

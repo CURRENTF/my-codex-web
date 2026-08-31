@@ -6,6 +6,23 @@ import { requireIsolatedCodexHome } from "../../scripts/isolated-codex-home";
 const run = process.env.RUN_CODEX_INTEGRATION === "1" ? describe : describe.skip;
 
 run("real codex app-server with isolated CODEX_HOME", () => {
+  it("opens a just-created durable Session through the negotiated history mode", async () => {
+    const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
+    const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });
+    adapter.on("stderr", (line) => process.stderr.write(`[app-server] ${String(line)}`));
+    await adapter.start();
+    let threadId: string | undefined;
+    try {
+      const session = await adapter.startSession(path.resolve(process.cwd()), { accessMode: "readOnly", model: null, reasoning: null });
+      threadId = session.thread.id;
+      await expect(adapter.resumeSession(threadId, { accessMode: "readOnly" })).resolves.toMatchObject({ thread: { id: threadId, turns: [] } });
+      await expect(adapter.readSession(threadId)).resolves.toMatchObject({ id: threadId, turns: [] });
+    } finally {
+      if (threadId) await adapter.archiveSession(threadId).catch(() => undefined);
+      adapter.stop();
+    }
+  }, 60_000);
+
   it("generates a title in an isolated ephemeral Thread", async () => {
     const codexHome = requireIsolatedCodexHome(process.env.CODEX_WEB_TEST_CODEX_HOME, "CODEX_WEB_TEST_CODEX_HOME");
     const adapter = new CodexAdapter({ cwd: process.cwd(), codexHome, version: "integration-test" });

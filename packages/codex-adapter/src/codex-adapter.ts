@@ -16,6 +16,8 @@ import type { ThreadReadResponse } from "@codex-web/codex-schema/v2/ThreadReadRe
 import type { ThreadResumeResponse } from "@codex-web/codex-schema/v2/ThreadResumeResponse";
 import type { ThreadStartResponse } from "@codex-web/codex-schema/v2/ThreadStartResponse";
 import type { ThreadSettings } from "@codex-web/codex-schema/v2/ThreadSettings";
+import type { Thread } from "@codex-web/codex-schema/v2/Thread";
+import type { ThreadTurnsListResponse } from "@codex-web/codex-schema/v2/ThreadTurnsListResponse";
 import type { TurnStartResponse } from "@codex-web/codex-schema/v2/TurnStartResponse";
 import { JsonRpcError, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, type RpcServerRequest } from "./json-rpc-transport.js";
 import { projectAdapterEvent, projectSubagentDescriptor } from "./adapter-events.js";
@@ -218,6 +220,12 @@ export function isThreadMaterializationRace(error: unknown): boolean {
     && /no rollout found|not materialized yet|rollout\b.*\bis empty\b/i.test(error.message);
 }
 
+export function isTurnPaginationUnsupported(error: unknown): boolean {
+  return error instanceof JsonRpcError
+    && error.code === -32_601
+    && /list_turns is not supported yet|thread\/turns\/list.*(?:not supported|unsupported)|unsupported.*thread turns/i.test(error.message);
+}
+
 export async function retryThreadMaterialization<T>(
   operation: () => Promise<T>,
   wait: (milliseconds: number) => Promise<void> = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -250,7 +258,7 @@ export function projectSessionSettings(settings: ProtocolSessionSettings): Sessi
   };
 }
 
-function projectResumeSettings(response: ThreadResumeResponse): SessionSettings {
+function projectResumeSettings(response: Pick<ThreadResumeResponse, "model" | "reasoningEffort" | "serviceTier" | "approvalPolicy" | "sandbox">): SessionSettings {
   return projectSessionSettings({
     model: response.model,
     effort: response.reasoningEffort,
@@ -276,6 +284,8 @@ export class CodexAdapter extends EventEmitter {
   private titleGenerationTail: Promise<void> = Promise.resolve();
   private pendingNonIdempotentMutations = 0;
   private pendingAcknowledgedMutations = 0;
+  private readonly threadHistoryModes = new Map<string, "legacy" | "paginated">();
+  private readonly justStartedThreads = new Map<string, ThreadStartResponse>();
 
   constructor(private readonly options: AdapterOptions) {
     super();
@@ -342,13 +352,15 @@ export class CodexAdapter extends EventEmitter {
 
   async initialize(): Promise<void> {
     // A supervisor restart destroys every ephemeral Thread from the old process.
+    // It also invalidates the in-process proof that an empty persistent Thread is loaded.
+    this.justStartedThreads.clear();
     this.clearFailedSideChatCleanups();
     this.cancelInternalTitleTurns(new Error("Codex App Server restarted during title generation"));
     this.emit("connection", { state: "connecting" });
     const transport = this.supervisor.transport;
     await transport.request("initialize", {
       clientInfo: { name: "codex-web", title: "Codex Web", version: this.options.version },
-      capabilities: null,
+      capabilities: { experimentalApi: true },
     });
     transport.notify("initialized");
     const [, models] = await Promise.all([
@@ -429,7 +441,10 @@ export class CodexAdapter extends EventEmitter {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.searchTerm ? { searchTerm: input.searchTerm } : {}),
     });
-    return { data: response.data.map((thread) => ({ id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId, threadSource: thread.threadSource })), nextCursor: response.nextCursor };
+    return { data: response.data.map((thread) => {
+      this.rememberThreadHistoryMode(thread);
+      return { id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId, threadSource: thread.threadSource };
+    }), nextCursor: response.nextCursor };
   }
 
   async listSubagents(cursor: string | null = null, limit = 100): Promise<{ data: ListedSubagent[]; nextCursor: string | null }> {
@@ -461,19 +476,83 @@ export class CodexAdapter extends EventEmitter {
     };
   }
 
-  async readSession(threadId: string): Promise<SessionThread> {
+  private rememberThreadHistoryMode(thread: Thread): void {
+    const historyMode = (thread as Thread & { historyMode?: unknown }).historyMode;
+    if (historyMode === "legacy" || historyMode === "paginated") this.threadHistoryModes.set(thread.id, historyMode);
+  }
+
+  private async readThreadMetadata(threadId: string): Promise<Thread> {
+    const response = await this.supervisor.transport.request<ThreadReadResponse>("thread/read", { threadId, includeTurns: false });
+    this.rememberThreadHistoryMode(response.thread);
+    return response.thread;
+  }
+
+  private async readLegacySession(threadId: string): Promise<SessionThread> {
     const response = await this.supervisor.transport.request<ThreadReadResponse>("thread/read", { threadId, includeTurns: true });
+    this.rememberThreadHistoryMode(response.thread);
     return projectThread(response.thread);
   }
 
+  async readSession(threadId: string): Promise<SessionThread> {
+    const knownMode = this.threadHistoryModes.get(threadId);
+    if (knownMode === "legacy") return this.readLegacySession(threadId);
+    const metadata = await this.readThreadMetadata(threadId);
+    if (this.threadHistoryModes.get(threadId) !== "paginated") return this.readLegacySession(threadId);
+    try {
+      const turns: Thread["turns"] = [];
+      let cursor: string | null = null;
+      const seenCursors = new Set<string>();
+      do {
+        const response: ThreadTurnsListResponse = await this.supervisor.transport.request<ThreadTurnsListResponse>("thread/turns/list", {
+          threadId,
+          cursor,
+          limit: 100,
+          sortDirection: "asc",
+          itemsView: "full",
+        });
+        turns.push(...response.data);
+        cursor = response.nextCursor;
+        if (cursor && seenCursors.has(cursor)) throw new Error("Codex App Server returned a repeated thread/turns/list cursor");
+        if (cursor) seenCursors.add(cursor);
+      } while (cursor);
+      this.justStartedThreads.delete(threadId);
+      return projectThread({ ...metadata, turns });
+    } catch (error) {
+      const justStarted = this.justStartedThreads.has(threadId);
+      if (metadata.preview.trim() === "" && (isTurnPaginationUnsupported(error) || (justStarted && isThreadMaterializationRace(error)))) {
+        return projectThread(metadata);
+      }
+      throw error;
+    }
+  }
+
   async resumeSession(threadId: string, settings?: Partial<SessionSettings>): Promise<ResumedSession> {
-    const response = await this.supervisor.transport.request<ThreadResumeResponse>("thread/resume", {
-      threadId,
-      ...(settings?.model ? { model: settings.model } : {}),
-      ...(settings?.serviceTier !== undefined ? { serviceTier: settings.serviceTier } : {}),
-      ...(settings?.accessMode ? { approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request", sandbox: sandboxMode(settings.accessMode) } : {}),
-      ...(settings?.reasoning ? { config: reasoningConfig({ reasoning: settings.reasoning }) } : {}),
-    });
+    let historyMode = this.threadHistoryModes.get(threadId);
+    if (!historyMode) {
+      await this.readThreadMetadata(threadId);
+      historyMode = this.threadHistoryModes.get(threadId);
+    }
+    let response: ThreadResumeResponse | ThreadStartResponse;
+    try {
+      response = await this.supervisor.transport.request<ThreadResumeResponse>("thread/resume", {
+        threadId,
+        ...(settings?.model ? { model: settings.model } : {}),
+        ...(settings?.serviceTier !== undefined ? { serviceTier: settings.serviceTier } : {}),
+        ...(settings?.accessMode ? { approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request", sandbox: sandboxMode(settings.accessMode) } : {}),
+        ...(settings?.reasoning ? { config: reasoningConfig({ reasoning: settings.reasoning }) } : {}),
+        ...(historyMode === "paginated" ? { excludeTurns: true } : {}),
+      });
+      this.justStartedThreads.delete(threadId);
+    } catch (error) {
+      const started = this.justStartedThreads.get(threadId);
+      if (!started || historyMode !== "paginated" || started.thread.preview.trim() !== "" || started.thread.turns.length > 0 || !isThreadMaterializationRace(error)) {
+        throw error;
+      }
+      // Codex 0.151 can reject resume until the first user message creates a rollout.
+      // The cached start response proves this same App Server already has the empty Thread loaded.
+      response = started;
+    }
+    this.rememberThreadHistoryMode(response.thread);
     return { thread: projectThread(response.thread), settings: projectResumeSettings(response) };
   }
 
@@ -488,6 +567,8 @@ export class CodexAdapter extends EventEmitter {
       ephemeral,
       threadSource,
     });
+    this.rememberThreadHistoryMode(response.thread);
+    this.justStartedThreads.set(response.thread.id, response);
     return { thread: projectThread(response.thread) };
   }
 
@@ -503,6 +584,7 @@ export class CodexAdapter extends EventEmitter {
       approvalPolicy: settings.accessMode === "fullAccess" ? "never" : "on-request",
       sandboxPolicy: sandboxPolicy(settings.accessMode, cwd),
     });
+    this.justStartedThreads.delete(threadId);
     return { turn: projectTurn(response.turn) };
   }
 
@@ -762,6 +844,7 @@ export class CodexAdapter extends EventEmitter {
 
   async archiveSession(threadId: string): Promise<void> {
     await this.acknowledgedMutation("thread/archive", { threadId });
+    this.justStartedThreads.delete(threadId);
   }
 
   async getGoal(threadId: string): Promise<Goal | null> {

@@ -7,6 +7,7 @@ describe("JSON-RPC retry policy", () => {
     expect(isRetryableRequestError("thread/read", new JsonRpcError("busy", -32_000))).toBe(true);
     expect(isRetryableRequestError("thread/list", new JsonRpcError("internal", -32_603))).toBe(true);
     expect(isRetryableRequestError("model/list", new Error("JSON-RPC timeout for model/list"))).toBe(true);
+    expect(isRetryableRequestError("thread/turns/list", new JsonRpcError("busy", -32_000))).toBe(true);
     expect(isRetryableRequestError("turn/start", new JsonRpcError("busy", -32_000))).toBe(false);
     expect(isRetryableRequestError("thread/read", new JsonRpcError("invalid", -32_602))).toBe(false);
   });

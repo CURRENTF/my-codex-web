@@ -472,8 +472,8 @@ test("adapts the workspace controls and navigation to the available width", asyn
     if (size.width <= 720) await expect(sidebar).not.toBeInViewport();
     await expect(page.locator(".composer")).toBeVisible();
     await expect(page.locator(".access-control select")).toBeVisible();
-    await expect(page.locator(".inline-select select").first()).toBeVisible();
-    await expect(page.locator(".reasoning-select select")).toBeVisible();
+    await expect(page.getByRole("button", { name: "模型", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (size.width === 390) {
       const [toolbarBox, accessBox, controlsBox] = await Promise.all([
@@ -483,6 +483,16 @@ test("adapts the workspace controls and navigation to the available width", asyn
       ]);
       expect(toolbarBox?.height).toBeLessThanOrEqual(40);
       expect(Math.abs((accessBox?.y ?? 0) - (controlsBox?.y ?? 0))).toBeLessThan(2);
+    }
+    if (size.width === 1440) {
+      await page.getByRole("button", { name: "模型", exact: true }).click();
+      await expect(page.locator(".settings-select-menu.model")).toBeVisible();
+      await expect(page.locator(".settings-select-menu.model .settings-select-option[data-state=checked]")).toHaveCount(1);
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Reasoning effort", exact: true }).click();
+      await expect(page.locator(".settings-select-menu.reasoning")).toBeVisible();
+      await expect(page.locator(".settings-select-menu.reasoning .settings-select-option[data-state=checked]")).toHaveCount(1);
+      await page.keyboard.press("Escape");
     }
     await page.screenshot({ path: path.join(outputDir, `${size.name}.png`), fullPage: true });
   }
@@ -735,7 +745,7 @@ test("discovers an existing App Server Session, applies Project defaults, and re
     const setup = await page.evaluate(async (root) => {
       const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" }).then((response) => response.json()) as {
         csrfToken: string;
-        models: Array<{ model: string; supportedReasoning: Array<{ effort: string }> }>;
+        models: Array<{ model: string; displayName: string; supportedReasoning: Array<{ effort: string }> }>;
         preferences: { lastProjectId: string | null };
       };
       const headers = { "content-type": "application/json", "x-csrf-token": bootstrap.csrfToken };
@@ -758,7 +768,7 @@ test("discovers an existing App Server Session, applies Project defaults, and re
       if (!createSession.ok) throw new Error(`Session creation failed: ${createSession.status}`);
       const session = await createSession.json() as { thread: { id: string } };
       const discovered = await fetch(`/api/sessions?projectId=${encodeURIComponent(project.id)}&sortDirection=desc&search=`).then((response) => response.json()) as Array<{ threadId: string; sourceKind: string }>;
-      return { projectId: project.id, threadId: session.thread.id, model: model.model, reasoning, discovered };
+      return { projectId: project.id, threadId: session.thread.id, model: model.model, modelName: model.displayName, reasoning, discovered };
     }, projectRoot);
 
     expect(setup.discovered).toEqual(expect.arrayContaining([
@@ -773,8 +783,8 @@ test("discovers an existing App Server Session, applies Project defaults, and re
     await page.reload();
     await expect(page.locator(".composer")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".access-control select")).toHaveValue("workspaceWrite");
-    await expect(page.locator(".inline-select select").first()).toHaveValue(setup.model);
-    await expect(page.locator(".reasoning-select select")).toHaveValue(setup.reasoning);
+    await expect(page.getByRole("button", { name: "模型", exact: true })).toContainText(setup.modelName);
+    await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toContainText(new RegExp(setup.reasoning, "i"));
 
     const persisted = await page.evaluate(async (threadId) => {
       const response = await fetch(`/api/sessions/${threadId}`);

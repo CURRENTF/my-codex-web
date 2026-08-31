@@ -1,5 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
-import { CodexAdapter, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, NON_IDEMPOTENT_MUTATION_TIMEOUT, normalizeGeneratedTitle, OperationUncertainError } from "@codex-web/codex-adapter";
+import { CodexAdapter, JsonRpcError, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, NON_IDEMPOTENT_MUTATION_TIMEOUT, normalizeGeneratedTitle, OperationUncertainError } from "@codex-web/codex-adapter";
+
+function protocolTurn(id: string) {
+  return { id, status: "completed", items: [], error: null, startedAt: 1, completedAt: 2, durationMs: 1_000 };
+}
+
+function protocolThread({ id = "thread-1", historyMode = "paginated", preview = "", turns = [] as ReturnType<typeof protocolTurn>[] } = {}) {
+  return {
+    id, sessionId: "session-1", forkedFromId: null, parentThreadId: null, preview, ephemeral: false,
+    section: null, sectionEnteredAt: null, projectId: null, historyMode,
+    modelProvider: "openai", createdAt: 1, updatedAt: 2, recencyAt: 2, status: { type: "idle" }, path: null,
+    cwd: "/tmp/project", cliVersion: "0.151.0", source: "appServer", threadSource: null,
+    agentNickname: null, agentRole: null, gitInfo: null, name: null, turns,
+  };
+}
 
 describe("Codex Adapter initialization", () => {
   it("lists Subagents separately with their parent, identity, context, and runtime state", async () => {
@@ -108,6 +122,131 @@ describe("Codex Adapter initialization", () => {
 
     expect(request.mock.calls.filter(([method]) => method === "account/read")).toHaveLength(1);
     expect(request.mock.calls.filter(([method]) => method === "model/list")).toHaveLength(2);
+    expect(request).toHaveBeenCalledWith("initialize", expect.objectContaining({ capabilities: { experimentalApi: true } }));
+  });
+
+  it("hydrates paginated Thread history in chronological pages with full items", async () => {
+    const metadata = protocolThread({ preview: "hello" });
+    const request = vi.fn(async (method: string, params: { cursor?: string | null }) => {
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/turns/list") return params.cursor === null
+        ? { data: [protocolTurn("turn-1")], nextCursor: "page-2", backwardsCursor: null }
+        : { data: [protocolTurn("turn-2")], nextCursor: null, backwardsCursor: null };
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await expect(adapter.readSession("thread-1")).resolves.toMatchObject({
+      id: "thread-1",
+      turns: [{ id: "turn-1" }, { id: "turn-2" }],
+    });
+    expect(request.mock.calls).toEqual([
+      ["thread/read", { threadId: "thread-1", includeTurns: false }],
+      ["thread/turns/list", { threadId: "thread-1", cursor: null, limit: 100, sortDirection: "asc", itemsView: "full" }],
+      ["thread/turns/list", { threadId: "thread-1", cursor: "page-2", limit: 100, sortDirection: "asc", itemsView: "full" }],
+    ]);
+  });
+
+  it("resumes paginated Threads without deprecated full-history hydration", async () => {
+    const metadata = protocolThread();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/resume") return {
+        thread: metadata,
+        model: "gpt-test",
+        modelProvider: "openai",
+        serviceTier: null,
+        cwd: "/tmp/project",
+        instructionSources: [],
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: { type: "dangerFullAccess" },
+        reasoningEffort: "high",
+        turnsBackwardsCursor: null,
+        itemsBackwardsCursor: null,
+      };
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await expect(adapter.resumeSession("thread-1", { accessMode: "fullAccess" })).resolves.toMatchObject({ thread: { id: "thread-1", turns: [] } });
+    expect(request).toHaveBeenCalledWith("thread/resume", expect.objectContaining({ threadId: "thread-1", excludeTurns: true }));
+  });
+
+  it("keeps a just-started empty paginated Thread usable before Codex materializes its rollout", async () => {
+    const metadata = protocolThread();
+    const started = {
+      thread: metadata,
+      model: "gpt-test",
+      modelProvider: "openai",
+      serviceTier: null,
+      cwd: "/tmp/project",
+      instructionSources: [],
+      approvalPolicy: "on-request",
+      approvalsReviewer: "user",
+      sandbox: { type: "readOnly", networkAccess: false },
+      reasoningEffort: "medium",
+    };
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") return started;
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/resume") throw new JsonRpcError("no rollout found for thread id thread-1", -32_600);
+      if (method === "thread/turns/list") {
+        throw new JsonRpcError("thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message", -32_600);
+      }
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    const session = await adapter.startSession("/tmp/project", { accessMode: "readOnly", model: null, reasoning: null });
+
+    await expect(adapter.resumeSession(session.thread.id, { accessMode: "readOnly" })).resolves.toMatchObject({
+      thread: { id: "thread-1", turns: [] },
+      settings: { model: "gpt-test", reasoning: "medium", accessMode: "readOnly" },
+    });
+    await expect(adapter.readSession(session.thread.id)).resolves.toMatchObject({ id: "thread-1", turns: [] });
+  });
+
+  it("keeps a just-created empty paginated Thread open when its turn index is briefly unavailable", async () => {
+    const metadata = protocolThread();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/turns/list") throw new JsonRpcError("list_turns is not supported yet", -32_601);
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await expect(adapter.readSession("thread-1")).resolves.toMatchObject({ id: "thread-1", preview: "", turns: [] });
+  });
+
+  it("does not pretend a cold empty paginated Thread is loaded after materialization state is lost", async () => {
+    const metadata = protocolThread();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/turns/list") throw new JsonRpcError("thread not loaded: thread-1", -32_600);
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await expect(adapter.readSession("thread-1")).rejects.toMatchObject({ code: -32_600 });
+  });
+
+  it("does not hide turn pagination failures for a non-empty Thread", async () => {
+    const metadata = protocolThread({ preview: "existing conversation" });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/turns/list") throw new JsonRpcError("list_turns is not supported yet", -32_601);
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await expect(adapter.readSession("thread-1")).rejects.toMatchObject({ code: -32_601 });
   });
 
   it("loads every model/list page before projecting the model catalog", async () => {
