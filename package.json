@@ -5,6 +5,7 @@
   "workspaces": ["apps/*", "packages/*"],
   "bin": { "codex-web": "./bin/codex-web.mjs" },
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "predev": "npm run build:packages",
     "dev": "concurrently -n server,web -c blue,green \"npm run dev -w @codex-web/server\" \"npm run dev -w @codex-web/web\"",
     "build:packages": "npm run build -w @codex-web/shared-types && npm run build -w @codex-web/codex-adapter",

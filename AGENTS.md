@@ -6,6 +6,7 @@
 - Treat `~/.codex` as Codex-owned state. Use App Server APIs and the repository abstractions; do not parse or modify internal Session JSONL or SQLite files.
 - Run `npm run check`, `npm test`, `npm run build`, and `git diff --check` before handing off implementation changes.
 - Keep stable setup and deployment instructions in `README.md` or `docs/`. Do not put passwords, hashes, cookies, private keys, or authenticated response bodies in the repository.
+- Keep `npm run setup` as the canonical fresh-checkout installer: it must honor `package-lock.json`, include build/test dependencies under production environments, build the app, and link the CLI.
 
 ## Self-update deployment contract
 

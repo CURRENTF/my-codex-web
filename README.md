@@ -12,11 +12,11 @@
 ## 安装和启动
 
 ```bash
-npm install
-npm run build
-npm link
+npm run setup
 codex-web
 ```
+
+`npm run setup` 是新 checkout 的一键安装入口：它严格按照仓库中的 `package-lock.json` 执行 `npm ci --include=dev`，完成生产构建，并把 `codex-web` 命令链接到当前用户的 npm prefix。依赖版本已经固定在 repo 中；不提交不可移植且体积很大的 `node_modules`。若 Node.js 低于 22.22，脚本会在安装前给出明确错误。
 
 默认地址为 `http://127.0.0.1:7373`。`codex-web` 会自动打开浏览器；设置 `CODEX_WEB_OPEN_BROWSER=0` 可关闭此行为。
 
