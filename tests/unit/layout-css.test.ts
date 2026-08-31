@@ -95,9 +95,9 @@ describe("viewport layout CSS", () => {
   it("keeps the global update action in the upper-left toolbar", () => {
     expect(sidebarSource).toMatch(/sidebar-top[\s\S]*notification-button[\s\S]*<SelfUpdateControl \/>[\s\S]*添加 Project[\s\S]*<\/div>/);
     expect(selfUpdateSource).toContain("self-update-trigger");
-    expect(selfUpdateSource).toContain("shouldShowUpdateSuccessIndicator(status, presentationNow)");
-    expect(selfUpdateSource.match(/showSuccess=\{showRecentSuccess\}/g)).toHaveLength(2);
-    expect(selfUpdateSource).toContain('const triggerState = completedStateExpired ? "idle"');
+    expect(selfUpdateSource).toContain("shouldShowUpdateResultIndicator(status, presentationNow)");
+    expect(selfUpdateSource.match(/showResult=\{showRecentResult\}/g)).toHaveLength(2);
+    expect(selfUpdateSource).toContain('const triggerState = resultStateExpired ? "idle"');
     expect(rule(".self-update-trigger.running, .self-update-trigger.restarting")).toContain("color: var(--accent)");
   });
 

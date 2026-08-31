@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SelfUpdateStatus } from "@codex-web/shared-types";
 import { endpoints, isPasswordRequiredError } from "../api";
-import { isUpdateSuccessState, shouldShowUpdateSuccessIndicator, UPDATE_SUCCESS_INDICATOR_MS } from "../self-update-presentation";
+import { isUpdateResultState, shouldShowUpdateResultIndicator, UPDATE_RESULT_INDICATOR_MS } from "../self-update-presentation";
 
 const ACTIVE_UPDATE_RUN_KEY = "codex-web-active-update-run";
 let updateReloadMonitor: number | null = null;
@@ -58,10 +58,11 @@ function stepLabel(status: SelfUpdateStatus): string {
   return "正在更新";
 }
 
-function StatusIcon({ status, showSuccess = true }: { status: SelfUpdateStatus; showSuccess?: boolean }) {
+function StatusIcon({ status, showResult = true }: { status: SelfUpdateStatus; showResult?: boolean }) {
   if (status.state === "running" || status.state === "restarting") return <SpinnerGap size={17} className="spinning" />;
-  if (isUpdateSuccessState(status.state)) return showSuccess ? <CheckCircle size={17} weight="fill" /> : <ArrowClockwise size={17} />;
-  if (status.state === "failed" || status.state === "unavailable") return <WarningCircle size={17} weight="fill" />;
+  if (status.state === "succeeded" || status.state === "upToDate") return showResult ? <CheckCircle size={17} weight="fill" /> : <ArrowClockwise size={17} />;
+  if (status.state === "failed") return showResult ? <WarningCircle size={17} weight="fill" /> : <ArrowClockwise size={17} />;
+  if (status.state === "unavailable") return <WarningCircle size={17} weight="fill" />;
   return <ArrowClockwise size={17} />;
 }
 
@@ -88,8 +89,8 @@ export function SelfUpdateControl() {
   useEffect(() => {
     const current = Date.now();
     setPresentationNow(current);
-    if (!status || !isUpdateSuccessState(status.state) || status.finishedAt === null) return;
-    const remaining = status.finishedAt + UPDATE_SUCCESS_INDICATOR_MS - current;
+    if (!status || !isUpdateResultState(status.state) || status.finishedAt === null) return;
+    const remaining = status.finishedAt + UPDATE_RESULT_INDICATOR_MS - current;
     if (remaining <= 0) return;
     const timer = window.setTimeout(() => setPresentationNow(Date.now()), remaining);
     return () => window.clearTimeout(timer);
@@ -116,13 +117,13 @@ export function SelfUpdateControl() {
   }, [statusQuery.error]);
 
   const running = status?.state === "running" || status?.state === "restarting" || update.isPending;
-  const showRecentSuccess = status ? shouldShowUpdateSuccessIndicator(status, presentationNow) : false;
-  const completedStateExpired = status ? isUpdateSuccessState(status.state) && !showRecentSuccess : false;
-  const triggerState = completedStateExpired ? "idle" : (status?.state ?? "loading");
-  const controlLabel = status ? (completedStateExpired ? "检查更新" : stepLabel(status)) : "检查更新";
+  const showRecentResult = status ? shouldShowUpdateResultIndicator(status, presentationNow) : false;
+  const resultStateExpired = status ? isUpdateResultState(status.state) && !showRecentResult : false;
+  const triggerState = resultStateExpired ? "idle" : (status?.state ?? "loading");
+  const controlLabel = status ? (resultStateExpired ? "检查更新" : stepLabel(status)) : "检查更新";
   return <>
     <button className={`icon-button self-update-trigger ${triggerState}`} onClick={() => setOpen(true)} aria-label={`更新 Codex Web：${controlLabel}`} title={`更新 Codex Web：${controlLabel}`}>
-      {status ? <StatusIcon status={status} showSuccess={showRecentSuccess} /> : <SpinnerGap size={17} className="spinning" />}
+      {status ? <StatusIcon status={status} showResult={showRecentResult} /> : <SpinnerGap size={17} className="spinning" />}
     </button>
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
@@ -136,7 +137,7 @@ export function SelfUpdateControl() {
             {status.targetCommit && <><span>目标版本</span><code>{shortCommit(status.targetCommit)}</code></>}
           </div>}
           <div className={`self-update-status ${status?.state ?? "loading"}`} role="status">
-            {status ? <StatusIcon status={status} showSuccess={showRecentSuccess} /> : <SpinnerGap size={17} className="spinning" />}
+            {status ? <StatusIcon status={status} showResult={showRecentResult} /> : <SpinnerGap size={17} className="spinning" />}
             <span><strong>{status ? stepLabel(status) : "正在读取更新状态"}</strong><small>{status?.message ?? "请稍候…"}</small></span>
           </div>
           {status && !status.enabled && <p className="self-update-config-note">在服务环境中配置 <code>CODEX_WEB_UPDATE_RESTART_COMMAND_JSON</code> 后启用。运行目录还必须是干净的 Git checkout。</p>}
