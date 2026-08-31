@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { acknowledgedMutationTimeout, CodexAdapter, isThreadMaterializationRace, OperationUncertainError, retryThreadMaterialization, SIDE_CHAT_BOUNDARY_TIMEOUT_MS, SIDE_CHAT_CLEANUP_RETRY_BASE_MS } from "../../packages/codex-adapter/src/codex-adapter.js";
+import { acknowledgedMutationTimeout, CodexAdapter, isThreadMaterializationRace, NON_IDEMPOTENT_MUTATION_TIMEOUT, OperationUncertainError, retryThreadMaterialization, SIDE_CHAT_BOUNDARY_TIMEOUT_MS, SIDE_CHAT_CLEANUP_RETRY_BASE_MS } from "../../packages/codex-adapter/src/codex-adapter.js";
 import { JsonRpcError, JsonRpcMutationResponseTimeoutError } from "../../packages/codex-adapter/src/json-rpc-transport.js";
 
 const emptyThread = {
@@ -132,6 +132,25 @@ describe("Side Chat adapter initialization", () => {
     ]);
     expect(request.mock.calls[1]?.[1]).toMatchObject({ threadId: "side-1" });
     expect(request.mock.calls[1]?.[2]).toEqual(acknowledgedMutationTimeout(SIDE_CHAT_BOUNDARY_TIMEOUT_MS));
+  });
+
+  it("requests metadata-only history when forking a paginated Side Chat", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/fork") return { thread: { ...emptyThread, forkedFromId: "parent" } };
+      return {};
+    });
+    const adapter = new CodexAdapter({ cwd: "/tmp/project", codexHome: "/tmp/codex-web-test", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await adapter.createSideChat("parent", "turn-1", { accessMode: "fullAccess", model: null, reasoning: null }, "/tmp/project");
+
+    expect(request).toHaveBeenCalledWith("thread/fork", expect.objectContaining({
+      threadId: "parent",
+      lastTurnId: "turn-1",
+      ephemeral: true,
+      excludeTurns: true,
+      threadSource: "codex-web-side-chat",
+    }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
   });
 
   it("disconnects and reports uncertainty instead of allowing acknowledged mutations to apply late", async () => {

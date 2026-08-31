@@ -5,6 +5,10 @@ function protocolTurn(id: string) {
   return { id, status: "completed", items: [], error: null, startedAt: 1, completedAt: 2, durationMs: 1_000 };
 }
 
+function initialization(userAgent = "Codex Desktop/0.151.0 (Linux; x86_64) dumb (codex-web; test)") {
+  return { userAgent, codexHome: "/tmp/codex-web-adapter-home", platformFamily: "unix", platformOs: "linux" };
+}
+
 function protocolThread({ id = "thread-1", historyMode = "paginated", preview = "", turns = [] as ReturnType<typeof protocolTurn>[] } = {}) {
   return {
     id, sessionId: "session-1", forkedFromId: null, parentThreadId: null, preview, ephemeral: false,
@@ -108,6 +112,7 @@ describe("Codex Adapter initialization", () => {
 
   it("checks account once per backend lifetime while refreshing models after reconnects", async () => {
     const request = vi.fn(async (method: string) => {
+      if (method === "initialize") return initialization();
       if (method === "account/read") return { account: null };
       if (method === "model/list") return { data: [], nextCursor: null };
       return {};
@@ -123,6 +128,21 @@ describe("Codex Adapter initialization", () => {
     expect(request.mock.calls.filter(([method]) => method === "account/read")).toHaveLength(1);
     expect(request.mock.calls.filter(([method]) => method === "model/list")).toHaveLength(2);
     expect(request).toHaveBeenCalledWith("initialize", expect.objectContaining({ capabilities: { experimentalApi: true } }));
+  });
+
+  it("rejects an App Server below the declared minimum before loading account state", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "initialize") return initialization("Codex Desktop/0.147.0 (Linux; x86_64) dumb (codex-web; test)");
+      return {};
+    });
+    const transport = { request, notify: vi.fn() };
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: typeof transport }).transportValue = transport;
+
+    await expect(adapter.initialize()).rejects.toThrow("Unsupported Codex CLI 0.147.0; my-codex-web requires 0.149.0 or newer");
+
+    expect(transport.notify).not.toHaveBeenCalled();
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["initialize"]);
   });
 
   it("hydrates paginated Thread history in chronological pages with full items", async () => {
@@ -369,6 +389,7 @@ describe("Codex Adapter initialization", () => {
   it("does not repeat a successful account check when model loading is retried", async () => {
     let modelAttempts = 0;
     const request = vi.fn(async (method: string) => {
+      if (method === "initialize") return initialization();
       if (method === "account/read") return { account: null };
       if (method === "model/list" && modelAttempts++ === 0) throw new Error("temporary model failure");
       if (method === "model/list") return { data: [], nextCursor: null };
@@ -389,6 +410,7 @@ describe("Codex Adapter initialization", () => {
   it("retries account/read after a transient initialization failure", async () => {
     let accountAttempts = 0;
     const request = vi.fn(async (method: string) => {
+      if (method === "initialize") return initialization();
       if (method === "account/read" && accountAttempts++ === 0) throw new Error("temporary account failure");
       if (method === "account/read") return { account: null };
       if (method === "model/list") return { data: [], nextCursor: null };

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { InitializeResponse } from "@codex-web/codex-schema";
 import type { AccessMode, Goal, ModelOption, RuntimeState, SessionThread, SessionTurn, SkillOption, SubagentAgentStatus, SubagentDescriptor } from "@codex-web/shared-types";
 import type { Account } from "@codex-web/codex-schema/v2/Account";
 import type { GetAccountResponse } from "@codex-web/codex-schema/v2/GetAccountResponse";
@@ -21,6 +22,7 @@ import type { ThreadTurnsListResponse } from "@codex-web/codex-schema/v2/ThreadT
 import type { TurnStartResponse } from "@codex-web/codex-schema/v2/TurnStartResponse";
 import { JsonRpcError, JsonRpcMutationConnectionLostError, JsonRpcMutationResponseTimeoutError, type RpcServerRequest } from "./json-rpc-transport.js";
 import { projectAdapterEvent, projectSubagentDescriptor } from "./adapter-events.js";
+import { requireSupportedCodexCli } from "./compatibility.js";
 import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
 import { projectThread, projectTurn } from "./ui-projection.js";
@@ -358,10 +360,11 @@ export class CodexAdapter extends EventEmitter {
     this.cancelInternalTitleTurns(new Error("Codex App Server restarted during title generation"));
     this.emit("connection", { state: "connecting" });
     const transport = this.supervisor.transport;
-    await transport.request("initialize", {
+    const initialization = await transport.request<InitializeResponse>("initialize", {
       clientInfo: { name: "codex-web", title: "Codex Web", version: this.options.version },
       capabilities: { experimentalApi: true },
     });
+    requireSupportedCodexCli(initialization.userAgent);
     transport.notify("initialized");
     const [, models] = await Promise.all([
       this.ensureAccountChecked(),
@@ -628,6 +631,7 @@ export class CodexAdapter extends EventEmitter {
       sandbox: sandboxMode(settings.accessMode),
       ...(reasoningConfig(settings) ? { config: reasoningConfig(settings) } : {}),
       ephemeral: true,
+      excludeTurns: true,
       developerInstructions: SIDE_CHAT_INSTRUCTIONS,
       threadSource: "codex-web-side-chat",
     }));
