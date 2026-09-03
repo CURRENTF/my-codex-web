@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { clampSessionSwipeOffset, SESSION_SWIPE_ACTION_WIDTH, shouldRevealSessionActions } from "../../apps/web/src/components/Sidebar";
+import { SESSION_SWIPE_ACTION_WIDTH, sessionSwipeIsRevealed } from "../../apps/web/src/components/Sidebar";
 
 const styles = readFileSync(fileURLToPath(new URL("../../apps/web/src/styles.css", import.meta.url)), "utf8");
 const appSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/App.tsx", import.meta.url)), "utf8");
@@ -40,15 +40,19 @@ describe("viewport layout CSS", () => {
   });
 
   it("reveals bounded Session shortcuts only in the mobile Sidebar", () => {
-    expect(clampSessionSwipeOffset(20)).toBe(0);
-    expect(clampSessionSwipeOffset(-40)).toBe(-40);
-    expect(clampSessionSwipeOffset(-500)).toBe(-SESSION_SWIPE_ACTION_WIDTH);
-    expect(shouldRevealSessionActions(-65)).toBe(false);
-    expect(shouldRevealSessionActions(-66)).toBe(true);
+    expect(sessionSwipeIsRevealed(SESSION_SWIPE_ACTION_WIDTH / 2 - 1)).toBe(false);
+    expect(sessionSwipeIsRevealed(SESSION_SWIPE_ACTION_WIDTH / 2)).toBe(true);
     expect(rule(".session-swipe-actions")).toContain("display: none");
-    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-swipe-actions \{ display: flex; \}/);
-    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-row-content \{ touch-action: pan-y; \}/);
-    expect(sidebarSource).toContain('event.pointerType !== "touch"');
+    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-swipe-actions \{[^}]*display: flex;/);
+    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-swipe-track \{[^}]*overflow-x: auto;[^}]*scroll-snap-type: x mandatory;/);
+    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-row-content \{[^}]*scroll-snap-align: start;/);
+    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-swipe-actions \{[^}]*scroll-snap-align: end;/);
+    expect(sidebarSource).not.toContain("setPointerCapture");
+    expect(sidebarSource).not.toContain("onPointerMove");
+    expect(sidebarSource).not.toContain("setDragOffset");
+    expect(sidebarSource).not.toContain("settleTimer");
+    expect(sidebarSource).toContain("onScrollEnd={settleScroll}");
+    expect(sidebarSource).toContain("programmaticTarget.current");
     expect(sidebarSource).toContain('className="session-swipe-action archive"');
   });
 

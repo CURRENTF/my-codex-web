@@ -83,8 +83,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .list-caption > span:first-child { color: var(--text-soft); }
 .sort-button, .caption-action { display: flex; align-items: center; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
 .session-row-shell { position: relative; overflow: hidden; border-radius: 10px; transition: background .14s ease; }
-.session-row-content { position: relative; z-index: 1; background: var(--sidebar); transition: transform .2s cubic-bezier(.2,.8,.2,1), background .14s ease; }
-.session-row-content.dragging { transition: background .14s ease; }
+.session-swipe-track { min-width: 0; }
+.session-row-content { background: var(--sidebar); transition: background .14s ease; }
 .session-row-shell:hover .session-row-content { background: var(--surface-hover); }
 .session-row-shell.active .session-row-content { background: var(--surface-strong); box-shadow: inset 0 0 0 1px var(--line); }
 .session-row-line { display: flex; align-items: center; }
@@ -92,7 +92,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .session-row-more { display: grid; width: 28px; height: 30px; flex: 0 0 28px; margin-right: 4px; place-items: center; border-radius: 7px; background: transparent; color: var(--text-faint); cursor: pointer; opacity: 0; transition: opacity .14s ease, background .14s ease, color .14s ease; }
 .session-row-shell:hover .session-row-more, .session-row-more:focus-visible, .session-row-more[data-state="open"] { opacity: 1; }
 .session-row-more:hover { background: color-mix(in srgb, var(--surface-strong) 68%, transparent); color: var(--text); }
-.session-swipe-actions { position: absolute; inset: 0 0 0 auto; display: none; width: 132px; align-items: stretch; }
+.session-swipe-actions { display: none; width: 132px; align-items: stretch; }
 .session-swipe-action { display: flex; width: 66px; flex-direction: column; align-items: center; justify-content: center; gap: 3px; background: var(--accent); color: white; cursor: pointer; font-size: 10px; font-weight: 650; }
 .session-swipe-action.archive { background: var(--danger); }
 .session-swipe-action:disabled { opacity: .62; }
@@ -767,8 +767,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .sidebar-open .mobile-sidebar-toggle { left: min(calc(84vw - 44px), 276px); background: var(--surface-hover); }
   .sidebar-scrim { position: fixed; inset: 0; z-index: 30; width: 100%; height: 100%; background: rgba(15, 20, 28, .32); cursor: default; }
   .sidebar-open .sidebar-scrim { display: block; }
-  .session-row-content { touch-action: pan-y; }
-  .session-swipe-actions { display: flex; }
+  .session-swipe-track { display: flex; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .session-swipe-track::-webkit-scrollbar { display: none; }
+  .session-row-content { min-width: 0; flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; }
+  .session-swipe-actions { display: flex; flex: 0 0 132px; scroll-snap-align: end; scroll-snap-stop: always; }
   .session-row-more { display: none; }
   .session-row { padding-right: 9px; }
   .workspace { width: 100%; height: 100dvh; }

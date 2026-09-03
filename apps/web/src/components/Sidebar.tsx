@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThree, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { CodeServerStatus, Preferences, Project, SessionSummary } from "@codex-web/shared-types";
@@ -18,12 +18,8 @@ export function relativeTime(timestamp: number, now = Date.now()): string {
 
 export const SESSION_SWIPE_ACTION_WIDTH = 132;
 
-export function clampSessionSwipeOffset(offset: number): number {
-  return Math.max(-SESSION_SWIPE_ACTION_WIDTH, Math.min(0, offset));
-}
-
-export function shouldRevealSessionActions(offset: number): boolean {
-  return offset <= -SESSION_SWIPE_ACTION_WIDTH / 2;
+export function sessionSwipeIsRevealed(scrollLeft: number): boolean {
+  return scrollLeft >= SESSION_SWIPE_ACTION_WIDTH / 2;
 }
 
 function SessionRow({ session, active, projectName, now, revealed, busy, onReveal, onOpen, onPin, onArchive }: {
@@ -33,38 +29,29 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
   const connectionState = useAppStore((state) => state.connectionState);
   const runtimeState = connectionState === "connected" ? (liveRuntime?.state ?? session.runtimeState) : "disconnected";
-  const gesture = useRef<{ startX: number; startY: number; startOffset: number; currentOffset: number; axis: "pending" | "horizontal" | "vertical" } | null>(null);
+  const track = useRef<HTMLDivElement>(null);
+  const programmaticTarget = useRef<number | null>(null);
   const suppressClick = useRef(false);
-  const [dragOffset, setDragOffset] = useState<number | null>(null);
   const archiveDisabled = busy || runtimeState === "running" || runtimeState === "waitingForInput" || runtimeState === "disconnected";
-  const offset = dragOffset ?? (revealed ? -SESSION_SWIPE_ACTION_WIDTH : 0);
-  const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== "touch" || busy) return;
-    const startOffset = revealed ? -SESSION_SWIPE_ACTION_WIDTH : 0;
-    gesture.current = { startX: event.clientX, startY: event.clientY, startOffset, currentOffset: startOffset, axis: "pending" };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = gesture.current;
-    if (!current) return;
-    const deltaX = event.clientX - current.startX;
-    const deltaY = event.clientY - current.startY;
-    if (current.axis === "pending" && (Math.abs(deltaX) > 6 || Math.abs(deltaY) > 6)) current.axis = Math.abs(deltaX) > Math.abs(deltaY) ? "horizontal" : "vertical";
-    if (current.axis !== "horizontal") return;
-    event.preventDefault();
-    suppressClick.current = true;
-    current.currentOffset = clampSessionSwipeOffset(current.startOffset + deltaX);
-    setDragOffset(current.currentOffset);
-  };
-  const finishPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = gesture.current;
-    gesture.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    if (current?.axis === "horizontal") {
-      onReveal(shouldRevealSessionActions(current.currentOffset) ? session.threadId : null);
-      window.setTimeout(() => { suppressClick.current = false; }, 0);
+  useEffect(() => {
+    const element = track.current;
+    if (!element) return;
+    const target = revealed ? SESSION_SWIPE_ACTION_WIDTH : 0;
+    if (Math.abs(element.scrollLeft - target) > 1) {
+      programmaticTarget.current = target;
+      element.scrollTo({ left: target, behavior: "smooth" });
     }
-    setDragOffset(null);
+  }, [revealed]);
+  const settleScroll = () => {
+    const scrollLeft = track.current?.scrollLeft ?? 0;
+    suppressClick.current = false;
+    if (programmaticTarget.current !== null && Math.abs(scrollLeft - programmaticTarget.current) <= 2) {
+      programmaticTarget.current = null;
+      return;
+    }
+    programmaticTarget.current = null;
+    const isRevealed = sessionSwipeIsRevealed(scrollLeft);
+    onReveal(isRevealed ? session.threadId : null);
   };
   const open = () => {
     if (suppressClick.current) return;
@@ -72,23 +59,25 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
     onOpen(session.threadId);
   };
   return <div className={`session-row-shell ${active ? "active" : ""} ${revealed ? "actions-revealed" : ""}`} data-thread-id={session.threadId} data-updated-at={session.updatedAt} data-pinned={session.pinned}>
-    <div className="session-swipe-actions" aria-hidden={!revealed}>
-      <button type="button" className="session-swipe-action pin" tabIndex={revealed ? 0 : -1} disabled={busy} aria-label={session.pinned ? `取消置顶 ${session.title}` : `置顶 ${session.title}`} onClick={() => onPin(session)}><PushPin size={17} weight={session.pinned ? "fill" : "bold"} /><span>{session.pinned ? "取消置顶" : "置顶"}</span></button>
-      <button type="button" className="session-swipe-action archive" tabIndex={revealed ? 0 : -1} disabled={archiveDisabled} aria-label={`归档 ${session.title}`} onClick={() => onArchive(session)}><Archive size={17} /><span>归档</span></button>
-    </div>
-    <div className={`session-row-content ${dragOffset !== null ? "dragging" : ""}`} style={{ transform: `translateX(${offset}px)` }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={finishPointer} onPointerCancel={finishPointer}>
-      <div className="session-row-line">
-        <button className="session-row" onClick={open}>
-          <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
-          <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}<StatusIcon state={runtimeState} /></span>
-        </button>
-        <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className="session-row-more" aria-label={`${session.title} 更多操作`}><DotsThree size={17} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
-          <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
-          <DropdownMenu.Separator className="menu-separator" />
-          <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>
-        </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+    <div ref={track} className="session-swipe-track" onScroll={() => { suppressClick.current = true; }} onScrollEnd={settleScroll} onTouchStart={() => { programmaticTarget.current = null; if (!revealed) onReveal(null); }}>
+      <div className="session-row-content">
+        <div className="session-row-line">
+          <button className="session-row" onClick={open}>
+            <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
+            <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}<StatusIcon state={runtimeState} /></span>
+          </button>
+          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className="session-row-more" aria-label={`${session.title} 更多操作`}><DotsThree size={17} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
+            <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
+            <DropdownMenu.Separator className="menu-separator" />
+            <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>
+          </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+        </div>
+        {session.parentThreadId && <button className="fork-source-link" onClick={() => { if (suppressClick.current) return; if (revealed) onReveal(null); else onOpen(session.parentThreadId!); }}><GitFork size={11} /><span>从「{session.forkSourceTitle ?? "父 Session"}」{session.forkTurnNumber ? `第 ${session.forkTurnNumber} 轮` : ""}分叉</span></button>}
       </div>
-      {session.parentThreadId && <button className="fork-source-link" onClick={() => { if (suppressClick.current) return; if (revealed) onReveal(null); else onOpen(session.parentThreadId!); }}><GitFork size={11} /><span>从「{session.forkSourceTitle ?? "父 Session"}」{session.forkTurnNumber ? `第 ${session.forkTurnNumber} 轮` : ""}分叉</span></button>}
+      <div className="session-swipe-actions" aria-hidden={!revealed}>
+        <button type="button" className="session-swipe-action pin" tabIndex={revealed ? 0 : -1} disabled={busy} aria-label={session.pinned ? `取消置顶 ${session.title}` : `置顶 ${session.title}`} onClick={() => onPin(session)}><PushPin size={17} weight={session.pinned ? "fill" : "bold"} /><span>{session.pinned ? "取消置顶" : "置顶"}</span></button>
+        <button type="button" className="session-swipe-action archive" tabIndex={revealed ? 0 : -1} disabled={archiveDisabled} aria-label={`归档 ${session.title}`} onClick={() => onArchive(session)}><Archive size={17} /><span>归档</span></button>
+      </div>
     </div>
   </div>;
 }
