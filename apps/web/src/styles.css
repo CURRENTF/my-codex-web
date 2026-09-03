@@ -82,10 +82,21 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .list-caption { display: flex; height: 30px; align-items: center; justify-content: space-between; padding: 0 8px; color: var(--text-faint); font-size: 11px; font-weight: 650; }
 .list-caption > span:first-child { color: var(--text-soft); }
 .sort-button, .caption-action { display: flex; align-items: center; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
-.session-row-shell { overflow: hidden; border-radius: 10px; transition: background .14s ease; }
-.session-row-shell:hover { background: var(--surface-hover); }
-.session-row-shell.active { background: var(--surface-strong); box-shadow: inset 0 0 0 1px var(--line); }
-.session-row { display: flex; width: 100%; min-height: 58px; align-items: center; gap: 9px; padding: 8px 9px; background: transparent; text-align: left; cursor: pointer; }
+.session-row-shell { position: relative; overflow: hidden; border-radius: 10px; transition: background .14s ease; }
+.session-row-content { position: relative; z-index: 1; background: var(--sidebar); transition: transform .2s cubic-bezier(.2,.8,.2,1), background .14s ease; }
+.session-row-content.dragging { transition: background .14s ease; }
+.session-row-shell:hover .session-row-content { background: var(--surface-hover); }
+.session-row-shell.active .session-row-content { background: var(--surface-strong); box-shadow: inset 0 0 0 1px var(--line); }
+.session-row-line { display: flex; align-items: center; }
+.session-row { display: flex; width: 100%; min-width: 0; min-height: 58px; flex: 1; align-items: center; gap: 9px; padding: 8px 5px 8px 9px; background: transparent; text-align: left; cursor: pointer; }
+.session-row-more { display: grid; width: 28px; height: 30px; flex: 0 0 28px; margin-right: 4px; place-items: center; border-radius: 7px; background: transparent; color: var(--text-faint); cursor: pointer; opacity: 0; transition: opacity .14s ease, background .14s ease, color .14s ease; }
+.session-row-shell:hover .session-row-more, .session-row-more:focus-visible, .session-row-more[data-state="open"] { opacity: 1; }
+.session-row-more:hover { background: color-mix(in srgb, var(--surface-strong) 68%, transparent); color: var(--text); }
+.session-swipe-actions { position: absolute; inset: 0 0 0 auto; display: none; width: 132px; align-items: stretch; }
+.session-swipe-action { display: flex; width: 66px; flex-direction: column; align-items: center; justify-content: center; gap: 3px; background: var(--accent); color: white; cursor: pointer; font-size: 10px; font-weight: 650; }
+.session-swipe-action.archive { background: var(--danger); }
+.session-swipe-action:disabled { opacity: .62; }
+.session-pinned-icon { color: var(--accent); }
 .session-copy { min-width: 0; flex: 1; }
 .session-title { display: block; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 610; text-overflow: ellipsis; white-space: nowrap; }
 .session-meta { display: flex; gap: 5px; align-items: center; overflow: hidden; margin-top: 4px; color: var(--text-faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -93,6 +104,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .fork-source-link { display: flex; width: calc(100% - 18px); min-width: 0; align-items: center; gap: 5px; margin: -5px 9px 7px; padding: 2px 0; background: transparent; color: var(--text-faint); font-size: 10px; text-align: left; cursor: pointer; }
 .fork-source-link:hover { color: var(--accent); }
 .fork-source-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-action-error { display: flex; align-items: center; gap: 6px; margin: 0 10px 7px; padding: 7px 8px; border-radius: 8px; background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); font-size: 11px; }
+.sidebar-action-error span { min-width: 0; flex: 1; }
+.sidebar-action-error button { display: grid; padding: 2px; place-items: center; background: transparent; color: inherit; cursor: pointer; }
 .status-icon.spinning { color: var(--accent); }
 .status-icon.success { color: var(--success); }
 .status-icon.waiting { color: var(--warning); }
@@ -753,6 +767,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .sidebar-open .mobile-sidebar-toggle { left: min(calc(84vw - 44px), 276px); background: var(--surface-hover); }
   .sidebar-scrim { position: fixed; inset: 0; z-index: 30; width: 100%; height: 100%; background: rgba(15, 20, 28, .32); cursor: default; }
   .sidebar-open .sidebar-scrim { display: block; }
+  .session-row-content { touch-action: pan-y; }
+  .session-swipe-actions { display: flex; }
+  .session-row-more { display: none; }
+  .session-row { padding-right: 9px; }
   .workspace { width: 100%; height: 100dvh; }
   .diff-panel { position: absolute; inset: 0; z-index: 12; width: 100%; min-width: 0; }
 }

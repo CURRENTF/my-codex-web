@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { clampSessionSwipeOffset, SESSION_SWIPE_ACTION_WIDTH, shouldRevealSessionActions } from "../../apps/web/src/components/Sidebar";
 
 const styles = readFileSync(fileURLToPath(new URL("../../apps/web/src/styles.css", import.meta.url)), "utf8");
 const appSource = readFileSync(fileURLToPath(new URL("../../apps/web/src/App.tsx", import.meta.url)), "utf8");
@@ -36,6 +37,19 @@ describe("viewport layout CSS", () => {
     expect(rule(".session-notices")).toContain("display: grid");
     expect(rule(".full-access-notice")).not.toContain("grid-area");
     expect(rule(".parallel-write-warning")).not.toContain("grid-area");
+  });
+
+  it("reveals bounded Session shortcuts only in the mobile Sidebar", () => {
+    expect(clampSessionSwipeOffset(20)).toBe(0);
+    expect(clampSessionSwipeOffset(-40)).toBe(-40);
+    expect(clampSessionSwipeOffset(-500)).toBe(-SESSION_SWIPE_ACTION_WIDTH);
+    expect(shouldRevealSessionActions(-65)).toBe(false);
+    expect(shouldRevealSessionActions(-66)).toBe(true);
+    expect(rule(".session-swipe-actions")).toContain("display: none");
+    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-swipe-actions \{ display: flex; \}/);
+    expect(styles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-row-content \{ touch-action: pan-y; \}/);
+    expect(sidebarSource).toContain('event.pointerType !== "touch"');
+    expect(sidebarSource).toContain('className="session-swipe-action archive"');
   });
 
   it("lets long prompts grow until half the visible page", () => {
