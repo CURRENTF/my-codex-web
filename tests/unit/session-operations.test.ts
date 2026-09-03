@@ -136,6 +136,31 @@ describe("session operation rules", () => {
     expect(sessions.at(-1)?.threadId).toBe("thread-2000");
   });
 
+  it("keeps pinned Sessions first and persists pin changes", async () => {
+    const mappings = [
+      { thread_id: "newest", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "created" as const, parent_thread_id: null, fork_turn_id: null, summary_title: "Newest", summary_preview: "", summary_created_at: 1, summary_updated_at: 30, added_at: 1, last_seen_at: 30, pinned: 0 },
+      { thread_id: "pinned", project_id: "project-1", cwd_snapshot: "/tmp/project", source_kind: "appServer", origin: "created" as const, parent_thread_id: null, fork_turn_id: null, summary_title: "Pinned", summary_preview: "", summary_created_at: 1, summary_updated_at: 10, added_at: 1, last_seen_at: 10, pinned: 1 },
+    ];
+    const repositories = {
+      listProjectSessions: vi.fn(() => mappings),
+      getProjectSession: vi.fn((threadId: string) => mappings.find((mapping) => mapping.thread_id === threadId) ?? null),
+      setSessionPinned: vi.fn((threadId: string, pinned: boolean) => {
+        const mapping = mappings.find((candidate) => candidate.thread_id === threadId)!;
+        mapping.pinned = pinned ? 1 : 0;
+        return mapping;
+      }),
+    };
+    const runtimes = { get: vi.fn((threadId: string) => ({ threadId, state: "idle", activeFlags: [], pendingRequestIds: [] })), getSideChat: vi.fn(() => undefined), notifySessionSummaryUpdated: vi.fn() };
+    const service = new SessionService(repositories as never, Object.assign(new EventEmitter()) as never, {} as never, runtimes as never);
+    const goalPresence = (service as unknown as { goalPresence: Map<string, boolean> }).goalPresence;
+    goalPresence.set("newest", false); goalPresence.set("pinned", false);
+
+    await expect(service.listSessions({ sortDirection: "desc" })).resolves.toMatchObject([{ threadId: "pinned", pinned: true }, { threadId: "newest", pinned: false }]);
+    expect(service.setPinned("newest", true)).toEqual({ ok: true, pinned: true });
+    expect(repositories.setSessionPinned).toHaveBeenCalledWith("newest", true);
+    expect(runtimes.notifySessionSummaryUpdated).toHaveBeenCalledWith("newest", "pin-updated", { pinned: true });
+  });
+
   it("filters cached Session snapshots without querying App Server search", async () => {
     const mappings = ["matching", "unrelated"].map((threadId) => ({
       thread_id: threadId, project_id: "project-1", cwd_snapshot: "/tmp/project",

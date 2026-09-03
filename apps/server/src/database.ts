@@ -45,6 +45,7 @@ export interface ProjectSessionRow {
   added_at: number;
   last_seen_at: number;
   hidden: number;
+  pinned: number;
 }
 
 export interface ThreadUiStateRow {
@@ -125,7 +126,7 @@ export class Repositories {
 
   upsertProjectSession(row: Omit<ProjectSessionRow,
     "hidden" | "access_mode_override" | "last_model" | "last_reasoning" | "last_service_tier" | "has_last_service_tier"
-    | "summary_title" | "summary_preview" | "summary_created_at" | "summary_updated_at"
+    | "summary_title" | "summary_preview" | "summary_created_at" | "summary_updated_at" | "pinned"
   > & Partial<Pick<ProjectSessionRow, "summary_title" | "summary_preview" | "summary_created_at" | "summary_updated_at">> & { hidden?: number }): void {
     this.db.prepare(`INSERT INTO project_sessions (
       thread_id, project_id, cwd_snapshot, source_kind, origin, parent_thread_id,
@@ -203,6 +204,14 @@ export class Repositories {
     this.db.prepare(`UPDATE project_sessions SET
       summary_title = ?, summary_preview = ?, summary_created_at = ?, summary_updated_at = ?
       WHERE thread_id = ?`).run(summary.title, summary.preview, summary.createdAt, summary.updatedAt, threadId);
+  }
+
+  setSessionPinned(threadId: string, pinned: boolean): ProjectSessionRow {
+    const result = this.db.prepare("UPDATE project_sessions SET pinned = ? WHERE thread_id = ?").run(pinned ? 1 : 0, threadId);
+    if (!result.changes) throw new Error("Session mapping not found");
+    const mapping = this.getProjectSession(threadId);
+    if (!mapping) throw new Error("Session mapping not found");
+    return mapping;
   }
 
   setMessageSkillReferences(threadId: string, clientUserMessageId: string, skillNames: readonly string[]): void {
@@ -338,6 +347,7 @@ export class Repositories {
         summary_title TEXT, summary_preview TEXT,
         summary_created_at INTEGER, summary_updated_at INTEGER,
         added_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, hidden INTEGER NOT NULL DEFAULT 0,
+        pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
       CREATE TABLE IF NOT EXISTS thread_ui_state (
@@ -385,6 +395,9 @@ export class Repositories {
     }
     if (!projectSessionColumns.some((column) => column.name === "summary_updated_at")) {
       this.db.exec("ALTER TABLE project_sessions ADD COLUMN summary_updated_at INTEGER");
+    }
+    if (!projectSessionColumns.some((column) => column.name === "pinned")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))");
     }
   }
 }

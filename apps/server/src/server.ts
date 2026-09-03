@@ -424,6 +424,11 @@ export async function createServer() {
     const { projectId, clientRequestId } = z.object({ projectId: idSchema, clientRequestId: requestIdSchema }).parse(request.body);
     return once(request, clientRequestId, () => sessions.moveToProject(threadId, projectId));
   });
+  app.patch("/api/sessions/:threadId/pin", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const { pinned, clientRequestId } = z.object({ pinned: z.boolean(), clientRequestId: requestIdSchema }).parse(request.body);
+    return once(request, clientRequestId, () => sessions.setPinned(threadId, pinned));
+  });
   app.post("/api/sessions/:threadId/archive", async (request) => {
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
     await once(request, clientRequestId, () => sessions.archive(idSchema.parse((request.params as { threadId: string }).threadId)));

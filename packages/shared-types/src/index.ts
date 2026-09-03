@@ -38,6 +38,7 @@ export interface SessionSummary {
   forkTurnNumber: number | null;
   runtimeState: RuntimeState;
   hasGoal: boolean;
+  pinned: boolean;
 }
 
 export interface ThreadRuntime {
