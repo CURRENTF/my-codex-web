@@ -375,7 +375,7 @@ test("serializes writes from multiple tabs for the same Session", async ({ page 
   await stop.click();
   await expect(stop).toBeHidden({ timeout: 30_000 });
   await expect(page.locator(".main-pane .header-status")).toContainText("已中断");
-  await expect(page.locator(".sidebar .session-row-shell.active .status-icon")).toHaveAttribute("aria-label", "已中断");
+  await expect(page.locator(".sidebar .session-row-shell.active .session-status-menu")).toHaveAttribute("aria-label", /已中断/);
   await secondPage.close();
 });
 
@@ -424,7 +424,7 @@ test("adapts the workspace controls and navigation to the available width", asyn
     for (const socket of state.sockets) socket.close();
   });
   await expect(page.locator(".main-pane .header-status")).toContainText("连接中断", { timeout: 10_000 });
-  await expect(page.locator(".sidebar .session-row-shell.active .status-icon")).toHaveAttribute("aria-label", "连接中断");
+  await expect(page.locator(".sidebar .session-row-shell.active .session-status-menu")).toHaveAttribute("aria-label", /连接中断/);
   await page.evaluate(() => { (window as unknown as { __codexWsTest: { blocked: boolean } }).__codexWsTest.blocked = false; });
   await expect(page.locator(".main-pane .header-status")).not.toContainText("连接中断", { timeout: 30_000 });
 

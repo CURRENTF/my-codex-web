@@ -56,6 +56,20 @@ describe("viewport layout CSS", () => {
     expect(sidebarSource).toContain('className="session-swipe-action archive"');
   });
 
+  it("combines each Session status and action menu into one visible control", () => {
+    expect(sidebarSource).toContain("DotsThreeCircle");
+    expect(sidebarSource).toContain("statusText(runtimeState)");
+    expect(sidebarSource).toContain("session-status-menu ${runtimeState}");
+    expect(sidebarSource).not.toContain('<StatusIcon state={runtimeState} />');
+    expect(sidebarSource).not.toContain("session-row-more");
+    expect(rule(".session-status-menu")).toContain("display: grid");
+    expect(rule(".session-status-menu")).not.toContain("opacity: 0");
+    expect(rule(".session-status-menu.running")).toContain("color: var(--accent)");
+    expect(rule(".session-status-menu.justFinished")).toContain("color: var(--success)");
+    expect(rule(".session-status-menu.waitingForInput")).toContain("color: var(--warning)");
+    expect(styles).not.toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-status-menu \{[^}]*display: none;/);
+  });
+
   it("lets long prompts grow until half the visible page", () => {
     expect(rule(".composer textarea")).toContain("min-height: 64px");
     expect(rule(".composer textarea")).toContain("max-height: 50dvh");

@@ -89,9 +89,13 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .session-row-shell.active .session-row-content { background: var(--surface-strong); box-shadow: inset 0 0 0 1px var(--line); }
 .session-row-line { display: flex; align-items: center; }
 .session-row { display: flex; width: 100%; min-width: 0; min-height: 58px; flex: 1; align-items: center; gap: 9px; padding: 8px 5px 8px 9px; background: transparent; text-align: left; cursor: pointer; }
-.session-row-more { display: grid; width: 28px; height: 30px; flex: 0 0 28px; margin-right: 4px; place-items: center; border-radius: 7px; background: transparent; color: var(--text-faint); cursor: pointer; opacity: 0; transition: opacity .14s ease, background .14s ease, color .14s ease; }
-.session-row-shell:hover .session-row-more, .session-row-more:focus-visible, .session-row-more[data-state="open"] { opacity: 1; }
-.session-row-more:hover { background: color-mix(in srgb, var(--surface-strong) 68%, transparent); color: var(--text); }
+.session-status-menu { display: grid; width: 30px; height: 30px; flex: 0 0 30px; margin-right: 4px; place-items: center; border-radius: 7px; background: transparent; color: var(--text-faint); cursor: pointer; transition: background .14s ease, color .14s ease; }
+.session-status-menu:hover, .session-status-menu:focus-visible, .session-status-menu[data-state="open"] { background: color-mix(in srgb, var(--surface-strong) 68%, transparent); }
+.session-status-menu.running { color: var(--accent); }
+.session-status-menu.justFinished { color: var(--success); }
+.session-status-menu.waitingForInput { color: var(--warning); }
+.session-status-menu.failed, .session-status-menu.disconnected { color: var(--danger); }
+.session-status-menu.interrupted, .session-status-menu.idle { color: var(--text-faint); }
 .session-swipe-actions { display: none; width: 132px; align-items: stretch; }
 .session-swipe-action { display: flex; width: 66px; flex-direction: column; align-items: center; justify-content: center; gap: 3px; background: var(--accent); color: white; cursor: pointer; font-size: 10px; font-weight: 650; }
 .session-swipe-action.archive { background: var(--danger); }
@@ -779,7 +783,6 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
   .session-swipe-track::-webkit-scrollbar { display: none; }
   .session-row-content { min-width: 0; flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; }
   .session-swipe-actions { display: flex; flex: 0 0 132px; scroll-snap-align: end; scroll-snap-stop: always; }
-  .session-row-more { display: none; }
   .session-row { padding-right: 9px; }
   .workspace { width: 100%; height: 100dvh; }
   .diff-panel { position: absolute; inset: 0; z-index: 12; width: 100%; min-width: 0; }

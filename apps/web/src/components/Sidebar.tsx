@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThree, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
+import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { CodeServerStatus, Preferences, Project, SessionSummary } from "@codex-web/shared-types";
 import { codeServerFolderUrl } from "../code-server-url";
 import { useAppStore } from "../store";
-import { StatusIcon } from "./StatusIcon";
+import { statusText } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
 import { SelfUpdateControl } from "./SelfUpdateControl";
 
@@ -64,9 +64,9 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
         <div className="session-row-line">
           <button className="session-row" onClick={open}>
             <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
-            <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}<StatusIcon state={runtimeState} /></span>
+            <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
-          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className="session-row-more" aria-label={`${session.title} 更多操作`}><DotsThree size={17} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
+          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}，更多操作`} title={`${statusText(runtimeState)} · 更多操作`}><DotsThreeCircle className={runtimeState === "running" ? "spinning" : undefined} size={20} weight="regular" aria-hidden /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
             <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
             <DropdownMenu.Separator className="menu-separator" />
             <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>
