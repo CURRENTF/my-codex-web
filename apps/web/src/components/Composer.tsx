@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Lightning, Paperclip, ShieldCheck, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AccessMode, ContextUsage, Goal, ModelOption, Project, RuntimeState, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
+import type { AccessMode, ContextUsage, Goal, ModelOption, Project, RuntimeState, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 import { ApiError, api, endpoints, newClientRequestId } from "../api";
 import { commandArgumentSuggestions, composerTrigger, isCompletedSkillTrigger, isSupportedSlashCommand, parseSlashCommand, referencedSkillNames, slashArgumentTrigger, slashCommands, type CompletedSkillMention, type SlashCommandName } from "../composer-commands";
 import { expectedSteerTurnId, isTurnFinishedConflict } from "../composer-intent";
 import { resizeComposerTextarea } from "../composer-textarea";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
+import { advanceQueuedTurnBarrier, isQueuedTimelineSettled, type QueuedTurnBarrier } from "../queued-turn-barrier";
 import { fastServiceTierForModel, serviceTierForModel } from "../service-tier";
-import { useAppStore, type QueuedUserMessage } from "../store";
+import { useAppStore, type QueuedMessageSettings, type QueuedSubmission } from "../store";
 import { SettingsSelect } from "./SettingsSelect";
 
 function requestId(): string { return crypto.randomUUID(); }
@@ -22,6 +23,7 @@ type Feedback = { tone: "success" | "error" | "info"; text: string };
 type MenuOption = { key: string; value: string; label: string; description?: string; meta?: string };
 type MenuState = { kind: "command" | "skill" | "argument"; options: MenuOption[]; title: string; hint: string };
 type DeliveryMode = "steer" | "queue";
+type SlashCommandExecutionResult = { turnId?: string; queuedSettings?: QueuedMessageSettings };
 
 const MAX_ATTACHMENTS = 10;
 
@@ -53,13 +55,13 @@ function normalizeAccessMode(value: string): AccessMode | null {
   return null;
 }
 
-export function Composer({ threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
+export function Composer({ threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
   initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode };
-  goal?: Goal | null; contextUsage?: ContextUsage; latestCompletedTurnId?: string | null;
+  goal?: Goal | null; contextUsage?: ContextUsage; latestCompletedTurnId?: string | null; latestTurnId?: string | null; latestTurnStatus?: SessionTurn["status"] | null;
   compact?: boolean; disabled?: boolean; onTextareaReady?(element: HTMLTextAreaElement | null): void;
-  onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(): void; onOpenSideChat?(): void;
+  onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
 }) {
   const queryClient = useQueryClient(); const textarea = useRef<HTMLTextAreaElement>(null); const fileInput = useRef<HTMLInputElement>(null);
   const bindTextarea = useCallback((element: HTMLTextAreaElement | null) => { textarea.current = element; onTextareaReady?.(element); }, [onTextareaReady]);
@@ -72,17 +74,24 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const markSubmissionUncertain = useAppStore((state) => state.markSubmissionUncertain);
   const markSubmissionRetryReady = useAppStore((state) => state.markSubmissionRetryReady);
   const finishSubmission = useAppStore((state) => state.finishSubmission);
-  const queuedSlashCommand = useAppStore((state) => state.queuedSlashCommands[threadId]);
-  const queueSlashCommand = useAppStore((state) => state.queueSlashCommand);
-  const clearQueuedSlashCommand = useAppStore((state) => state.clearQueuedSlashCommand);
-  const queuedUserMessage = useAppStore((state) => state.queuedUserMessages[threadId]);
-  const queueUserMessage = useAppStore((state) => state.queueUserMessage);
-  const clearQueuedUserMessage = useAppStore((state) => state.clearQueuedUserMessage);
-  const [model, setModel] = useState(initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "");
+  const storedQueuedSubmissions = useAppStore((state) => state.queuedSubmissions[threadId]);
+  const queuedEffectiveSettings = useAppStore((state) => state.queuedEffectiveSettings[threadId]);
+  const queuedTurnBarrier = useAppStore((state) => state.queuedTurnBarriers[threadId] ?? null);
+  const queuedSubmissions = storedQueuedSubmissions ?? [];
+  const queuedSubmission = queuedSubmissions[0];
+  const queuedUserMessage = queuedSubmission?.kind === "message" ? queuedSubmission : undefined;
+  const enqueueSubmission = useAppStore((state) => state.enqueueSubmission);
+  const applyQueuedSettings = useAppStore((state) => state.applyQueuedSettings);
+  const setStoredQueuedTurnBarrier = useAppStore((state) => state.setQueuedTurnBarrier);
+  const removeQueuedSubmission = useAppStore((state) => state.removeQueuedSubmission);
+  const initialModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
+  const [model, setModel] = useState(initialModel);
   const selectedModel = useMemo(() => models.find((item) => item.model === model || item.id === model), [models, model]);
-  const [reasoning, setReasoning] = useState(initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(selectedModel));
-  const [serviceTier, setServiceTier] = useState<string | null>(serviceTierForModel(selectedModel, initialSettings.serviceTier));
-  const [accessMode, setAccessMode] = useState<AccessMode>(initialSettings.accessMode ?? project.defaultAccessMode);
+  const [reasoning, setReasoning] = useState(queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(selectedModel));
+  const [serviceTier, setServiceTier] = useState<string | null>(queuedEffectiveSettings ? queuedEffectiveSettings.serviceTier : serviceTierForModel(selectedModel, initialSettings.serviceTier));
+  const [accessMode, setAccessMode] = useState<AccessMode>(queuedEffectiveSettings?.accessMode ?? initialSettings.accessMode ?? project.defaultAccessMode);
+  const effectiveSettings = useRef<QueuedMessageSettings>({ model, reasoning, serviceTier, accessMode });
+  effectiveSettings.current = { model, reasoning, serviceTier, accessMode };
   const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null); const [cursor, setCursor] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("steer");
@@ -91,6 +100,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const [queuedCommandPendingId, setQueuedCommandPendingId] = useState<string | null>(null);
   const attachmentThread = useRef(threadId);
   const running = runtimeState === "running" || runtimeState === "waitingForInput"; const disconnected = runtimeState === "disconnected"; const blocked = (disabled || disconnected) && !running;
   const blockedMessage = disabled ? "Project 目录不可用；恢复该目录后重新扫描即可继续。" : "Session 尚未完成重同步；请等待状态恢复后继续。";
@@ -98,17 +108,31 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
 
   useEffect(() => {
     attachmentThread.current = threadId;
-    const nextModel = initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
+    const nextModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
     const option = models.find((item) => item.model === nextModel || item.id === nextModel);
+    const nextReasoning = queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(option);
+    const nextServiceTier = queuedEffectiveSettings ? queuedEffectiveSettings.serviceTier : serviceTierForModel(option, initialSettings.serviceTier);
+    const nextAccessMode = queuedEffectiveSettings?.accessMode ?? initialSettings.accessMode ?? project.defaultAccessMode;
+    effectiveSettings.current = { model: nextModel, reasoning: nextReasoning, serviceTier: nextServiceTier, accessMode: nextAccessMode };
     setModel(nextModel);
-    setReasoning(initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(option));
-    setServiceTier(serviceTierForModel(option, initialSettings.serviceTier));
-    setAccessMode(initialSettings.accessMode ?? project.defaultAccessMode);
+    setReasoning(nextReasoning);
+    setServiceTier(nextServiceTier);
+    setAccessMode(nextAccessMode);
     steerDraftTurnId.current = null;
-    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setAttachments([]); setUploadingCount(0); setDraggingFiles(false);
+    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setAttachments([]); setUploadingCount(0); setDraggingFiles(false); setQueuedCommandPendingId(null);
   }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.serviceTier, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
-  useEffect(() => { if (selectedModel && !selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) setReasoning(selectedModel.defaultReasoning); }, [selectedModel, reasoning]);
-  useEffect(() => { setServiceTier((current) => serviceTierForModel(selectedModel, current)); }, [selectedModel]);
+  useEffect(() => {
+    if (!selectedModel || selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) return;
+    effectiveSettings.current = { ...effectiveSettings.current, reasoning: selectedModel.defaultReasoning };
+    setReasoning(selectedModel.defaultReasoning);
+  }, [selectedModel, reasoning]);
+  useEffect(() => {
+    setServiceTier((current) => {
+      const next = serviceTierForModel(selectedModel, current);
+      effectiveSettings.current = { ...effectiveSettings.current, serviceTier: next };
+      return next;
+    });
+  }, [selectedModel]);
   const fastServiceTier = useMemo(() => fastServiceTierForModel(selectedModel), [selectedModel]);
   const fastMode = !!fastServiceTier && serviceTier === fastServiceTier.id;
   const modelSelectOptions = useMemo(() => models.map((item) => ({
@@ -203,14 +227,14 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     body: JSON.stringify({ accessMode: next, clientRequestId: requestId() }),
   }) });
 
-  const executeSlashCommand = useCallback(async (raw: string, clientRequestId = newClientRequestId()): Promise<void> => {
+  const executeSlashCommand = useCallback(async (raw: string, clientRequestId = newClientRequestId()): Promise<SlashCommandExecutionResult> => {
     const parsed = parseSlashCommand(raw);
     if (!parsed || !isSupportedSlashCommand(parsed.name)) throw new Error(`不支持的 Slash 命令：/${parsed?.name ?? ""}`);
     const command = parsed.name as SlashCommandName; const args = parsed.args;
     if (command === "goal") {
       if (!args) {
         setFeedback({ tone: "info", text: goal ? `Goal · ${goal.status} · ${goal.objective} · ${goal.tokensUsed}/${goal.tokenBudget ?? "∞"} tokens` : "当前 Session 尚未设置 Goal。用 /goal <目标> 创建。" });
-        return;
+        return {};
       }
       if (args === "clear") {
         await api(`/api/sessions/${threadId}/goal`, { method: "DELETE", body: JSON.stringify({ clientRequestId }) });
@@ -228,13 +252,13 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       }
       await queryClient.invalidateQueries({ queryKey: ["session", threadId] });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      return;
+      return {};
     }
     if (command === "compact") {
       if (args) throw new Error("/compact 不接受参数。");
       await api(`/api/sessions/${threadId}/compact`, { method: "POST", body: JSON.stringify({ clientRequestId }) });
       setFeedback({ tone: "success", text: "上下文压缩已启动。" });
-      return;
+      return {};
     }
     if (command === "review") {
       const target = !args ? { type: "uncommittedChanges" as const }
@@ -242,42 +266,51 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
           : args.startsWith("commit ") ? { type: "commit" as const, sha: args.slice(7).trim(), title: null }
             : { type: "custom" as const, instructions: args };
       if ((target.type === "baseBranch" && !target.branch) || (target.type === "commit" && !target.sha)) throw new Error("/review 参数不完整。");
-      await api(`/api/sessions/${threadId}/review`, { method: "POST", body: JSON.stringify({ target, clientRequestId }) });
+      const result = await api<{ turn: { id: string } }>(`/api/sessions/${threadId}/review`, { method: "POST", body: JSON.stringify({ target, clientRequestId }) });
       setFeedback({ tone: "success", text: "Review 已启动。" });
       await queryClient.invalidateQueries({ queryKey: ["session", threadId] });
-      return;
+      return { turnId: result.turn.id };
     }
     if (command === "fork") {
       if (args) throw new Error("/fork 不接受参数。");
       if (!latestCompletedTurnId || !onForkLatest) throw new Error("当前没有可 Fork 的已完成 Turn。");
-      onForkLatest(); setFeedback({ tone: "success", text: "正在从最新完成位置创建 Fork。" }); return;
+      if (!await onForkLatest(clientRequestId)) throw new Error("Fork 未完成；该命令仍保留在队列中。");
+      setFeedback({ tone: "success", text: "已从最新完成位置创建 Fork。" }); return {};
     }
     if (command === "side") {
       if (args) throw new Error("/side 不接受参数。");
       if (!onOpenSideChat) throw new Error("当前视图不支持 Side Chat。");
-      onOpenSideChat(); setFeedback({ tone: "success", text: "正在打开 Side Chat。" }); return;
+      if (!await onOpenSideChat(clientRequestId)) throw new Error("Side Chat 创建失败；该命令仍保留在队列中。");
+      setFeedback({ tone: "success", text: "Side Chat 已打开。" }); return {};
     }
     if (command === "model") {
       const option = models.find((item) => item.model === args || item.id === args);
       if (!option) throw new Error("请选择 /model 菜单中列出的模型。");
-      setModel(option.model); setReasoning(preferredReasoningForModel(option)); setServiceTier((current) => serviceTierForModel(option, current)); setFeedback({ tone: "success", text: `模型已切换为 ${option.displayName}；将在下一 Turn 生效。` }); return;
+      const nextReasoning = preferredReasoningForModel(option);
+      const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier);
+      const queuedSettings = { ...effectiveSettings.current, model: option.model, reasoning: nextReasoning, serviceTier: nextServiceTier };
+      effectiveSettings.current = queuedSettings;
+      setModel(option.model); setReasoning(nextReasoning); setServiceTier(nextServiceTier); setFeedback({ tone: "success", text: `模型已切换为 ${option.displayName}；将在下一 Turn 生效。` }); return { queuedSettings };
     }
     if (command === "reasoning") {
-      if (!selectedModel?.supportedReasoning.some((item) => item.effort === args)) throw new Error("请选择当前模型支持的 Reasoning 强度。");
-      setReasoning(args); setFeedback({ tone: "success", text: `Reasoning 已切换为 ${args}；将在下一 Turn 生效。` }); return;
+      const effectiveModel = models.find((item) => item.model === effectiveSettings.current.model || item.id === effectiveSettings.current.model);
+      if (!effectiveModel?.supportedReasoning.some((item) => item.effort === args)) throw new Error("请选择当前模型支持的 Reasoning 强度。");
+      const queuedSettings = { ...effectiveSettings.current, reasoning: args };
+      effectiveSettings.current = queuedSettings;
+      setReasoning(args); setFeedback({ tone: "success", text: `Reasoning 已切换为 ${args}；将在下一 Turn 生效。` }); return { queuedSettings };
     }
     if (command === "permissions") {
       const next = normalizeAccessMode(args);
       if (!next) throw new Error("权限仅支持 fullAccess、workspaceWrite、readOnly。");
-      await persistAccessMode.mutateAsync(next); setAccessMode(next); onAccessModeChange?.(next);
-      setFeedback({ tone: "success", text: `权限已切换为 ${accessModeLabel(next)}。` }); return;
+      await persistAccessMode.mutateAsync(next); const queuedSettings = { ...effectiveSettings.current, accessMode: next }; effectiveSettings.current = queuedSettings; setAccessMode(next); onAccessModeChange?.(next);
+      setFeedback({ tone: "success", text: `权限已切换为 ${accessModeLabel(next)}。` }); return { queuedSettings };
     }
     if (command === "status") {
       if (args) throw new Error("/status 不接受参数。");
       const context = contextUsage ? `${contextUsage.usedTokens.toLocaleString()} / ${contextUsage.maxTokens?.toLocaleString() ?? "?"} tokens` : "尚无数据";
-      setFeedback({ tone: "info", text: `${runtimeState} · ${selectedModel?.displayName ?? model} · ${fastMode ? "Fast" : "Standard"} · reasoning ${reasoning || "default"} · ${accessModeLabel(accessMode)} · 上下文 ${context}` }); return;
+      setFeedback({ tone: "info", text: `${runtimeState} · ${selectedModel?.displayName ?? model} · ${fastMode ? "Fast" : "Standard"} · reasoning ${reasoning || "default"} · ${accessModeLabel(accessMode)} · 上下文 ${context}` }); return {};
     }
-    updateDraft("$", 1); setFeedback(null);
+    updateDraft("$", 1); setFeedback(null); return {};
   }, [accessMode, contextUsage, fastMode, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
 
   const send = useMutation({ mutationFn: async ({ expectedTurnId }: { expectedTurnId?: string | null } = {}) => {
@@ -304,9 +337,9 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     void refreshProjectAvailabilityAfterError(error, (queryKey) => queryClient.invalidateQueries({ queryKey }));
   } });
 
-  const sendQueuedMessage = useMutation({ mutationFn: async (message: QueuedUserMessage) => {
+  const sendQueuedMessage = useMutation({ mutationFn: async (message: Extract<QueuedSubmission, { kind: "message" }>) => {
     beginSubmission(threadId, message.text, message.clientUserMessageId, message.attachments ?? []);
-    return api(`/api/sessions/${threadId}/turns`, {
+    return api<{ turn: { id: string } }>(`/api/sessions/${threadId}/turns`, {
       method: "POST",
       body: JSON.stringify({
         text: message.text,
@@ -320,8 +353,9 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
         clientUserMessageId: message.clientUserMessageId,
       }),
     });
-  }, onSuccess: (_result, message) => {
-    acceptSubmission(threadId); clearQueuedUserMessage(threadId, message.clientRequestId, true); setFeedback(null);
+  }, onSuccess: (result: { turn: { id: string } }, message) => {
+    setStoredQueuedTurnBarrier(threadId, { clientRequestId: message.clientRequestId, previousLatestTurnId: latestTurnId, turnId: result.turn.id });
+    acceptSubmission(threadId); removeQueuedSubmission(threadId, message.clientRequestId, true); setFeedback(null);
     void queryClient.invalidateQueries({ queryKey: ["sessions"] });
   }, onError: (error, message) => {
     if (apiErrorCode(error) === "operation_uncertain") {
@@ -329,7 +363,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       setFeedback({ tone: "info", text: "排队需求的发送结果尚未确认；请先核实，系统不会自动重复发送。" });
       return;
     }
-    finishSubmission(threadId, false); queueUserMessage(threadId, message);
+    finishSubmission(threadId, false, true); enqueueSubmission(threadId, message);
     setFeedback({ tone: "error", text: `排队需求发送失败：${error.message}` });
     void refreshProjectAvailabilityAfterError(error, (queryKey) => queryClient.invalidateQueries({ queryKey }));
   } });
@@ -340,7 +374,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       send.reset();
       if (result.status === "notApplied") {
         if (queuedUserMessage) {
-          clearQueuedUserMessage(threadId, queuedUserMessage.clientRequestId);
+          removeQueuedSubmission(threadId, queuedUserMessage.clientRequestId);
           setDraft(threadId, result.draft ?? queuedUserMessage.text);
           setAttachments(queuedUserMessage.attachments ?? []);
           setDeliveryMode("steer");
@@ -348,7 +382,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
         if (result.draft && !pendingSubmission) { setDraft(threadId, result.draft); beginSubmission(threadId, result.draft, result.clientUserMessageId ?? requestId()); }
         markSubmissionRetryReady(threadId, result.clientUserMessageId);
       } else if (queuedUserMessage) {
-        clearQueuedUserMessage(threadId, queuedUserMessage.clientRequestId, true);
+        removeQueuedSubmission(threadId, queuedUserMessage.clientRequestId, true);
       }
       setResolutionMessage(result.status === "notApplied" ? "当前快照未发现先前请求；再次发送将复用原消息 ID，避免迟到请求造成重复 Turn。" : "Codex 已先一步更新该 Session；请查看 Timeline，草稿未重复发送。");
       void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] }); textarea.current?.focus();
@@ -356,7 +390,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     onError: (error) => {
       send.reset(); const code = apiErrorCode(error); if (code === "uncertain_turn_applied") {
         finishSubmission(threadId, true);
-        if (queuedUserMessage) clearQueuedUserMessage(threadId, queuedUserMessage.clientRequestId, true);
+        if (queuedUserMessage) removeQueuedSubmission(threadId, queuedUserMessage.clientRequestId, true);
       }
       setResolutionMessage(code === "uncertain_turn_applied" ? "先前请求已出现在 Session 中，未重复发送；请查看 Timeline。" : `无法确认先前请求状态：${error.message}`);
       void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -365,38 +399,51 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const interrupt = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/interrupt`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }) });
 
   const lastAttemptedQueuedId = useRef<string | null>(null);
-  const lastAttemptedQueuedMessageId = useRef<string | null>(null);
-  const runQueuedCommand = useCallback(async () => {
-    if (!queuedSlashCommand || running || blocked || lastAttemptedQueuedId.current === queuedSlashCommand.clientRequestId) return;
-    lastAttemptedQueuedId.current = queuedSlashCommand.clientRequestId;
+  useEffect(() => {
+    if (!queuedSubmission || !activeTurnId || queuedTurnBarrier) return;
+    setStoredQueuedTurnBarrier(threadId, { clientRequestId: queuedSubmission.clientRequestId, previousLatestTurnId: latestTurnId, turnId: activeTurnId });
+  }, [activeTurnId, latestTurnId, queuedSubmission, queuedTurnBarrier, setStoredQueuedTurnBarrier, threadId]);
+  useEffect(() => {
+    if (!queuedTurnBarrier) return;
+    const next = advanceQueuedTurnBarrier(queuedTurnBarrier, { runtimeState, activeTurnId, latestTurnId, latestTurnStatus });
+    if (next !== queuedTurnBarrier) setStoredQueuedTurnBarrier(threadId, next);
+  }, [activeTurnId, latestTurnId, latestTurnStatus, queuedTurnBarrier, runtimeState, setStoredQueuedTurnBarrier, threadId]);
+  const runQueuedSubmission = useCallback(async () => {
+    if (!queuedSubmission || running || blocked || pendingSubmission || queuedTurnBarrier || sendQueuedMessage.isPending || queuedCommandPendingId || lastAttemptedQueuedId.current === queuedSubmission.clientRequestId) return;
+    if (!isQueuedTimelineSettled(null, { latestTurnId, latestTurnStatus })) return;
+    lastAttemptedQueuedId.current = queuedSubmission.clientRequestId;
+    if (queuedSubmission.kind === "message") { sendQueuedMessage.mutate(queuedSubmission); return; }
+    setQueuedCommandPendingId(queuedSubmission.clientRequestId);
     try {
-      await executeSlashCommand(queuedSlashCommand.raw, queuedSlashCommand.clientRequestId);
-      clearQueuedSlashCommand(threadId, queuedSlashCommand.clientRequestId);
+      const parsed = parseSlashCommand(queuedSubmission.raw);
+      const startsTurn = parsed?.name === "compact" || parsed?.name === "review";
+      const result = await executeSlashCommand(queuedSubmission.raw, queuedSubmission.clientRequestId);
+      if (result.queuedSettings) applyQueuedSettings(threadId, result.queuedSettings);
+      if (startsTurn) {
+        setStoredQueuedTurnBarrier(threadId, { clientRequestId: queuedSubmission.clientRequestId, previousLatestTurnId: latestTurnId, ...(result.turnId ? { turnId: result.turnId } : {}) });
+        void queryClient.invalidateQueries({ queryKey: ["session", threadId] });
+      }
+      removeQueuedSubmission(threadId, queuedSubmission.clientRequestId);
     } catch (error) {
       setFeedback({ tone: "error", text: error instanceof Error ? error.message : "排队命令执行失败。" });
+    } finally {
+      setQueuedCommandPendingId(null);
     }
-  }, [blocked, clearQueuedSlashCommand, executeSlashCommand, queuedSlashCommand, running, threadId]);
-  useEffect(() => { void runQueuedCommand(); }, [runQueuedCommand]);
-
-  const runQueuedMessage = useCallback(() => {
-    if (!queuedUserMessage || running || blocked || sendQueuedMessage.isPending || lastAttemptedQueuedMessageId.current === queuedUserMessage.clientRequestId) return;
-    lastAttemptedQueuedMessageId.current = queuedUserMessage.clientRequestId;
-    sendQueuedMessage.mutate(queuedUserMessage);
-  }, [blocked, queuedUserMessage, running, sendQueuedMessage]);
-  useEffect(() => { runQueuedMessage(); }, [runQueuedMessage]);
-  useEffect(() => { if (!queuedUserMessage) lastAttemptedQueuedMessageId.current = null; }, [queuedUserMessage]);
+  }, [applyQueuedSettings, blocked, executeSlashCommand, latestTurnId, latestTurnStatus, pendingSubmission, queryClient, queuedCommandPendingId, queuedSubmission, queuedTurnBarrier, removeQueuedSubmission, running, sendQueuedMessage, setStoredQueuedTurnBarrier, threadId]);
+  useEffect(() => { void runQueuedSubmission(); }, [runQueuedSubmission]);
+  useEffect(() => { if (!queuedSubmission) lastAttemptedQueuedId.current = null; }, [queuedSubmission]);
 
   const queueCommand = useCallback((raw: string) => {
-    if (queuedSlashCommand || queuedUserMessage) { setFeedback({ tone: "error", text: "当前 Session 已有一项排队内容；请先取消或等待执行。" }); return; }
-    const command = { raw: raw.trim(), clientRequestId: newClientRequestId(), createdAt: Date.now() };
+    const command: QueuedSubmission = { kind: "command", raw: raw.trim(), clientRequestId: newClientRequestId(), createdAt: Date.now() };
     steerDraftTurnId.current = null;
-    queueSlashCommand(threadId, command); updateDraft(""); setFeedback({ tone: "info", text: `${command.raw} 将在当前 Turn 完成后自动执行。` });
-  }, [queueSlashCommand, queuedSlashCommand, queuedUserMessage, threadId, updateDraft]);
+    enqueueSubmission(threadId, command); updateDraft(""); setFeedback({ tone: "info", text: `${command.raw} 已加入队列第 ${queuedSubmissions.length + 1} 项。` });
+    if (activeTurnId && !queuedTurnBarrier) setStoredQueuedTurnBarrier(threadId, { clientRequestId: command.clientRequestId, previousLatestTurnId: latestTurnId, turnId: activeTurnId });
+  }, [activeTurnId, enqueueSubmission, latestTurnId, queuedSubmissions.length, queuedTurnBarrier, setStoredQueuedTurnBarrier, threadId, updateDraft]);
 
   const queueMessage = useCallback((raw: string) => {
-    if (queuedSlashCommand || queuedUserMessage) { setFeedback({ tone: "error", text: "当前 Session 已有一项排队内容；请先取消或等待执行。" }); return; }
     const text = raw.trim();
-    const message: QueuedUserMessage = {
+    const message: QueuedSubmission = {
+      kind: "message",
       text,
       attachments: [...attachments],
       skillNames: referencedSkillNames(text, skills.data ?? []),
@@ -409,8 +456,9 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       createdAt: Date.now(),
     };
     steerDraftTurnId.current = null;
-    queueUserMessage(threadId, message); updateDraft(""); setAttachments([]); setFeedback({ tone: "info", text: "需求已排队，将在当前 Turn 完成后自动发送。" });
-  }, [accessMode, attachments, model, queueUserMessage, queuedSlashCommand, queuedUserMessage, reasoning, serviceTier, skills.data, threadId, updateDraft]);
+    enqueueSubmission(threadId, message); updateDraft(""); setAttachments([]); setFeedback({ tone: "info", text: `需求已加入队列第 ${queuedSubmissions.length + 1} 项。` });
+    if (activeTurnId && !queuedTurnBarrier) setStoredQueuedTurnBarrier(threadId, { clientRequestId: message.clientRequestId, previousLatestTurnId: latestTurnId, turnId: activeTurnId });
+  }, [accessMode, activeTurnId, attachments, enqueueSubmission, latestTurnId, model, queuedSubmissions.length, queuedTurnBarrier, reasoning, serviceTier, setStoredQueuedTurnBarrier, skills.data, threadId, updateDraft]);
 
   const rememberSteerIntent = () => { if (deliveryMode === "steer" && running && activeTurnId) steerDraftTurnId.current ??= activeTurnId; };
   const submit = () => {
@@ -466,19 +514,36 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     else submit();
   };
 
-  const cancelQueuedMessage = () => {
-    if (!queuedUserMessage) return;
-    clearQueuedUserMessage(threadId, queuedUserMessage.clientRequestId);
-    void Promise.all((queuedUserMessage.attachments ?? []).map((attachment) => endpoints.removeAttachment(attachment.id).catch(() => undefined)));
+  const cancelQueuedSubmission = (submission: QueuedSubmission) => {
+    if (submission.clientRequestId === queuedSubmission?.clientRequestId) {
+      lastAttemptedQueuedId.current = null;
+      sendQueuedMessage.reset();
+    }
+    removeQueuedSubmission(threadId, submission.clientRequestId);
+    if (submission.kind === "message") void Promise.all((submission.attachments ?? []).map((attachment) => endpoints.removeAttachment(attachment.id).catch(() => undefined)));
   };
-  const queuedMessageSummary = queuedUserMessage
-    ? queuedUserMessage.text || (queuedUserMessage.attachments ?? []).map((attachment) => attachment.name).join("、")
-    : "";
+  const queuedSubmissionSummary = (submission: QueuedSubmission) => submission.kind === "command"
+    ? submission.raw
+    : submission.text || (submission.attachments ?? []).map((attachment) => attachment.name).join("、");
+  const queuedSubmissionStatus = (submission: QueuedSubmission, index: number) => {
+    if (index > 0) return "等待前面的队列项";
+    if (queuedTurnBarrier) return queuedTurnBarrier.turnId ? "等待当前 Turn 完成" : "正在同步 Turn 状态";
+    if (submission.kind === "message" && sendQueuedMessage.isPending) return "正在发送下一 Turn";
+    if (submission.kind === "command" && queuedCommandPendingId === submission.clientRequestId) return "正在执行";
+    if (lastAttemptedQueuedId.current === submission.clientRequestId && !running) return submission.kind === "message" ? "发送失败，可重试" : "执行失败，可重试";
+    return running ? submission.kind === "message" ? "将在当前 Turn 完成后自动发送" : "将在当前 Turn 完成后自动执行" : "正在等待执行";
+  };
 
   return <div className={`composer-wrap ${compact ? "compact" : ""}`}>
     {uncertainTurnStart && <div className="uncertain-turn"><WarningCircle size={16} weight="fill" /><span>Codex 未确认上一条消息是否开始执行。为避免重复任务，请先显式核实；当前草稿不会丢失。</span><button disabled={resolveUncertainTurn.isPending} onClick={() => resolveUncertainTurn.mutate()}>{resolveUncertainTurn.isPending ? "正在核实…" : "确认未执行，恢复输入"}</button></div>}
-    {queuedSlashCommand && <div className="queued-command-banner"><ClockCounterClockwise size={15} weight="fill" /><span><strong>{queuedSlashCommand.raw}</strong>{running ? "将在当前 Turn 完成后自动执行" : "正在等待执行"}</span>{!running && <button onClick={() => { lastAttemptedQueuedId.current = null; void runQueuedCommand(); }}>重试</button>}<button className="icon-only" aria-label="取消排队命令" onClick={() => clearQueuedSlashCommand(threadId, queuedSlashCommand.clientRequestId)}><X size={13} /></button></div>}
-    {queuedUserMessage && <div className="queued-command-banner queued-message-banner"><ClockCounterClockwise size={15} weight="fill" /><span><strong>{queuedMessageSummary}</strong>{running ? "将在当前 Turn 完成后自动发送" : sendQueuedMessage.isPending ? "正在发送下一 Turn" : sendQueuedMessage.isError ? "发送失败，可重试" : "正在等待发送"}</span>{!running && !sendQueuedMessage.isPending && <button onClick={() => { lastAttemptedQueuedMessageId.current = null; sendQueuedMessage.reset(); runQueuedMessage(); }}>重试</button>}<button className="icon-only" aria-label="取消排队需求" disabled={sendQueuedMessage.isPending} onClick={cancelQueuedMessage}><X size={13} /></button></div>}
+    {!!queuedSubmissions.length && <div className="queued-submission-list" aria-label={`排队内容，共 ${queuedSubmissions.length} 项`}>
+      <div className="queued-submission-heading"><ClockCounterClockwise size={15} weight="fill" /><span>排队内容</span><small>{queuedSubmissions.length} 项</small></div>
+      {queuedSubmissions.map((submission, index) => {
+        const isHead = index === 0; const pending = isHead && (sendQueuedMessage.isPending || queuedCommandPendingId === submission.clientRequestId);
+        const canRetry = isHead && !running && !pending && !queuedTurnBarrier && lastAttemptedQueuedId.current === submission.clientRequestId;
+        return <div className={`queued-command-banner ${submission.kind === "message" ? "queued-message-banner" : ""}`} key={submission.clientRequestId}><b>{index + 1}</b><span><strong>{queuedSubmissionSummary(submission)}</strong>{queuedSubmissionStatus(submission, index)}</span>{canRetry && <button onClick={() => { lastAttemptedQueuedId.current = null; sendQueuedMessage.reset(); void runQueuedSubmission(); }}>重试</button>}<button className="icon-only" aria-label={`取消第 ${index + 1} 项排队${submission.kind === "message" ? "需求" : "命令"}`} disabled={pending} onClick={() => cancelQueuedSubmission(submission)}><X size={13} /></button></div>;
+      })}
+    </div>}
     <div className="composer-shell">
       {menu && <div className="composer-suggestion-menu" role="listbox" aria-label={menu.title}><header><span>{menu.kind === "skill" ? <Cube size={14} /> : <Command size={14} />}{menu.title}</span><small>{menu.options.length} 项</small></header><div className="composer-suggestion-list">{menu.options.length ? menu.options.map((option, index) => <button key={option.key} role="option" aria-selected={index === menuIndex} className={index === menuIndex ? "selected" : ""} onMouseDown={(event) => { event.preventDefault(); selectMenuOption(option); }}><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.meta && <code>{option.meta}</code>}</button>) : <div className="composer-suggestion-empty">没有匹配项</div>}</div><footer>{menu.hint}</footer></div>}
       <div className={`composer ${running ? `${deliveryMode}-mode` : ""} ${draggingFiles ? "dragging-files" : ""}`} onDragEnter={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDraggingFiles(true); } }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingFiles(false); }} onDrop={(event) => { event.preventDefault(); setDraggingFiles(false); void uploadFiles([...event.dataTransfer.files]); }}>
@@ -491,14 +556,14 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
           {Array.from({ length: uploadingCount }, (_, index) => <div className="attachment-chip uploading" key={`uploading-${index}`}><span className="attachment-file-icon"><SpinnerGap className="spinning" size={18} /></span><span className="attachment-copy"><strong>正在上传</strong><small>请稍候</small></span></div>)}
         </div>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
-        <textarea ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入下一轮需求；当前 Turn 完成后自动发送" : running ? "追加到当前 Turn；Slash 命令会排到下一轮" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
+        <textarea ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
-          <div className="access-control"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><span aria-hidden="true">{accessModeLabel(accessMode)}</span><select aria-label="权限" value={accessMode} onChange={(event) => { const next = event.target.value as AccessMode; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div>
+          <div className="access-control"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><span aria-hidden="true">{accessModeLabel(accessMode)}</span><select aria-label="权限" value={accessMode} onChange={(event) => { const next = event.target.value as AccessMode; effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div>
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
-              <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked || modelSelectOptions.length === 0} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); setModel(next); setReasoning(preferredReasoningForModel(option)); setServiceTier((current) => serviceTierForModel(option, current)); }} />
-              <SettingsSelect className="reasoning-select" variant="reasoning" ariaLabel="Reasoning effort" menuLabel="Reasoning effort" value={reasoning} options={reasoningSelectOptions} placeholder="Reasoning" disabled={running || blocked || reasoningSelectOptions.length === 0} onValueChange={setReasoning} />
-              {fastServiceTier && <button type="button" className={`service-tier-toggle ${fastMode ? "active" : ""}`} role="switch" aria-checked={fastMode} aria-label={`Fast 模式${fastMode ? "已开启" : "已关闭"}`} title={`${fastServiceTier.name}：${fastServiceTier.description}`} disabled={running || blocked} onClick={() => setServiceTier(fastMode ? null : fastServiceTier.id)}><Lightning size={13} weight={fastMode ? "fill" : "regular"} /><span>{fastServiceTier.name}</span></button>}
+              <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked || modelSelectOptions.length === 0} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); const nextReasoning = preferredReasoningForModel(option); const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier); effectiveSettings.current = { ...effectiveSettings.current, model: next, reasoning: nextReasoning, serviceTier: nextServiceTier }; setModel(next); setReasoning(nextReasoning); setServiceTier(nextServiceTier); }} />
+              <SettingsSelect className="reasoning-select" variant="reasoning" ariaLabel="Reasoning effort" menuLabel="Reasoning effort" value={reasoning} options={reasoningSelectOptions} placeholder="Reasoning" disabled={running || blocked || reasoningSelectOptions.length === 0} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, reasoning: next }; setReasoning(next); }} />
+              {fastServiceTier && <button type="button" className={`service-tier-toggle ${fastMode ? "active" : ""}`} role="switch" aria-checked={fastMode} aria-label={`Fast 模式${fastMode ? "已开启" : "已关闭"}`} title={`${fastServiceTier.name}：${fastServiceTier.description}`} disabled={running || blocked} onClick={() => { const next = fastMode ? null : fastServiceTier.id; effectiveSettings.current = { ...effectiveSettings.current, serviceTier: next }; setServiceTier(next); }}><Lightning size={13} weight={fastMode ? "fill" : "regular"} /><span>{fastServiceTier.name}</span></button>}
             </div>
             <div className="composer-actions">
               <input ref={fileInput} className="attachment-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => void uploadFiles([...(event.target.files ?? [])])} />

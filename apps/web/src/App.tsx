@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
-import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
+import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, Trash, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import type { Preferences, Project, SessionSummary, TurnUiEventPayload, UiEvent } from "@codex-web/shared-types";
@@ -20,6 +20,7 @@ import { playCompletionNotificationSound, preloadCompletionNotificationSound, un
 import { queryClient } from "./main";
 import { useAppStore } from "./store";
 import { ProjectDirectoryDialog } from "./components/ProjectDirectoryDialog";
+import { ConfirmationDialog } from "./components/ActionDialog";
 import { SessionPane } from "./components/SessionPane";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -80,11 +81,14 @@ export function App() {
   const selectedThreadId = threadIdFromPath(location.pathname); const [search, setSearch] = useState(""); const [mobilePane, setMobilePane] = useState<"main" | "side">("main"); const [sidebarOpen, setSidebarOpen] = useState(false); const [autoOpenSuppressed, setAutoOpenSuppressed] = useState(false);
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [removingProject, setRemovingProject] = useState<Project | null>(null);
+  const [projectRemovePending, setProjectRemovePending] = useState(false);
+  const [projectRemoveError, setProjectRemoveError] = useState<string | null>(null);
   const [sideCloseError, setSideCloseError] = useState<string | null>(null);
   const [sessionCreateError, setSessionCreateError] = useState<string | null>(null);
   const [turnNotificationsEnabled, setTurnNotificationsEnabled] = useState(readTurnCompletionNotificationsEnabled);
   const [notificationPermission, setNotificationPermission] = useState<BrowserNotificationPermission>(currentBrowserNotificationPermission);
-  const initialized = useRef(false); const lastFocusScan = useRef(0); const modalFocusSuppressed = useRef(false); const autoOpenSuppressedRef = useRef(false); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
+  const initialized = useRef(false); const lastFocusScan = useRef(0); const autoOpenSuppressedRef = useRef(false); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
   const sessionCreationInFlight = useRef(false);
   const restoreMainComposerFocus = useRef(false); const focusOrigin = useRef<Element | null>(null); const focusTimers = useRef<number[]>([]);
   const bindMainComposer = useCallback((element: HTMLTextAreaElement | null) => { mainComposerRef.current = element; }, []);
@@ -310,7 +314,7 @@ export function App() {
   useEffect(() => {
     const onFocus = () => {
       const now = Date.now();
-      if (!shouldRunFocusRescan({ now, lastScanAt: lastFocusScan.current, modalFocusSuppressed: modalFocusSuppressed.current })) return;
+      if (!shouldRunFocusRescan({ now, lastScanAt: lastFocusScan.current })) return;
       lastFocusScan.current = now;
       void Promise.allSettled(projects.map((project) => api(`/api/projects/${project.id}/rescan`, {
         method: "POST",
@@ -389,15 +393,15 @@ export function App() {
     const [moved] = ordered.splice(from, 1); if (!moved) return; ordered.splice(to, 0, moved);
     await Promise.all(ordered.map((project, index) => api(`/api/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ orderIndex: index, clientRequestId: newClientRequestId() }) }))); void client.invalidateQueries({ queryKey: ["projects"] });
   };
-  const removeProject = async (project: Project) => {
-    modalFocusSuppressed.current = true;
-    let confirmed: boolean;
-    try {
-      confirmed = window.confirm(`从侧边栏移除 ${project.name}？目录和 Codex Session 不会被删除。`);
-    } finally {
-      window.setTimeout(() => { modalFocusSuppressed.current = false; }, 0);
-    }
-    if (!confirmed) return;
+  const requestRemoveProject = (project: Project) => {
+    setProjectRemoveError(null);
+    setRemovingProject(project);
+  };
+  const removeProject = async () => {
+    const project = removingProject;
+    if (!project || projectRemovePending) return;
+    setProjectRemovePending(true);
+    setProjectRemoveError(null);
     const removedSelectedProject = selected?.projectId === project.id;
     if (removedSelectedProject) {
       suppressAutoOpen(true);
@@ -409,6 +413,7 @@ export function App() {
     }
     try {
       await api(`/api/projects/${project.id}`, { method: "DELETE", body: JSON.stringify({ clientRequestId: newClientRequestId() }) });
+      setRemovingProject(null);
       if (settingsProject?.id === project.id) setSettingsProject(null);
       await Promise.all([
         client.invalidateQueries({ queryKey: ["bootstrap"] }),
@@ -416,7 +421,10 @@ export function App() {
         client.invalidateQueries({ queryKey: ["sessions"] }),
       ]);
       if (removedSelectedProject && selectedThreadId) client.removeQueries({ queryKey: ["session", selectedThreadId] });
+    } catch (error) {
+      setProjectRemoveError(error instanceof Error ? error.message : "移除 Project 失败");
     } finally {
+      setProjectRemovePending(false);
       if (removedSelectedProject) suppressAutoOpen(false);
     }
   };
@@ -467,7 +475,7 @@ export function App() {
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
   if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
-  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} codeServer={codeServer} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={(project) => void removeProject(project)} onPin={pinSession} onArchive={archiveFromSidebar} />
+  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} codeServer={codeServer} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={requestRemoveProject} onPin={pinSession} onArchive={archiveFromSidebar} />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
         {sessionCreateError && <div className="workspace-error"><WarningCircle size={15} weight="fill" /><span>{sessionCreateError}</span><button onClick={() => setSessionCreateError(null)} aria-label="关闭新建 Session 错误"><X size={14} /></button></div>}
@@ -475,9 +483,9 @@ export function App() {
       </div>}
       <div className={`workspace-layout ${sideThreadId ? "with-side-chat" : ""} ${parallelWriteWarning ? "has-parallel-warning" : ""}`} style={sideThreadId ? { "--side-width": `${preferences?.sideChatWidth ?? 42}%` } as CSSProperties : undefined}>
         {sideThreadId && <div className="compact-workspace-header"><div className="mobile-pane-tabs" role="group" aria-label="选择聊天面板"><button type="button" aria-pressed={mobilePane === "main"} aria-controls="main-session-pane" className={mobilePane === "main" ? "active" : ""} onClick={() => setMobilePane("main")}>Main Session</button><button type="button" aria-pressed={mobilePane === "side"} aria-controls="side-chat-pane" className={mobilePane === "side" ? "active" : ""} onClick={() => setMobilePane("side")}>Side Chat</button></div>{parallelWriteWarning && <div className="compact-parallel-warning"><WarningCircle size={14} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}</div>}
-        <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} codeServer={codeServer} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
-        {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div id="side-chat-pane" className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} codeServer={codeServer} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
+        <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane key={selectedThreadId} threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} codeServer={codeServer} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
+        {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div id="side-chat-pane" className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane key={sideThreadId} threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} codeServer={codeServer} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
-    </main><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} />
+    </main><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /><ConfirmationDialog open={!!removingProject} title="移除 Project" description={removingProject ? `从侧边栏移除“${removingProject.name}”？目录和 Codex Session 不会被删除。` : ""} icon={<Trash size={18} weight="fill" />} pending={projectRemovePending} error={projectRemoveError} confirmLabel="确认移除" onOpenChange={(open) => { if (!open) { setRemovingProject(null); setProjectRemoveError(null); } }} onConfirm={() => void removeProject()} />
   </div>;
 }

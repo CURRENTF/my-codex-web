@@ -202,9 +202,13 @@ test("creates, renames, and archives without waiting for a slow Session list ref
     const archivedThreadId = archivedUrl.split("/sessions/")[1]!;
     const sessionRow = page.locator(`.session-row-shell[data-thread-id="${archivedThreadId}"]`);
 
-    page.once("dialog", (dialog) => dialog.accept("FAST_CACHE_RENAME"));
     await page.getByRole("button", { name: "更多" }).click();
     await page.getByRole("menuitem", { name: "重命名" }).click();
+    const renameDialog = page.getByRole("dialog", { name: "重命名 Session" });
+    await expect(renameDialog).toBeVisible();
+    await renameDialog.getByLabel("Session 名称").fill("FAST_CACHE_RENAME");
+    await renameDialog.getByRole("button", { name: "保存名称" }).click();
+    await expect(renameDialog).not.toBeVisible();
     await expect(sessionRow).toContainText("FAST_CACHE_RENAME", { timeout: 5_000 });
 
     await page.getByRole("button", { name: "更多" }).click();
@@ -277,6 +281,47 @@ test("streams model tool activity into the timeline without a refresh", async ({
   await expect(page.locator(".user-message").filter({ hasText: retainedSteer })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".composer textarea")).toHaveValue("");
   await expect(page.locator(".turn-block")).toHaveCount(3);
+});
+
+test("queues multiple requirements and dispatches them in FIFO order", async ({ page }) => {
+  test.setTimeout(180_000);
+  await ensureProject(page);
+  const sidebar = page.locator(".sidebar");
+  test.skip(!(await sidebar.isVisible()), "Requires the isolated, logged-in E2E CODEX_HOME");
+  await page.waitForURL(/\/sessions\//, { timeout: 30_000 });
+  const previousSessionUrl = page.url();
+  await Promise.all([
+    page.waitForURL((url) => /\/sessions\//.test(url.pathname) && url.toString() !== previousSessionUrl, { timeout: 30_000 }),
+    page.getByRole("button", { name: "新建 Session", exact: true }).click(),
+  ]);
+
+  await page.locator(".composer textarea").fill("请调用 shell 工具执行 sleep 4，然后只回复 QUEUE_BASE_DONE。不要修改文件。");
+  await page.getByRole("button", { name: "发送或执行命令", exact: true }).click();
+  await expect(page.getByRole("button", { name: "停止当前 Turn", exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("switch", { name: "需求发送方式：Steer" }).click();
+
+  await page.locator(".composer textarea").fill("只回复 QUEUE_FIRST_DONE，不要调用工具。");
+  await page.getByRole("button", { name: "排到下一 Turn", exact: true }).click();
+  await page.locator(".composer textarea").fill("只回复 QUEUE_SECOND_DONE，不要调用工具。");
+  await page.getByRole("button", { name: "排到下一 Turn", exact: true }).click();
+
+  const queue = page.getByLabel("排队内容，共 2 项");
+  await expect(queue).toBeVisible();
+  await expect(queue.locator(".queued-command-banner").nth(0)).toContainText("QUEUE_FIRST_DONE");
+  await expect(queue.locator(".queued-command-banner").nth(1)).toContainText("QUEUE_SECOND_DONE");
+
+  await expect(page.locator(".agent-message").filter({ hasText: "QUEUE_BASE_DONE" })).toBeVisible({ timeout: 90_000 });
+  await expect(page.locator(".agent-message").filter({ hasText: "QUEUE_FIRST_DONE" })).toBeVisible({ timeout: 90_000 });
+  await expect(page.locator(".agent-message").filter({ hasText: "QUEUE_SECOND_DONE" })).toBeVisible({ timeout: 90_000 });
+  await expect(page.locator(".queued-submission-list")).toHaveCount(0);
+  await expect(page.locator(".turn-block")).toHaveCount(3);
+
+  const queuedUserMessages = await page.locator(".user-message").evaluateAll((messages) => messages
+    .map((message) => message.textContent ?? "")
+    .filter((text) => text.includes("QUEUE_FIRST_DONE") || text.includes("QUEUE_SECOND_DONE")));
+  expect(queuedUserMessages).toHaveLength(2);
+  expect(queuedUserMessages[0]).toContain("QUEUE_FIRST_DONE");
+  expect(queuedUserMessages[1]).toContain("QUEUE_SECOND_DONE");
 });
 
 test("renders and resolves a model request_user_input server request", async ({ page }) => {
@@ -801,9 +846,11 @@ test("discovers an existing App Server Session, applies Project defaults, and re
     await expect(page.locator(".access-control select")).toHaveValue("readOnly");
 
     await page.getByRole("button", { name: "项目", exact: true }).click();
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "E2E Defaults Project 更多操作" }).click();
     await page.getByRole("menuitem", { name: "从侧边栏移除" }).click();
+    const removeDialog = page.getByRole("dialog", { name: "移除 Project" });
+    await expect(removeDialog).toContainText("目录和 Codex Session 不会被删除");
+    await removeDialog.getByRole("button", { name: "确认移除" }).click();
     await expect(page.locator(".project-group", { hasText: "E2E Defaults Project" })).toHaveCount(0);
     await expect(page).toHaveURL(/\/$/);
     await expect(stat(projectRoot)).resolves.toBeTruthy();

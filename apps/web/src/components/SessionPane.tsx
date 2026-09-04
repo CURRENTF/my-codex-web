@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { DotsThree, GitFork, ShieldWarning, SidebarSimple, Target, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DotsThree, GitFork, PencilSimple, ShieldWarning, SidebarSimple, Target, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,12 +15,26 @@ import { fetchMergedSession } from "../session-query";
 import { useAppStore } from "../store";
 import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
 import { Composer } from "./Composer";
+import { TextInputDialog } from "./ActionDialog";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import { GoalBar } from "./GoalBar";
 import { PendingBanner } from "./PendingBanner";
 import { StatusIcon, statusText } from "./StatusIcon";
 import { SubagentStatus } from "./SubagentStatus";
 import { Timeline } from "./Timeline";
+
+type ForkRequest = {
+  parentThreadId: string;
+  turnId: string | null;
+  position: "before" | "after";
+  prefill?: string;
+  inheritGoal: boolean;
+  clientRequestId: string;
+};
+
+type PendingFork = Omit<ForkRequest, "inheritGoal"> & {
+  settle(completed: boolean): void;
+};
 
 export function SessionPane({ threadId, project, projects, models, codeServer, sideChat = false, parallelWriteWarning = false, linkedSideChatActive = false, fullAccessNoticeSeen = true, onAcknowledgeFullAccess, onComposerReady, onOpenThread, onOpenSideChat, onCloseSideChat, onArchived }: {
   threadId: string; project: Project; projects: Project[]; models: ModelOption[]; sideChat?: boolean;
@@ -31,37 +45,65 @@ export function SessionPane({ threadId, project, projects, models, codeServer, s
 }) {
   const queryClient = useQueryClient(); const restorePrefill = useAppStore((state) => state.restorePrefill);
   const reconcileOptimisticUserMessages = useAppStore((state) => state.reconcileOptimisticUserMessages);
+  const removeQueuedSubmission = useAppStore((state) => state.removeQueuedSubmission);
   const query = useQuery({ queryKey: ["session", threadId], queryFn: ({ signal }) => fetchMergedSession(queryClient, threadId, signal), refetchInterval: false, retry: sideChat ? false : 2 });
   const liveRuntime = useAppStore((state) => state.runtimes[threadId]); const connectionState = useAppStore((state) => state.connectionState); const payload = query.data;
   const runtime = liveRuntime ?? payload?.runtime; const state: RuntimeState = connectionState === "connected" ? (runtime?.state ?? "idle") : "disconnected";
   const title = sideChat ? "Side Chat" : payload?.thread.name || payload?.thread.preview || "Session";
-  const [pendingFork, setPendingFork] = useState<{ turnId: string | null; position: "before" | "after"; sourceTurnId: string } | null>(null);
+  const [pendingFork, setPendingFork] = useState<PendingFork | null>(null);
   const [inheritGoal, setInheritGoal] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameName, setRenameName] = useState("");
   const [composerAccessMode, setComposerAccessMode] = useState<AccessMode | null>(null);
+  const pendingForkRef = useRef<PendingFork | null>(null);
+  const mountedForThread = useRef(true);
+  useEffect(() => { pendingForkRef.current = pendingFork; }, [pendingFork]);
+  useEffect(() => {
+    mountedForThread.current = true;
+    return () => { mountedForThread.current = false; pendingForkRef.current?.settle(false); };
+  }, [threadId]);
   useEffect(() => setComposerAccessMode(null), [threadId]);
   useEffect(() => {
     if (sideChat) return;
     void api(`/api/sessions/${threadId}/viewed`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) })
       .catch(() => undefined);
   }, [queryClient, sideChat, threadId]);
-  const fork = useMutation({ mutationFn: async ({ turnId, position, sourceTurnId, inheritGoal: shouldInheritGoal }: { turnId: string | null; position: "before" | "after"; sourceTurnId: string; inheritGoal: boolean }) => {
+  const fork = useMutation({ mutationFn: async ({ parentThreadId, turnId, position, prefill, inheritGoal: shouldInheritGoal, clientRequestId }: ForkRequest) => {
     const empty = position === "before" && turnId === null;
-    const prefill = empty ? questionForTurn(payload?.thread.turns ?? [], sourceTurnId) : undefined;
-    const created = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/sessions/${threadId}/forks`, { method: "POST", body: JSON.stringify({ lastTurnId: turnId, empty, prefill, inheritGoal: shouldInheritGoal, clientRequestId: crypto.randomUUID() }) });
+    const created = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/sessions/${parentThreadId}/forks`, { method: "POST", body: JSON.stringify({ lastTurnId: turnId, empty, prefill, inheritGoal: shouldInheritGoal, clientRequestId }) });
     if (prefill) restorePrefill(created.thread.id, prefill);
     return created;
-  }, onSuccess: (result) => { setPendingFork(null); setInheritGoal(false); upsertCachedSessionSummary(queryClient, result.summary); onOpenThread(result.thread.id); }, onError: (error) => {
+  }, onError: (error) => {
     void refreshProjectAvailabilityAfterError(error, (queryKey) => queryClient.invalidateQueries({ queryKey }));
   } });
-  const requestFork = (turnId: string | null, position: "before" | "after", sourceTurnId = turnId ?? "") => {
-    if (payload?.goal) { setPendingFork({ turnId, position, sourceTurnId }); setInheritGoal(false); return; }
-    fork.mutate({ turnId, position, sourceTurnId, inheritGoal: false });
+  const finishFork = (result: { thread: { id: string }; summary: SessionSummary }, request: Pick<ForkRequest, "parentThreadId" | "clientRequestId">) => {
+    removeQueuedSubmission(request.parentThreadId, request.clientRequestId);
+    upsertCachedSessionSummary(queryClient, result.summary);
+    if (!mountedForThread.current) return;
+    setPendingFork(null); setInheritGoal(false); onOpenThread(result.thread.id);
   };
-  const side = useMutation({ mutationFn: (anchorTurnId: string | null) => api<{ threadId: string }>(`/api/sessions/${threadId}/side-chat`, { method: "POST", body: JSON.stringify({ anchorTurnId, clientRequestId: newClientRequestId() }) }), onSuccess: (result) => onOpenSideChat(result.threadId), onError: (error) => {
+  const requestFork = (turnId: string | null, position: "before" | "after", sourceTurnId = turnId ?? "", clientRequestId = newClientRequestId()): Promise<boolean> => {
+    const empty = position === "before" && turnId === null;
+    const request = {
+      parentThreadId: threadId,
+      turnId,
+      position,
+      ...(empty ? { prefill: questionForTurn(payload?.thread.turns ?? [], sourceTurnId) } : {}),
+      clientRequestId,
+    };
+    if (payload?.goal) {
+      fork.reset();
+      setInheritGoal(false);
+      return new Promise((settle) => setPendingFork({ ...request, settle }));
+    }
+    return fork.mutateAsync({ ...request, inheritGoal: false }).then((result) => { finishFork(result, request); return true; }, () => false);
+  };
+  const side = useMutation({ mutationFn: ({ parentThreadId, anchorTurnId, clientRequestId }: { parentThreadId: string; anchorTurnId: string | null; clientRequestId: string }) => api<{ threadId: string }>(`/api/sessions/${parentThreadId}/side-chat`, { method: "POST", body: JSON.stringify({ anchorTurnId, clientRequestId }) }), onSuccess: (result) => onOpenSideChat(result.threadId), onError: (error) => {
     void refreshProjectAvailabilityAfterError(error, (queryKey) => queryClient.invalidateQueries({ queryKey }));
   } });
-  const rename = useMutation({ mutationFn: async () => { const name = window.prompt("Session 名称", title); if (!name?.trim()) return null; return api<{ name: string }>(`/api/sessions/${threadId}/name`, { method: "PATCH", body: JSON.stringify({ name: name.trim(), clientRequestId: newClientRequestId() }) }); }, onSuccess: (result) => {
-    if (!result) return;
+  const requestSideChat = (anchorTurnId: string | null, clientRequestId = newClientRequestId()): Promise<boolean> => side.mutateAsync({ parentThreadId: threadId, anchorTurnId, clientRequestId }).then(() => true, () => false);
+  const rename = useMutation({ mutationFn: async (name: string) => api<{ name: string }>(`/api/sessions/${threadId}/name`, { method: "PATCH", body: JSON.stringify({ name, clientRequestId: newClientRequestId() }) }), onSuccess: (result) => {
+    setRenameOpen(false);
     queryClient.setQueryData<SessionPayload>(["session", threadId], (current) => current ? { ...current, thread: { ...current.thread, name: result.name } } : current);
     patchCachedSessionSummary(queryClient, threadId, { title: result.name, updatedAt: Date.now() });
   } });
@@ -75,6 +117,7 @@ export function SessionPane({ threadId, project, projects, models, codeServer, s
     reconcileOptimisticUserMessages(threadId, confirmedClientUserMessageIds(turns));
   }, [canReconcileOptimistic, reconcileOptimisticUserMessages, threadId, turns]);
   const latestCompletedTurnId = useMemo(() => [...turns].reverse().find((turn) => turn.status === "completed")?.id ?? null, [turns]);
+  const latestTurn = turns.at(-1);
   const hasActiveTurn = state === "running" || state === "waitingForInput";
   const activeStartedAt = useMemo(() => turns.find((turn) => turn.status === "inProgress")?.startedAt ?? null, [turns]);
   const [now, setNow] = useState(Date.now());
@@ -93,22 +136,22 @@ export function SessionPane({ threadId, project, projects, models, codeServer, s
     <header className="session-header"><div className="breadcrumb"><span className="breadcrumb-project" title={projectLabel}>{projectLabel}</span><span className="breadcrumb-separator" aria-hidden="true">/</span><strong title={title}>{title}</strong></div><div className="header-status"><StatusIcon state={state} /><span>{statusText(state)}{elapsed !== null && (state === "running" || state === "waitingForInput") ? ` ${elapsed}s` : ""}</span></div><span className="header-spacer" /><ContextUsageIndicator usage={runtime?.contextUsage} />
       {!sideChat && <GoalBar threadId={threadId} goal={payload.goal} disabled={sessionDisconnected} />}
       <SubagentStatus parentThreadId={threadId} rootSettings={payload.settings} />
-      {!sideChat && <button className="header-button" onClick={() => side.mutate(null)} disabled={side.isPending || !branchActionsAvailable}><SidebarSimple size={16} />Side Chat</button>}
+      {!sideChat && <button className="header-button" onClick={() => void requestSideChat(null)} disabled={side.isPending || !branchActionsAvailable}><SidebarSimple size={16} />Side Chat</button>}
       {!sideChat && (codeServer.state === "available" && codeServer.url
         ? <a className="header-button" href={codeServerFolderUrl(codeServer.url, payload.thread.cwd)} target="_blank" rel="noreferrer" title="在 code-server 中打开"><TerminalWindow size={16} />code</a>
         : <button className="header-button unavailable" disabled title={codeServer.state === "checking" ? "正在检查 code-server" : codeServer.state === "unconfigured" ? "未配置 code-server" : "code-server 当前不可用"}><TerminalWindow size={16} />code</button>)}
-      {sideChat ? <button className="icon-button" onClick={onCloseSideChat} aria-label="关闭 Side Chat"><X size={17} /></button> : <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="icon-button" aria-label="更多"><DotsThree size={20} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end"><DropdownMenu.Item className="menu-item" disabled={sessionDisconnected || rename.isPending} onSelect={() => rename.mutate()}>重命名</DropdownMenu.Item><DropdownMenu.Sub><DropdownMenu.SubTrigger className="menu-item" disabled={hasActiveTurn || sessionDisconnected}>移动到 Project</DropdownMenu.SubTrigger><DropdownMenu.Portal><DropdownMenu.SubContent className="menu-content" sideOffset={6}>{projects.map((candidate) => <DropdownMenu.Item key={candidate.id} className="menu-item" disabled={candidate.id === project.id || !candidate.available} onSelect={() => move.mutate(candidate.id)}>{candidate.name}</DropdownMenu.Item>)}</DropdownMenu.SubContent></DropdownMenu.Portal></DropdownMenu.Sub><DropdownMenu.Item className="menu-item" disabled={!latestCompletedTurnId || !branchActionsAvailable} onSelect={() => requestFork(latestCompletedTurnId, "after")}><GitFork size={14} />Fork 当前最新位置</DropdownMenu.Item><DropdownMenu.Separator className="menu-separator" /><DropdownMenu.Item className="menu-item danger-item" disabled={hasActiveTurn || linkedSideChatActive || sessionDisconnected} onSelect={() => archive.mutate()}>归档</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>}
+      {sideChat ? <button className="icon-button" onClick={onCloseSideChat} aria-label="关闭 Side Chat"><X size={17} /></button> : <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="icon-button" aria-label="更多"><DotsThree size={20} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end"><DropdownMenu.Item className="menu-item" disabled={sessionDisconnected || rename.isPending} onSelect={() => { rename.reset(); setRenameName(title); setRenameOpen(true); }}>重命名</DropdownMenu.Item><DropdownMenu.Sub><DropdownMenu.SubTrigger className="menu-item" disabled={hasActiveTurn || sessionDisconnected}>移动到 Project</DropdownMenu.SubTrigger><DropdownMenu.Portal><DropdownMenu.SubContent className="menu-content" sideOffset={6}>{projects.map((candidate) => <DropdownMenu.Item key={candidate.id} className="menu-item" disabled={candidate.id === project.id || !candidate.available} onSelect={() => move.mutate(candidate.id)}>{candidate.name}</DropdownMenu.Item>)}</DropdownMenu.SubContent></DropdownMenu.Portal></DropdownMenu.Sub><DropdownMenu.Item className="menu-item" disabled={!latestCompletedTurnId || !branchActionsAvailable} onSelect={() => void requestFork(latestCompletedTurnId, "after")}><GitFork size={14} />Fork 当前最新位置</DropdownMenu.Item><DropdownMenu.Separator className="menu-separator" /><DropdownMenu.Item className="menu-item danger-item" disabled={hasActiveTurn || linkedSideChatActive || sessionDisconnected} onSelect={() => archive.mutate()}>归档</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>}
     </header>
     <PendingBanner threadId={threadId} />
     <div className="session-notices">
-      {!sideChat && rename.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>重命名失败：{rename.error.message}</span><button onClick={() => rename.reset()} aria-label="关闭重命名错误"><X size={14} /></button></div>}
       {!pendingFork && fork.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Fork 创建失败：{fork.error.message}</span><button onClick={() => fork.reset()} aria-label="关闭 Fork 创建错误"><X size={14} /></button></div>}
       {!sideChat && side.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Side Chat 创建失败：{side.error.message}</span><button onClick={() => side.reset()} aria-label="关闭 Side Chat 创建错误"><X size={14} /></button></div>}
       {shouldShowFullAccessNotice(payload.settings.accessMode, composerAccessMode, fullAccessNoticeSeen) && <div className="full-access-notice"><ShieldWarning size={16} weight="fill" /><span><strong>此 Project 已启用 Full Access</strong>Codex 可以修改工作区外的文件并执行不经逐次审批的命令。</span><button onClick={onAcknowledgeFullAccess}>知道了</button></div>}
       {parallelWriteWarning && <div className="parallel-write-warning"><WarningCircle size={15} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}
     </div>
-    <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} codeServer={codeServer} cwd={payload.thread.cwd} onFork={requestFork} onSideChat={(turnId) => side.mutate(turnId)} /></div>
-    <Composer threadId={threadId} project={project} models={models} runtimeState={state} activeTurnId={runtime?.activeTurnId} uncertainTurnStart={runtime?.uncertainTurnStart} initialSettings={payload.settings} goal={payload.goal} contextUsage={runtime?.contextUsage} latestCompletedTurnId={latestCompletedTurnId} compact={sideChat} disabled={!project.available} onTextareaReady={onComposerReady} onAccessModeChange={setComposerAccessMode} onForkLatest={!sideChat && latestCompletedTurnId ? () => requestFork(latestCompletedTurnId, "after") : undefined} onOpenSideChat={!sideChat ? () => side.mutate(latestCompletedTurnId) : undefined} />
-    <Dialog.Root open={!!pendingFork} onOpenChange={(open) => { if (!open) { setPendingFork(null); setInheritGoal(false); } }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content fork-dialog" aria-describedby="fork-dialog-description"><div className="dialog-heading"><GitFork size={18} weight="fill" /><Dialog.Title>创建 Fork</Dialog.Title></div><Dialog.Description className="dialog-description" id="fork-dialog-description">新 Session 会复制到所选 Turn 边界，并继承当前模型、Reasoning、Fast 模式和权限。</Dialog.Description><label className="goal-inherit-option"><input type="checkbox" checked={inheritGoal} onChange={(event) => setInheritGoal(event.target.checked)} /><span><Target size={16} weight="fill" /><span><strong>继承父 Session 的 Goal</strong><small>默认关闭，避免分叉任务意外推进原目标。</small></span></span></label>{fork.isError && <p className="dialog-error">{fork.error.message}</p>}<div className="dialog-actions"><Dialog.Close asChild><button className="button secondary">取消</button></Dialog.Close><button className="button primary" disabled={fork.isPending || !pendingFork || !branchActionsAvailable} onClick={() => pendingFork && fork.mutate({ ...pendingFork, inheritGoal })}><GitFork size={14} />创建 Fork</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} codeServer={codeServer} cwd={payload.thread.cwd} onFork={(turnId, position, sourceTurnId) => void requestFork(turnId, position, sourceTurnId)} onSideChat={(turnId) => void requestSideChat(turnId)} /></div>
+    <Composer threadId={threadId} project={project} models={models} runtimeState={state} activeTurnId={runtime?.activeTurnId} uncertainTurnStart={runtime?.uncertainTurnStart} initialSettings={payload.settings} goal={payload.goal} contextUsage={runtime?.contextUsage} latestCompletedTurnId={latestCompletedTurnId} latestTurnId={latestTurn?.id ?? null} latestTurnStatus={latestTurn?.status ?? null} compact={sideChat} disabled={!project.available} onTextareaReady={onComposerReady} onAccessModeChange={setComposerAccessMode} onForkLatest={!sideChat && latestCompletedTurnId ? (clientRequestId) => requestFork(latestCompletedTurnId, "after", latestCompletedTurnId, clientRequestId) : undefined} onOpenSideChat={!sideChat ? (clientRequestId) => requestSideChat(latestCompletedTurnId, clientRequestId) : undefined} />
+    {!sideChat && <TextInputDialog open={renameOpen} title="重命名 Session" description="设置一个便于在侧边栏识别的名称。" icon={<PencilSimple size={18} weight="fill" />} label="Session 名称" value={renameName} maxLength={200} pending={rename.isPending} error={rename.isError ? rename.error.message : null} submitLabel="保存名称" onValueChange={setRenameName} onOpenChange={(open) => { setRenameOpen(open); if (!open) rename.reset(); }} onSubmit={() => rename.mutate(renameName.trim())} />}
+    <Dialog.Root open={!!pendingFork} onOpenChange={(open) => { if (!open && !fork.isPending) { pendingFork?.settle(false); setPendingFork(null); setInheritGoal(false); } }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content fork-dialog" aria-describedby="fork-dialog-description" onEscapeKeyDown={(event) => { if (fork.isPending) event.preventDefault(); }} onPointerDownOutside={(event) => { if (fork.isPending) event.preventDefault(); }}><div className="dialog-heading"><GitFork size={18} weight="fill" /><Dialog.Title>创建 Fork</Dialog.Title></div><Dialog.Description className="dialog-description" id="fork-dialog-description">新 Session 会复制到所选 Turn 边界，并继承当前模型、Reasoning、Fast 模式和权限；父 Session 的排队内容不会带入。</Dialog.Description><label className="goal-inherit-option"><input type="checkbox" checked={inheritGoal} disabled={fork.isPending} onChange={(event) => setInheritGoal(event.target.checked)} /><span><Target size={16} weight="fill" /><span><strong>继承父 Session 的 Goal</strong><small>默认关闭，避免分叉任务意外推进原目标。</small></span></span></label>{fork.isError && <p className="dialog-error">{fork.error.message}</p>}<div className="dialog-actions"><Dialog.Close asChild><button className="button secondary" disabled={fork.isPending}>取消</button></Dialog.Close><button className="button primary" disabled={fork.isPending || !pendingFork || !branchActionsAvailable} onClick={() => { const request = pendingFork; if (!request) return; void fork.mutateAsync({ ...request, inheritGoal }).then((result) => { request.settle(true); finishFork(result, request); }, () => undefined); }}><GitFork size={14} />创建 Fork</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </section>;
 }

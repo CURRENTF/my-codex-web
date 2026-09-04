@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { AccessMode, PendingRequestSummary, SideChatRuntime, SubagentRuntime, ThreadRuntime, UiEvent, UploadedAttachment } from "@codex-web/shared-types";
+import type { QueuedTurnBarrier } from "./queued-turn-barrier";
 
 interface AppStore {
   connectionState: "connected" | "connecting" | "disconnected";
@@ -13,20 +14,21 @@ interface AppStore {
   pendingSubmissions: Record<string, { draft: string; clientUserMessageId: string; state: "sending" | "uncertain" | "retryReady" }>;
   optimisticUserMessages: Record<string, OptimisticUserMessage[]>;
   injectedPrefills: Record<string, string>;
-  queuedSlashCommands: Record<string, QueuedSlashCommand>;
-  queuedUserMessages: Record<string, QueuedUserMessage>;
+  queuedSubmissions: Record<string, QueuedSubmission[]>;
+  queuedEffectiveSettings: Record<string, QueuedMessageSettings>;
+  queuedTurnBarriers: Record<string, QueuedTurnBarrier>;
   setDraft(threadId: string, text: string): void;
   beginSubmission(threadId: string, draft: string, clientUserMessageId: string, attachments?: UploadedAttachment[]): void;
   acceptSubmission(threadId: string): void;
   markSubmissionUncertain(threadId: string): void;
   markSubmissionRetryReady(threadId: string, clientUserMessageId?: string): void;
-  finishSubmission(threadId: string, clearDraft: boolean): void;
+  finishSubmission(threadId: string, clearDraft: boolean, returnToQueue?: boolean): void;
   reconcileOptimisticUserMessages(threadId: string, confirmedClientIds: readonly string[]): void;
   restorePrefill(threadId: string, text: string): void;
-  queueSlashCommand(threadId: string, command: QueuedSlashCommand): void;
-  clearQueuedSlashCommand(threadId: string, clientRequestId?: string): void;
-  queueUserMessage(threadId: string, message: QueuedUserMessage): void;
-  clearQueuedUserMessage(threadId: string, clientRequestId?: string, preserveOptimistic?: boolean): void;
+  enqueueSubmission(threadId: string, submission: QueuedSubmission): void;
+  applyQueuedSettings(threadId: string, settings: QueuedMessageSettings): void;
+  setQueuedTurnBarrier(threadId: string, barrier: QueuedTurnBarrier | null): void;
+  removeQueuedSubmission(threadId: string, clientRequestId: string, preserveOptimistic?: boolean): void;
   initialize(runtimes: ThreadRuntime[], sideChats: SideChatRuntime[], deltas?: Record<string, string>, pendingRequests?: PendingRequestSummary[], connectionState?: "connected" | "connecting" | "disconnected", eventSeq?: number, sessionPrefills?: Record<string, string>, subagents?: SubagentRuntime[]): void;
   markDisconnected(): void;
   consume(event: UiEvent): void;
@@ -58,66 +60,167 @@ export interface QueuedUserMessage {
   createdAt: number;
 }
 
-const QUEUED_SLASH_STORAGE_KEY = "codex-web:queued-slash-commands:v1";
-const QUEUED_USER_MESSAGE_STORAGE_KEY = "codex-web:queued-user-messages:v1";
+export type QueuedMessageSettings = Pick<QueuedUserMessage, "model" | "reasoning" | "serviceTier" | "accessMode">;
+export type QueuedSubmission = ({ kind: "command" } & QueuedSlashCommand) | ({ kind: "message" } & QueuedUserMessage);
 
-function readQueuedSlashCommands(): Record<string, QueuedSlashCommand> {
-  if (typeof window === "undefined") return {};
+const QUEUED_SUBMISSIONS_STORAGE_KEY = "codex-web:queued-submissions:v2";
+const QUEUED_EFFECTIVE_SETTINGS_STORAGE_KEY = "codex-web:queued-effective-settings:v1";
+const QUEUED_TURN_BARRIERS_STORAGE_KEY = "codex-web:queued-turn-barriers:v1";
+const LEGACY_QUEUED_SLASH_STORAGE_KEY = "codex-web:queued-slash-commands:v1";
+const LEGACY_QUEUED_USER_MESSAGE_STORAGE_KEY = "codex-web:queued-user-messages:v1";
+
+function parseQueuedSlashCommand(value: unknown): QueuedSlashCommand | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<QueuedSlashCommand>;
+  return typeof candidate.raw === "string" && typeof candidate.clientRequestId === "string" && typeof candidate.createdAt === "number"
+    ? candidate as QueuedSlashCommand
+    : null;
+}
+
+function parseQueuedUserMessage(value: unknown): QueuedUserMessage | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<QueuedUserMessage>;
+  const validAccessMode = candidate.accessMode === "fullAccess" || candidate.accessMode === "workspaceWrite" || candidate.accessMode === "readOnly";
+  const validAttachments = candidate.attachments === undefined || (Array.isArray(candidate.attachments) && candidate.attachments.every((attachment) => attachment && typeof attachment === "object" && typeof attachment.id === "string" && typeof attachment.name === "string"));
+  const validServiceTier = candidate.serviceTier === undefined || candidate.serviceTier === null || typeof candidate.serviceTier === "string";
+  return typeof candidate.text === "string" && Array.isArray(candidate.skillNames) && candidate.skillNames.every((name) => typeof name === "string")
+    && typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validAccessMode && validAttachments
+    && validServiceTier
+    && typeof candidate.clientRequestId === "string" && typeof candidate.clientUserMessageId === "string" && typeof candidate.createdAt === "number"
+    ? { ...candidate, serviceTier: candidate.serviceTier ?? null, attachments: candidate.attachments ?? [] } as QueuedUserMessage
+    : null;
+}
+
+function parseQueuedMessageSettings(value: unknown): QueuedMessageSettings | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<QueuedMessageSettings>;
+  const validAccessMode = candidate.accessMode === "fullAccess" || candidate.accessMode === "workspaceWrite" || candidate.accessMode === "readOnly";
+  const validServiceTier = candidate.serviceTier === null || typeof candidate.serviceTier === "string";
+  return typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validServiceTier && validAccessMode
+    ? candidate as QueuedMessageSettings
+    : null;
+}
+
+function parseQueuedTurnBarrier(value: unknown): QueuedTurnBarrier | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<QueuedTurnBarrier>;
+  const validTurnId = candidate.turnId === undefined || typeof candidate.turnId === "string";
+  return typeof candidate.clientRequestId === "string" && (candidate.previousLatestTurnId === null || typeof candidate.previousLatestTurnId === "string") && validTurnId
+    ? candidate as QueuedTurnBarrier
+    : null;
+}
+
+function parseQueuedSubmission(value: unknown): QueuedSubmission | null {
+  if (!value || typeof value !== "object") return null;
+  const kind = (value as { kind?: unknown }).kind;
+  if (kind === "command") {
+    const command = parseQueuedSlashCommand(value);
+    return command ? { ...command, kind } : null;
+  }
+  if (kind === "message") {
+    const message = parseQueuedUserMessage(value);
+    return message ? { ...message, kind } : null;
+  }
+  return null;
+}
+
+function parseQueuedSubmissionRecord(value: unknown): Record<string, QueuedSubmission[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([threadId, queue]) => {
+    if (!Array.isArray(queue)) return [];
+    const submissions = queue.flatMap((submission) => {
+      const parsed = parseQueuedSubmission(submission);
+      return parsed ? [parsed] : [];
+    });
+    return submissions.length ? [[threadId, submissions]] : [];
+  }));
+}
+
+function parseLegacyRecord<T>(raw: string | null, parse: (value: unknown) => T | null): Record<string, T> {
+  if (!raw) return {};
   try {
-    const value = JSON.parse(window.localStorage.getItem(QUEUED_SLASH_STORAGE_KEY) ?? "{}");
+    const value = JSON.parse(raw);
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).flatMap(([threadId, command]) => {
-      if (!command || typeof command !== "object") return [];
-      const candidate = command as Partial<QueuedSlashCommand>;
-      return typeof candidate.raw === "string" && typeof candidate.clientRequestId === "string" && typeof candidate.createdAt === "number"
-        ? [[threadId, candidate as QueuedSlashCommand]]
-        : [];
+    return Object.fromEntries(Object.entries(value).flatMap(([threadId, item]) => {
+      const parsed = parse(item);
+      return parsed ? [[threadId, parsed]] : [];
     }));
   } catch {
     return {};
   }
 }
 
-function persistQueuedSlashCommands(commands: Record<string, QueuedSlashCommand>): void {
-  if (typeof window === "undefined") return;
-  try { window.localStorage.setItem(QUEUED_SLASH_STORAGE_KEY, JSON.stringify(commands)); } catch { /* storage can be unavailable in private contexts */ }
+function readStorageValue(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try { return window.localStorage.getItem(key); }
+  catch { return null; }
 }
 
-function readQueuedUserMessages(): Record<string, QueuedUserMessage> {
+function readQueuedSubmissions(): Record<string, QueuedSubmission[]> {
   if (typeof window === "undefined") return {};
-  try {
-    const value = JSON.parse(window.localStorage.getItem(QUEUED_USER_MESSAGE_STORAGE_KEY) ?? "{}");
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).flatMap(([threadId, message]) => {
-      if (!message || typeof message !== "object") return [];
-      const candidate = message as Partial<QueuedUserMessage>;
-      const validAccessMode = candidate.accessMode === "fullAccess" || candidate.accessMode === "workspaceWrite" || candidate.accessMode === "readOnly";
-      const validAttachments = candidate.attachments === undefined || (Array.isArray(candidate.attachments) && candidate.attachments.every((attachment) => attachment && typeof attachment === "object" && typeof attachment.id === "string" && typeof attachment.name === "string"));
-      const validServiceTier = candidate.serviceTier === undefined || candidate.serviceTier === null || typeof candidate.serviceTier === "string";
-      return typeof candidate.text === "string" && Array.isArray(candidate.skillNames) && candidate.skillNames.every((name) => typeof name === "string")
-        && typeof candidate.model === "string" && typeof candidate.reasoning === "string" && validAccessMode && validAttachments
-        && validServiceTier
-        && typeof candidate.clientRequestId === "string" && typeof candidate.clientUserMessageId === "string" && typeof candidate.createdAt === "number"
-        ? [[threadId, { ...candidate, serviceTier: candidate.serviceTier ?? null, attachments: candidate.attachments ?? [] } as QueuedUserMessage]]
-        : [];
-    }));
-  } catch {
-    return {};
+  const current = readStorageValue(QUEUED_SUBMISSIONS_STORAGE_KEY);
+  if (current !== null) {
+    try { return parseQueuedSubmissionRecord(JSON.parse(current)); }
+    catch { return {}; }
   }
+  const commands = parseLegacyRecord(readStorageValue(LEGACY_QUEUED_SLASH_STORAGE_KEY), parseQueuedSlashCommand);
+  const messages = parseLegacyRecord(readStorageValue(LEGACY_QUEUED_USER_MESSAGE_STORAGE_KEY), parseQueuedUserMessage);
+  const threadIds = new Set([...Object.keys(commands), ...Object.keys(messages)]);
+  return Object.fromEntries([...threadIds].flatMap((threadId) => {
+    const queue: QueuedSubmission[] = [
+      ...(commands[threadId] ? [{ ...commands[threadId], kind: "command" as const }] : []),
+      ...(messages[threadId] ? [{ ...messages[threadId], kind: "message" as const }] : []),
+    ].sort((left, right) => left.createdAt - right.createdAt);
+    return queue.length ? [[threadId, queue]] : [];
+  }));
 }
 
-function persistQueuedUserMessages(messages: Record<string, QueuedUserMessage>): void {
+function persistQueuedSubmissions(submissions: Record<string, QueuedSubmission[]>): void {
   if (typeof window === "undefined") return;
-  try { window.localStorage.setItem(QUEUED_USER_MESSAGE_STORAGE_KEY, JSON.stringify(messages)); } catch { /* storage can be unavailable in private contexts */ }
+  try {
+    window.localStorage.setItem(QUEUED_SUBMISSIONS_STORAGE_KEY, JSON.stringify(submissions));
+    window.localStorage.removeItem(LEGACY_QUEUED_SLASH_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_QUEUED_USER_MESSAGE_STORAGE_KEY);
+  } catch { /* storage can be unavailable in private contexts */ }
 }
 
-const initialQueuedUserMessages = readQueuedUserMessages();
-const initialQueuedOptimisticMessages = Object.fromEntries(Object.entries(initialQueuedUserMessages).map(([threadId, message]) => [threadId, [{
-  clientUserMessageId: message.clientUserMessageId,
-  text: message.text,
-  ...((message.attachments?.length ?? 0) ? { attachments: message.attachments } : {}),
-  state: "queued" as const,
-}]]));
+const initialQueuedSubmissions = readQueuedSubmissions();
+const storedQueuedEffectiveSettings = typeof window === "undefined"
+  ? {}
+  : parseLegacyRecord(readStorageValue(QUEUED_EFFECTIVE_SETTINGS_STORAGE_KEY), parseQueuedMessageSettings);
+const initialQueuedEffectiveSettings = Object.fromEntries(Object.entries(initialQueuedSubmissions).flatMap(([threadId, queue]) => {
+  const firstMessage = queue.find((submission): submission is Extract<QueuedSubmission, { kind: "message" }> => submission.kind === "message");
+  const settings = storedQueuedEffectiveSettings[threadId] ?? (firstMessage ? {
+    model: firstMessage.model,
+    reasoning: firstMessage.reasoning,
+    serviceTier: firstMessage.serviceTier,
+    accessMode: firstMessage.accessMode,
+  } : undefined);
+  return settings ? [[threadId, settings]] : [];
+}));
+function persistQueuedEffectiveSettings(settings: Record<string, QueuedMessageSettings>): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(QUEUED_EFFECTIVE_SETTINGS_STORAGE_KEY, JSON.stringify(settings)); }
+  catch { /* storage can be unavailable in private contexts */ }
+}
+const storedQueuedTurnBarriers = typeof window === "undefined"
+  ? {}
+  : parseLegacyRecord(readStorageValue(QUEUED_TURN_BARRIERS_STORAGE_KEY), parseQueuedTurnBarrier);
+const initialQueuedTurnBarriers = Object.fromEntries(Object.entries(storedQueuedTurnBarriers).filter(([threadId]) => initialQueuedSubmissions[threadId]?.length));
+function persistQueuedTurnBarriers(barriers: Record<string, QueuedTurnBarrier>): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(QUEUED_TURN_BARRIERS_STORAGE_KEY, JSON.stringify(barriers)); }
+  catch { /* storage can be unavailable in private contexts */ }
+}
+const initialQueuedOptimisticMessages = Object.fromEntries(Object.entries(initialQueuedSubmissions).flatMap(([threadId, queue]) => {
+  const messages = queue.flatMap((submission): OptimisticUserMessage[] => submission.kind === "message" ? [{
+    clientUserMessageId: submission.clientUserMessageId,
+    text: submission.text,
+    ...(submission.attachments?.length ? { attachments: submission.attachments } : {}),
+    state: "queued",
+  }] : []);
+  return messages.length ? [[threadId, messages]] : [];
+}));
 
 function withoutOptimisticMessages(
   messagesByThread: Record<string, OptimisticUserMessage[]>,
@@ -136,7 +239,7 @@ function withoutOptimisticMessages(
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, subagents: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSlashCommands: readQueuedSlashCommands(), queuedUserMessages: initialQueuedUserMessages,
+  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, subagents: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSubmissions: initialQueuedSubmissions, queuedEffectiveSettings: initialQueuedEffectiveSettings, queuedTurnBarriers: initialQueuedTurnBarriers,
   setDraft: (threadId, text) => set((state) => {
     const injectedPrefills = { ...state.injectedPrefills };
     delete injectedPrefills[threadId];
@@ -209,7 +312,7 @@ export const useAppStore = create<AppStore>((set) => ({
       ),
     };
   }),
-  finishSubmission: (threadId, clearDraft) => set((state) => {
+  finishSubmission: (threadId, clearDraft, returnToQueue = false) => set((state) => {
     const pending = state.pendingSubmissions[threadId];
     if (!pending) return state;
     const pendingSubmissions = { ...state.pendingSubmissions };
@@ -219,7 +322,14 @@ export const useAppStore = create<AppStore>((set) => ({
     return {
       pendingSubmissions,
       drafts,
-      optimisticUserMessages: withoutOptimisticMessages(state.optimisticUserMessages, threadId, [pending.clientUserMessageId]),
+      optimisticUserMessages: returnToQueue
+        ? {
+            ...state.optimisticUserMessages,
+            [threadId]: (state.optimisticUserMessages[threadId] ?? []).map((message) => message.clientUserMessageId === pending.clientUserMessageId
+              ? { ...message, state: "queued" as const }
+              : message),
+          }
+        : withoutOptimisticMessages(state.optimisticUserMessages, threadId, [pending.clientUserMessageId]),
     };
   }),
   reconcileOptimisticUserMessages: (threadId, confirmedClientIds) => set((state) => {
@@ -233,47 +343,67 @@ export const useAppStore = create<AppStore>((set) => ({
       injectedPrefills: { ...state.injectedPrefills, [threadId]: text },
     };
   }),
-  queueSlashCommand: (threadId, command) => set((state) => {
-    const queuedSlashCommands = { ...state.queuedSlashCommands, [threadId]: command };
-    persistQueuedSlashCommands(queuedSlashCommands);
-    return { queuedSlashCommands };
-  }),
-  clearQueuedSlashCommand: (threadId, clientRequestId) => set((state) => {
-    const current = state.queuedSlashCommands[threadId];
-    if (!current || (clientRequestId && current.clientRequestId !== clientRequestId)) return state;
-    const queuedSlashCommands = { ...state.queuedSlashCommands };
-    delete queuedSlashCommands[threadId];
-    persistQueuedSlashCommands(queuedSlashCommands);
-    return { queuedSlashCommands };
-  }),
-  queueUserMessage: (threadId, message) => set((state) => {
-    const queuedUserMessages = { ...state.queuedUserMessages, [threadId]: message };
+  enqueueSubmission: (threadId, submission) => set((state) => {
+    const currentQueue = state.queuedSubmissions[threadId] ?? [];
+    const existingIndex = currentQueue.findIndex((candidate) => candidate.clientRequestId === submission.clientRequestId);
+    const nextQueue = [...currentQueue];
+    if (existingIndex < 0) nextQueue.push(submission);
+    else nextQueue[existingIndex] = submission;
+    const queuedSubmissions = { ...state.queuedSubmissions, [threadId]: nextQueue };
+    persistQueuedSubmissions(queuedSubmissions);
+    if (submission.kind === "command") return { queuedSubmissions };
     const currentMessages = state.optimisticUserMessages[threadId] ?? [];
     const queuedOptimisticMessage: OptimisticUserMessage = {
-      clientUserMessageId: message.clientUserMessageId,
-      text: message.text,
-      ...((message.attachments?.length ?? 0) ? { attachments: message.attachments } : {}),
+      clientUserMessageId: submission.clientUserMessageId,
+      text: submission.text,
+      ...((submission.attachments?.length ?? 0) ? { attachments: submission.attachments } : {}),
       state: "queued",
     };
-    const existingIndex = currentMessages.findIndex((candidate) => candidate.clientUserMessageId === message.clientUserMessageId);
+    const existingMessageIndex = currentMessages.findIndex((candidate) => candidate.clientUserMessageId === submission.clientUserMessageId);
     const nextMessages = [...currentMessages];
-    if (existingIndex < 0) nextMessages.push(queuedOptimisticMessage);
-    else nextMessages[existingIndex] = queuedOptimisticMessage;
-    persistQueuedUserMessages(queuedUserMessages);
+    if (existingMessageIndex < 0) nextMessages.push(queuedOptimisticMessage);
+    else nextMessages[existingMessageIndex] = queuedOptimisticMessage;
     return {
-      queuedUserMessages,
+      queuedSubmissions,
       optimisticUserMessages: { ...state.optimisticUserMessages, [threadId]: nextMessages },
     };
   }),
-  clearQueuedUserMessage: (threadId, clientRequestId, preserveOptimistic = false) => set((state) => {
-    const current = state.queuedUserMessages[threadId];
-    if (!current || (clientRequestId && current.clientRequestId !== clientRequestId)) return state;
-    const queuedUserMessages = { ...state.queuedUserMessages };
-    delete queuedUserMessages[threadId];
-    persistQueuedUserMessages(queuedUserMessages);
+  applyQueuedSettings: (threadId, settings) => set((state) => {
+    const currentQueue = state.queuedSubmissions[threadId];
+    if (!currentQueue?.length) return state;
+    const queuedSubmissions = { ...state.queuedSubmissions, [threadId]: currentQueue.map((submission) => submission.kind === "message" ? { ...submission, ...settings } : submission) };
+    const queuedEffectiveSettings = { ...state.queuedEffectiveSettings, [threadId]: settings };
+    persistQueuedSubmissions(queuedSubmissions);
+    persistQueuedEffectiveSettings(queuedEffectiveSettings);
+    return { queuedSubmissions, queuedEffectiveSettings };
+  }),
+  setQueuedTurnBarrier: (threadId, barrier) => set((state) => {
+    const queuedTurnBarriers = { ...state.queuedTurnBarriers };
+    if (barrier) queuedTurnBarriers[threadId] = barrier;
+    else delete queuedTurnBarriers[threadId];
+    persistQueuedTurnBarriers(queuedTurnBarriers);
+    return { queuedTurnBarriers };
+  }),
+  removeQueuedSubmission: (threadId, clientRequestId, preserveOptimistic = false) => set((state) => {
+    const currentQueue = state.queuedSubmissions[threadId] ?? [];
+    const current = currentQueue.find((submission) => submission.clientRequestId === clientRequestId);
+    if (!current) return state;
+    const remaining = currentQueue.filter((submission) => submission.clientRequestId !== clientRequestId);
+    const queuedSubmissions = { ...state.queuedSubmissions };
+    if (remaining.length) queuedSubmissions[threadId] = remaining;
+    else delete queuedSubmissions[threadId];
+    const queuedEffectiveSettings = { ...state.queuedEffectiveSettings };
+    if (!remaining.length) delete queuedEffectiveSettings[threadId];
+    const queuedTurnBarriers = { ...state.queuedTurnBarriers };
+    if (!remaining.length) delete queuedTurnBarriers[threadId];
+    persistQueuedSubmissions(queuedSubmissions);
+    persistQueuedEffectiveSettings(queuedEffectiveSettings);
+    persistQueuedTurnBarriers(queuedTurnBarriers);
     return {
-      queuedUserMessages,
-      optimisticUserMessages: preserveOptimistic
+      queuedSubmissions,
+      queuedEffectiveSettings,
+      queuedTurnBarriers,
+      optimisticUserMessages: current.kind === "command" || preserveOptimistic
         ? state.optimisticUserMessages
         : withoutOptimisticMessages(state.optimisticUserMessages, threadId, [current.clientUserMessageId]),
     };

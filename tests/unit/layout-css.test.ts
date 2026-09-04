@@ -144,10 +144,19 @@ describe("viewport layout CSS", () => {
     expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
   });
 
+  it("keeps a multi-item submission queue bounded above the Composer", () => {
+    expect(rule(".queued-submission-list")).toContain("max-height: min(220px, 30dvh)");
+    expect(rule(".queued-submission-list")).toContain("overflow-y: auto");
+    expect(rule(".queued-submission-heading")).toContain("position: sticky");
+    expect(rule(".queued-command-banner")).not.toMatch(/\b(?:border|background):/);
+    expect(composerSource).toContain('aria-label={`排队内容，共 ${queuedSubmissions.length} 项`}');
+  });
+
   it("shows Fast as a compact accessible service-tier switch", () => {
     expect(serviceTierSource).toContain('tier.id === "priority"');
     expect(composerSource).toContain('role="switch" aria-checked={fastMode}');
-    expect(composerSource).toContain('setServiceTier(fastMode ? null : fastServiceTier.id)');
+    expect(composerSource).toContain('const next = fastMode ? null : fastServiceTier.id');
+    expect(composerSource).toContain('effectiveSettings.current = { ...effectiveSettings.current, serviceTier: next }; setServiceTier(next)');
     expect(rule(".service-tier-toggle")).toContain("height: 27px");
     expect(rule(".service-tier-toggle.active")).toContain("color: var(--accent)");
     expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.service-tier-toggle > span \{ display: none; \}/);

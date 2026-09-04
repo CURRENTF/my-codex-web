@@ -13,8 +13,9 @@ beforeEach(() => useAppStore.setState({
   pendingSubmissions: {},
   optimisticUserMessages: {},
   injectedPrefills: {},
-  queuedSlashCommands: {},
-  queuedUserMessages: {},
+  queuedSubmissions: {},
+  queuedEffectiveSettings: {},
+  queuedTurnBarriers: {},
 }));
 
 describe("optimistic user-message lifecycle", () => {
@@ -73,23 +74,147 @@ describe("optimistic user-message lifecycle", () => {
   });
 });
 
-describe("queued Slash command lifecycle", () => {
-  it("keeps one command per Session and clears only the matching request", () => {
-    const command = { raw: "/compact", clientRequestId: "request-compact", createdAt: 123 };
-    useAppStore.getState().queueSlashCommand("thread-1", command);
-    expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toEqual(command);
+describe("queued submission lifecycle", () => {
+  const message = {
+    kind: "message" as const,
+    text: "do this next",
+    skillNames: ["diagnose"],
+    model: "gpt-5.6-sol",
+    reasoning: "high",
+    serviceTier: "priority",
+    accessMode: "fullAccess" as const,
+    clientRequestId: "request-next",
+    clientUserMessageId: "message-next",
+    createdAt: 456,
+  };
 
-    useAppStore.getState().clearQueuedSlashCommand("thread-1", "different-request");
-    expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toEqual(command);
+  it("keeps multiple commands and requirements in FIFO order", () => {
+    const command = { kind: "command" as const, raw: "/compact", clientRequestId: "request-compact", createdAt: 123 };
+    const laterCommand = { kind: "command" as const, raw: "/status", clientRequestId: "request-status", createdAt: 789 };
 
-    useAppStore.getState().clearQueuedSlashCommand("thread-1", "request-compact");
-    expect(useAppStore.getState().queuedSlashCommands["thread-1"]).toBeUndefined();
+    useAppStore.getState().enqueueSubmission("thread-1", command);
+    useAppStore.getState().enqueueSubmission("thread-1", message);
+    useAppStore.getState().enqueueSubmission("thread-1", laterCommand);
+
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]).toEqual([command, message, laterCommand]);
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toEqual([
+      { clientUserMessageId: "message-next", text: "do this next", state: "queued" },
+    ]);
+  });
+
+  it("removes only the selected queue item and its optimistic requirement", () => {
+    const first = {
+      ...message,
+      text: "first",
+      clientRequestId: "request-first",
+      clientUserMessageId: "message-first",
+    };
+    const second = {
+      ...message,
+      text: "second",
+      clientRequestId: "request-second",
+      clientUserMessageId: "message-second",
+    };
+    useAppStore.getState().enqueueSubmission("thread-1", first);
+    useAppStore.getState().enqueueSubmission("thread-1", second);
+
+    useAppStore.getState().removeQueuedSubmission("thread-1", "different-request");
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]).toEqual([first, second]);
+
+    useAppStore.getState().removeQueuedSubmission("thread-1", "request-first");
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]).toEqual([second]);
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toEqual([
+      { clientUserMessageId: "message-second", text: "second", state: "queued" },
+    ]);
+  });
+
+  it("keeps the optimistic bubble after handing a queued requirement to the App Server", () => {
+    useAppStore.getState().enqueueSubmission("thread-1", message);
+    useAppStore.getState().removeQueuedSubmission("thread-1", "request-next", true);
+
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]).toBeUndefined();
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.[0]?.state).toBe("queued");
+  });
+
+  it("returns a failed head requirement to queued state without moving it behind later items", () => {
+    const later = {
+      ...message,
+      text: "later",
+      clientRequestId: "request-later",
+      clientUserMessageId: "message-later",
+      createdAt: 789,
+    };
+    useAppStore.getState().enqueueSubmission("thread-1", message);
+    useAppStore.getState().enqueueSubmission("thread-1", later);
+    useAppStore.getState().beginSubmission("thread-1", message.text, message.clientUserMessageId);
+    useAppStore.getState().finishSubmission("thread-1", false, true);
+    useAppStore.getState().enqueueSubmission("thread-1", message);
+
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]?.map((item) => item.clientRequestId)).toEqual(["request-next", "request-later"]);
+    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.map((item) => [item.clientUserMessageId, item.state])).toEqual([
+      ["message-next", "queued"],
+      ["message-later", "queued"],
+    ]);
+  });
+
+  it("applies successful configuration commands to every later queued requirement", () => {
+    const command = { kind: "command" as const, raw: "/model gpt-next", clientRequestId: "request-model", createdAt: 1 };
+    useAppStore.getState().enqueueSubmission("thread-1", command);
+    useAppStore.getState().enqueueSubmission("thread-1", message);
+
+    useAppStore.getState().applyQueuedSettings("thread-1", {
+      model: "gpt-next",
+      reasoning: "xhigh",
+      serviceTier: null,
+      accessMode: "readOnly",
+    });
+    useAppStore.getState().removeQueuedSubmission("thread-1", command.clientRequestId);
+
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]).toEqual([{
+      ...message,
+      model: "gpt-next",
+      reasoning: "xhigh",
+      serviceTier: null,
+      accessMode: "readOnly",
+    }]);
+    expect(useAppStore.getState().queuedEffectiveSettings["thread-1"]).toEqual({
+      model: "gpt-next",
+      reasoning: "xhigh",
+      serviceTier: null,
+      accessMode: "readOnly",
+    });
+
+    useAppStore.getState().removeQueuedSubmission("thread-1", message.clientRequestId);
+    expect(useAppStore.getState().queuedEffectiveSettings["thread-1"]).toBeUndefined();
+  });
+
+  it("keeps a fork destination isolated from its parent's queue", () => {
+    useAppStore.getState().enqueueSubmission("parent-thread", { kind: "command", raw: "/fork", clientRequestId: "request-fork", createdAt: 1 });
+    useAppStore.getState().enqueueSubmission("parent-thread", message);
+
+    expect(useAppStore.getState().queuedSubmissions["forked-thread"]).toBeUndefined();
+    expect(useAppStore.getState().optimisticUserMessages["forked-thread"]).toBeUndefined();
+    expect(useAppStore.getState().queuedSubmissions["parent-thread"]).toHaveLength(2);
+  });
+
+  it("keeps a Turn barrier while later items remain and clears it with the final item", () => {
+    const later = { ...message, clientRequestId: "request-later", clientUserMessageId: "message-later" };
+    useAppStore.getState().enqueueSubmission("thread-1", message);
+    useAppStore.getState().enqueueSubmission("thread-1", later);
+    useAppStore.getState().setQueuedTurnBarrier("thread-1", { clientRequestId: message.clientRequestId, previousLatestTurnId: "turn-base", turnId: "turn-running" });
+
+    useAppStore.getState().removeQueuedSubmission("thread-1", message.clientRequestId, true);
+    expect(useAppStore.getState().queuedTurnBarriers["thread-1"]?.turnId).toBe("turn-running");
+
+    useAppStore.getState().removeQueuedSubmission("thread-1", later.clientRequestId, true);
+    expect(useAppStore.getState().queuedTurnBarriers["thread-1"]).toBeUndefined();
   });
 });
 
-describe("queued user-message lifecycle", () => {
-  it("persists one next-Turn requirement and renders it optimistically as queued", () => {
+describe("queued user-message payload", () => {
+  it("preserves next-Turn settings and renders it optimistically as queued", () => {
     const message = {
+      kind: "message" as const,
       text: "do this next",
       skillNames: ["diagnose"],
       model: "gpt-5.6-sol",
@@ -101,55 +226,14 @@ describe("queued user-message lifecycle", () => {
       createdAt: 456,
     };
 
-    useAppStore.getState().queueUserMessage("thread-1", message);
+    useAppStore.getState().enqueueSubmission("thread-1", message);
 
-    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toEqual(message);
+    expect(useAppStore.getState().queuedSubmissions["thread-1"]).toEqual([message]);
     expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toEqual([
       { clientUserMessageId: "message-next", text: "do this next", state: "queued" },
     ]);
   });
 
-  it("cancels only a matching queued requirement and removes its optimistic bubble", () => {
-    const message = {
-      text: "do this next",
-      skillNames: [],
-      model: "gpt-5.6-sol",
-      reasoning: "high",
-      serviceTier: null,
-      accessMode: "workspaceWrite" as const,
-      clientRequestId: "request-next",
-      clientUserMessageId: "message-next",
-      createdAt: 456,
-    };
-    useAppStore.getState().queueUserMessage("thread-1", message);
-
-    useAppStore.getState().clearQueuedUserMessage("thread-1", "different-request");
-    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toEqual(message);
-
-    useAppStore.getState().clearQueuedUserMessage("thread-1", "request-next");
-    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toBeUndefined();
-    expect(useAppStore.getState().optimisticUserMessages["thread-1"]).toBeUndefined();
-  });
-
-  it("keeps the optimistic bubble after handing a queued requirement to the App Server", () => {
-    const message = {
-      text: "do this next",
-      skillNames: [],
-      model: "gpt-5.6-sol",
-      reasoning: "high",
-      serviceTier: null,
-      accessMode: "readOnly" as const,
-      clientRequestId: "request-next",
-      clientUserMessageId: "message-next",
-      createdAt: 456,
-    };
-    useAppStore.getState().queueUserMessage("thread-1", message);
-
-    useAppStore.getState().clearQueuedUserMessage("thread-1", "request-next", true);
-
-    expect(useAppStore.getState().queuedUserMessages["thread-1"]).toBeUndefined();
-    expect(useAppStore.getState().optimisticUserMessages["thread-1"]?.[0]?.state).toBe("queued");
-  });
 });
 
 describe("live delta lifecycle", () => {
