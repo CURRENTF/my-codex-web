@@ -372,7 +372,8 @@ export class SessionService extends EventEmitter {
     const summaries = mappings.map((mapping) => this.sessionSummary(mapping, mapped));
     return summaries
       .filter((summary) => sessionSummaryMatchesSearch(summary, options.search))
-      .sort((left, right) => (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
+      .sort((left, right) => Number(right.pinned) - Number(left.pinned)
+        || (options.sortDirection === "asc" ? 1 : -1) * (left.updatedAt - right.updatedAt));
   }
 
   private sessionSummary(mapping: ProjectSessionRow, mapped = new Map<string, ProjectSessionRow>()): SessionSummary {
@@ -402,6 +403,7 @@ export class SessionService extends EventEmitter {
       forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
       runtimeState: this.runtimes.get?.(mapping.thread_id)?.state ?? "idle",
       hasGoal: this.goalPresence.get(mapping.thread_id) ?? false,
+      pinned: mapping.pinned === 1,
     };
   }
 
@@ -431,6 +433,7 @@ export class SessionService extends EventEmitter {
       forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
       runtimeState: this.runtimes.get?.(snapshot.id)?.state ?? "idle",
       hasGoal: this.goalPresence.get(snapshot.id) ?? false,
+      pinned: false,
     };
   }
 
@@ -545,6 +548,14 @@ export class SessionService extends EventEmitter {
       this.clearSessionCaches(threadId);
       this.runtimes.notifySessionSummaryUpdated(threadId, reason);
     });
+  }
+
+  setPinned(threadId: string, pinned: boolean): { ok: true; pinned: boolean } {
+    this.assertPersistentSession(threadId, "pin");
+    const mapping = this.repositories.setSessionPinned(threadId, pinned);
+    const resolvedPinned = mapping.pinned === 1;
+    this.runtimes.notifySessionSummaryUpdated(threadId, "pin-updated", { pinned: resolvedPinned });
+    return { ok: true, pinned: resolvedPinned };
   }
 
   async moveToProject(threadId: string, projectId: string): Promise<ProjectSessionRow> {

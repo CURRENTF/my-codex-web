@@ -14,7 +14,7 @@ function matchesSearch(summary: SessionSummary, search: string): boolean {
 
 function sorted(summaries: SessionSummary[], sortDirection: "asc" | "desc"): SessionSummary[] {
   const direction = sortDirection === "asc" ? 1 : -1;
-  return summaries.sort((left, right) => direction * (left.updatedAt - right.updatedAt));
+  return summaries.sort((left, right) => Number(right.pinned) - Number(left.pinned) || direction * (left.updatedAt - right.updatedAt));
 }
 
 function updateSessionLists(client: QueryClient, update: (current: SessionSummary[], queryKey: QueryKey) => SessionSummary[]): void {
@@ -52,6 +52,7 @@ export function removeCachedSessionSummary(client: QueryClient, threadId: string
 interface SummaryEventPayload {
   reason?: string;
   name?: string | null;
+  pinned?: boolean;
   summary?: SessionSummary;
 }
 
@@ -74,6 +75,7 @@ export function applyCachedSessionSummaryEvent(
   if (payload.reason === "renamed" && payload.name !== null && payload.name !== undefined) patch.title = payload.name;
   if (payload.reason === "goal-updated" || payload.reason === "goal-loaded") patch.hasGoal = true;
   if (payload.reason === "goal-cleared") patch.hasGoal = false;
+  if (payload.reason === "pin-updated" && typeof payload.pinned === "boolean") patch.pinned = payload.pinned;
   if (payload.reason === "turn-started" || payload.reason === "turn-completed") {
     patch.updatedAt = emittedAt;
     if (runtimeState) patch.runtimeState = runtimeState;

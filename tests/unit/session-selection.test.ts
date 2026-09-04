@@ -15,7 +15,7 @@ function session(threadId: string, projectId: string): SessionSummary {
     threadId, projectId, title: threadId, preview: "", cwd: `/tmp/${projectId}`,
     sourceKind: "appServer", createdAt: 1, updatedAt: 1, origin: "created",
     parentThreadId: null, forkTurnId: null, forkSourceTitle: null, forkTurnNumber: null,
-    runtimeState: "idle", hasGoal: false,
+    runtimeState: "idle", hasGoal: false, pinned: false,
   };
 }
 

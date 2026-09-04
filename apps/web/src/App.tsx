@@ -14,7 +14,7 @@ import { bootstrapGate } from "./bootstrap-gate";
 import { shouldRunFocusRescan } from "./focus-rescan";
 import { refreshProjectAvailability, refreshProjectAvailabilityAfterError } from "./project-refresh";
 import { recentSessionToAutoOpen, sessionCreationProjectId } from "./session-selection";
-import { applyCachedSessionSummaryEvent, removeCachedSessionSummary, upsertCachedSessionSummary } from "./session-summary-cache";
+import { applyCachedSessionSummaryEvent, patchCachedSessionSummary, removeCachedSessionSummary, upsertCachedSessionSummary } from "./session-summary-cache";
 import { browserNotificationControlState, currentBrowserNotificationPermission, persistTurnCompletionNotificationsEnabled, readTurnCompletionNotificationsEnabled, requestBrowserNotificationPermission, shouldNotifyTurnCompletion, showTurnCompletionNotification, type BrowserNotificationPermission } from "./browser-notifications";
 import { playCompletionNotificationSound, preloadCompletionNotificationSound, unlockCompletionNotificationSound } from "./notification-sound";
 import { queryClient } from "./main";
@@ -162,7 +162,7 @@ export function App() {
       if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
       if (event.type === "session.summary.updated" && event.threadId) {
         const summaryPayload = typeof event.payload === "object" && event.payload !== null
-          ? event.payload as { reason?: string; name?: string | null; prefill?: unknown; summary?: SessionSummary }
+          ? event.payload as { reason?: string; name?: string | null; pinned?: boolean; prefill?: unknown; summary?: SessionSummary }
           : {};
         applyCachedSessionSummaryEvent(
           client,
@@ -434,6 +434,15 @@ export function App() {
       suppressAutoOpen(false);
     }
   };
+  const pinSession = async (threadId: string, pinned: boolean) => {
+    const result = await api<{ ok: true; pinned: boolean }>(`/api/sessions/${threadId}/pin`, { method: "PATCH", body: JSON.stringify({ pinned, clientRequestId: newClientRequestId() }) });
+    patchCachedSessionSummary(client, threadId, { pinned: result.pinned });
+  };
+  const archiveFromSidebar = async (threadId: string) => {
+    await api(`/api/sessions/${threadId}/archive`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) });
+    if (threadId === selectedThreadId) await handleArchived(threadId);
+    else removeCachedSessionSummary(client, threadId);
+  };
   const closeSide = async () => {
     if (!sideThreadId) return;
     setSideCloseError(null);
@@ -458,7 +467,7 @@ export function App() {
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
   if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
-  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} codeServer={codeServer} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={(project) => void removeProject(project)} />
+  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} codeServer={codeServer} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={(project) => void removeProject(project)} onPin={pinSession} onArchive={archiveFromSidebar} />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
         {sessionCreateError && <div className="workspace-error"><WarningCircle size={15} weight="fill" /><span>{sessionCreateError}</span><button onClick={() => setSessionCreateError(null)} aria-label="关闭新建 Session 错误"><X size={14} /></button></div>}

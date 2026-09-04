@@ -9,7 +9,7 @@ const databases: Repositories[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
 describe("SQLite repositories", () => {
-  it("adds latest-Turn setting and local summary columns to an existing project_sessions table", () => {
+  it("adds latest-Turn setting, local summary, and pin columns to an existing project_sessions table", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
     const databasePath = path.join(root, "app.db");
     const legacy = new Database(databasePath);
@@ -26,7 +26,21 @@ describe("SQLite repositories", () => {
     expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
       "last_model", "last_reasoning", "last_service_tier", "has_last_service_tier",
       "summary_title", "summary_preview", "summary_created_at", "summary_updated_at",
+      "pinned",
     ]));
+  });
+
+  it("persists a pinned Session without losing it during discovery upserts", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-web-db-"));
+    const repositories = new Repositories(path.join(root, "app.db")); databases.push(repositories);
+    repositories.insertProject({ id: "p1", name: "Repo", rootPath: root, canonicalPath: root, orderIndex: 0, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess", createdAt: 1, lastOpenedAt: null, available: true });
+    const mapping = { thread_id: "t1", project_id: "p1", cwd_snapshot: root, source_kind: "appServer", origin: "created" as const, parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1 };
+    repositories.upsertProjectSession(mapping);
+
+    expect(repositories.getProjectSession("t1")?.pinned).toBe(0);
+    expect(repositories.setSessionPinned("t1", true).pinned).toBe(1);
+    repositories.upsertProjectSession({ ...mapping, last_seen_at: 2 });
+    expect(repositories.getProjectSession("t1")?.pinned).toBe(1);
   });
 
   it("round-trips preferences and deletes only project mappings", () => {

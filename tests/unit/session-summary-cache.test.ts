@@ -12,7 +12,7 @@ function summary(threadId: string, title: string, updatedAt: number): SessionSum
   return {
     threadId, projectId: "project-1", title, preview: title, cwd: "/tmp/project", sourceKind: "appServer",
     createdAt: 1, updatedAt, origin: "created", parentThreadId: null, forkTurnId: null,
-    forkSourceTitle: null, forkTurnNumber: null, runtimeState: "idle", hasGoal: false,
+    forkSourceTitle: null, forkTurnNumber: null, runtimeState: "idle", hasGoal: false, pinned: false,
   };
 }
 
@@ -26,6 +26,17 @@ describe("Session summary cache", () => {
 
     expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.map((item) => item.threadId)).toEqual(["new", "old"]);
     expect(client.getQueryData<SessionSummary[]>(["sessions", "", "asc"])?.map((item) => item.threadId)).toEqual(["old", "new"]);
+  });
+
+  it("keeps pinned Sessions ahead of the selected time direction", () => {
+    const client = new QueryClient();
+    client.setQueryData(["sessions", "", "desc"], [summary("newest", "Newest", 30), summary("older", "Older", 20)]);
+
+    patchCachedSessionSummary(client, "older", { pinned: true });
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.map((item) => item.threadId)).toEqual(["older", "newest"]);
+
+    applyCachedSessionSummaryEvent(client, "older", { reason: "pin-updated", pinned: false }, "idle", 40);
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.map((item) => item.threadId)).toEqual(["newest", "older"]);
   });
 
   it("updates rename/search caches and removes an archived Session without a refetch", () => {
