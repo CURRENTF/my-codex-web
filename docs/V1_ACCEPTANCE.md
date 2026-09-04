@@ -1,10 +1,12 @@
 # Codex Web V1 Acceptance
 
-验收日期：2026-07-25
-验证平台：macOS，Codex CLI `0.144.3`
+初始验收日期：2026-07-25
+初始验证平台：macOS，Codex CLI `0.144.3`
 测试 Codex Home：`~/.codex-web/test-codex-home`（仅复用 `auth.json`，不复用正常 Session 存储）
 
-## 自动化验证
+以下固定数量和 Safari 结果记录的是 2026-07-25 初始验收，不代表当前提交刚刚复测。当前实现已经升级到 Codex CLI `0.151.0` 并启用 experimental API；当前自动化结果见文末校订记录。
+
+## 2026-07-25 自动化验证
 
 | 检查 | 结果 |
 | --- | --- |
@@ -22,6 +24,16 @@
 
 真实 App Server 验证使用隔离 `CODEX_HOME`，覆盖初始化、账户读取、动态模型列表、工具执行与输出 Delta、Turn 完成、中断、Fork、Goal 和 ephemeral Side Chat。无活动 Turn 的 `turn/steer` 已确认返回 `JsonRpcError` code `-32600`；父 Turn 刚启动时的 rollout materialization 竞态通过 Adapter 内的有限退避处理。Harness 中中断命令后的清理可能记录 `UnknownProcessId`，但 Turn 的协议终态正确为 `interrupted`。
 
+## 2026-09-04 当前自动化校订
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run check` | 通过 |
+| `npm test` | 497 passed，6 个真实 App Server 集成测试因默认配置 skipped |
+| `npm run build` | 通过；保留现有 Vite 大 chunk warning |
+
+本轮没有运行需要隔离 Codex Home 的真实 App Server 集成、live smoke 或浏览器 E2E。新增回归覆盖：确定失败后附件恢复为可删除草稿、结果不确定时继续保留并在确认未应用后释放，以及忽略 SIGTERM 的更新子进程会在宽限期后被强制终止。
+
 ## V1 产品闭环
 
 | 能力 | 验收证据 |
@@ -30,7 +42,7 @@
 | 最近 / 项目 Sidebar | 双模式、排序、搜索、Project 折叠和重新扫描可用；相对更新时间每 30 秒自动推进；失效目录的 Project 禁止创建 Session、Turn、Fork 和 Side Chat，前端 Composer 同步禁用且后端拒绝绕过 UI 的请求；目录恢复后的手动重扫会同时刷新 Project 可用性与 Session |
 | 实时 Timeline | 用户消息乐观显示；Agent Delta、命令/工具中间状态、输出和最终回复通过 WebSocket 自动更新，无需刷新；Reasoning 卡只接收 Summary 与 summary Delta，不向 Web 暴露完整 reasoning content/text Delta |
 | Composer | 模型与 Reasoning 来自完整分页读取的 `model/list`；首次切换到 Full Access 会在发送前显示 Project 级提示；空闲发送、运行中 Steer 和 Interrupt 状态正确；Interrupt 失败会显示错误而非静默继续运行；单个 Session 在断线后尚未完成快照对账时 Composer 保持禁用，后端也拒绝新 Turn，避免未知上一轮结果时重复执行；未确认的 `turn/start` 即使多次读取都停在旧 baseline 也不会自动恢复，必须由用户点击“确认未执行，恢复输入”触发一次新的直接快照核验；仍未出现时返回并复用原 `clientUserMessageId` 重试，依赖 App Server 去重覆盖核验后迟到物化的竞态；迟到 Turn 已出现时返回 `uncertain_turn_applied`、只清除与原提交匹配的草稿并取消重复发送，用户后来编辑的新草稿不受影响；新建 Session 使用 request-specific `threadSource`，响应丢失时只恢复稳定列表中保留同一唯一 source 的 durable child；真实协议验证确认未发送首个 Turn 的空 child 在 App Server 重启后不会持久化，但 recovery 仍等待 30 秒迟到物化窗口；已经精确观察到的 child 会继续进入有最终 TTL 的后台恢复，TTL 后恢复 discovery，不创建幽灵映射；协议已经返回 durable child、但 SQLite 收尾与远端归档同时失败时仍保留精确恢复身份并返回 `operation_uncertain`；普通失败或 `operation_uncertain` 会在工作区顶部显示，提交 ref 同时阻止重复点击创建 |
-| Steer 竞态 | 后端 Thread 串行锁、`expectedTurnId` 和客户端“作为下一条消息发送”恢复路径有回归测试；只有 `turn_finished` 409 进入该恢复 UI，Project/活动状态冲突显示真实错误；另一个标签页的无关 `turn.started` 不会清除等待 409 的 Steer 草稿。`turn/steer` 响应丢失时按 `expectedTurnId + clientUserMessageId` 进入显式快照对账：已应用则清除匹配提交而不重发，未应用则恢复原活动 Turn、原草稿和原消息 ID 后才允许安全重试 |
+| Steer 竞态 | 后端使用 Thread 串行锁、`expectedTurnId` 和双请求 ID。只有明确的 `turn_finished` 409 会由客户端使用新的请求 ID 自动把同一输入发送为下一 Turn；Project/活动状态等其他冲突仍保留输入并显示真实错误。`turn/steer` 响应丢失时按 `expectedTurnId + clientUserMessageId` 进入显式快照对账：已应用则清除匹配提交而不重发，未应用则恢复原活动 Turn、原草稿、附件和原消息 ID 后才允许安全重试 |
 | Fork | 已完成 Turn 的 before/after 边界、首轮 before 的空 Session 预填、设置继承和 Goal 默认不继承已验证；每次创建登记按父 Session 隔离的唯一 `codex-web-fork:<parentThreadId>:<clientRequestId>` source，普通 Session 创建登记按 Project 隔离的 `codex-web-session:<projectId>:<clientRequestId>` source；响应丢失但 matching `thread/started` 已证明 child ID 时，普通非空 Fork 再由 `thread/read` 校验父关系与完整 Turn ID 序列后补齐 Goal 和 parent/fork Turn 元数据；before-first 的 exact 空 child 只有已进入稳定列表才会接管；未观察到 child 时等待 30 秒迟到物化窗口后清理 source，已经精确观察到但尚未稳定列出的 child 转入带最终 TTL 的后台恢复；如果响应和通知都丢失，则仅认领 `thread/list` 中保留同一唯一 source 的 durable child，再执行相同 lineage/Turn 校验；身份未决的 source 会被 Project 扫描跳过，精确根目录重扫也保留已有 created/forked 来源元数据；恢复出的原问题同时进入实时事件与 bootstrap 快照，刷新或 WebSocket 重连后仍可恢复且不覆盖已编辑草稿；预填带客户端来源标记，另一标签页开始 Turn、重连快照证明已有 Turn或 bootstrap 不再返回该预填时，只清除仍未编辑的注入草稿，用户修改或主动清空的草稿保留；非空 Fork 的精确 child 暂未出现在列表或历史尚未物化时由连接恢复器持续有界退避，30 秒窗口过期后停止阻断全局连接并保留后台精确恢复；协议已经返回 durable Fork child、但 Goal/SQLite 收尾与远端归档同时失败时同样保留精确恢复身份并受最终 TTL 约束；无 matching notification 或 source 时不猜测或改写任何外部 Session；Project 已移除时也放弃恢复且不修改 Goal/映射；无 Goal 直接创建路径与 Goal 继承弹窗都显示普通失败或 `operation_uncertain`，不会静默鼓励重复创建 |
 | Side Chat | ephemeral Fork、隐藏边界注入、独立 Timeline/Composer、Goal 清理、不进入 Sidebar和关闭清理已验证；主 Session 与 Side Chat 共享 Project 级 Full Access 首次提示与确认状态，窄屏只显示 Side Chat 标签时也不会绕过提示；`no rollout found` 只在父 Session 已被内存 snapshot 证明为空时才等价退化为新的空 ephemeral Thread，绝不丢弃已有历史；关闭时若 Runtime 仅有 active 状态而缺少 Turn ID，会在 30 秒安全窗口内继续等待 `turn/started`，ID 到达后仍先 Interrupt（不调用 ephemeral Thread 不支持的 `thread/read`）；缺失 `turn/completed` 时接受 idle status 或“已无活动 Turn”作为终态确认，所有信号都丢失时仅在无其他活动 Turn、无其他 Side Chat、没有等待响应的非幂等或已应用待确认 mutation，且 Session/Fork/Side Chat 的完整本地收尾均已结束时重启 App Server 清理，否则保留目标 Side Chat 并返回明确可重试错误，不中断 Session/Fork 创建、rename/archive/Goal 更新或销毁其他 idle Side Chat；隐藏边界初始化失败后的 unsubscribe 清理失败会保存 orphan ID 并后台退避重试，不会重启并打断并行主 Turn；创建失败在 Session 内明确显示 |
 | Goal | get/set/clear、实时通知、状态与预算编辑、Fork 继承策略已验证 |
@@ -62,6 +74,6 @@
 
 手动验收只使用 Safari；最终回归未启动 Playwright 浏览器、Chrome 调试进程或 WebDriver，也未操作用户正在使用的 Chrome。
 
-## 已知稳定协议限制
+## 当前协议限制
 
-V1 按计划只使用稳定的 `thread/read({ includeTurns: true })` 读取历史。该响应不会持久恢复所有历史 command execution 细节，因此 App Server 重启后，未被稳定协议返回的旧命令卡和完整输出无法重建。在不启用实验接口、不读取 Codex 内部存储且不复制 Session 数据的约束下，这是当前协议边界，而不是 Web UI 可以无损补齐的数据。
+当前实现以 `experimentalApi: true` 初始化 Codex CLI 0.151.0，并在可用时使用分页历史接口；这些响应仍不会持久恢复所有历史 command execution 细节，因此 App Server 重启后，协议未返回的旧命令卡和完整输出无法重建。项目继续遵守不读取 Codex 内部 JSONL/SQLite、不复制 Session 数据的边界。

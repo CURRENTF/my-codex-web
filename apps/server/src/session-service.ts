@@ -694,12 +694,12 @@ export class SessionService extends EventEmitter {
       const settings = this.resolveSettings(project.id, input, threadId);
       const resolvedSkills = await this.resolveSkills(mapping.cwd_snapshot ?? project.canonicalPath, input.skillNames ?? []);
       const resolvedAttachments = await this.resolveAttachments(input.attachmentIds ?? []);
-      const promptText = removeSkillMentions(text, resolvedSkills.textNames);
-      this.persistSkillReferences(threadId, input.clientUserMessageId, resolvedSkills.textNames);
-      this.persistAttachmentReferences(threadId, input.clientUserMessageId, input.attachmentIds ?? []);
       const previousLastTurnId = this.sessionSnapshots.get(threadId)?.turns.at(-1)?.id;
       let response;
       try {
+        const promptText = removeSkillMentions(text, resolvedSkills.textNames);
+        this.persistSkillReferences(threadId, input.clientUserMessageId, resolvedSkills.textNames);
+        this.persistAttachmentReferences(threadId, input.clientUserMessageId, input.attachmentIds ?? []);
         response = resolvedAttachments.length
           ? await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, promptText, settings, input.clientUserMessageId, resolvedSkills.skills, resolvedAttachments)
           : await this.adapter.startTurn(threadId, mapping.cwd_snapshot ?? project.canonicalPath, promptText, settings, input.clientUserMessageId, resolvedSkills.skills);
@@ -707,6 +707,7 @@ export class SessionService extends EventEmitter {
         if (!(error instanceof OperationUncertainError)) {
           this.removePersistedSkillReferences(threadId, input.clientUserMessageId);
           this.removePersistedAttachmentReferences(threadId, input.clientUserMessageId);
+          await this.attachments?.releaseClaims(input.attachmentIds ?? []);
         }
         if (error instanceof OperationUncertainError) {
           this.uncertainTurnBaselines.set(threadId, previousLastTurnId);
@@ -743,10 +744,10 @@ export class SessionService extends EventEmitter {
         resolvedSkills = await this.resolveSkills(mapping.cwd_snapshot ?? project.canonicalPath, skillNames);
       }
       const resolvedAttachments = await this.resolveAttachments(attachmentIds);
-      const promptText = removeSkillMentions(text, resolvedSkills.textNames);
-      this.persistSkillReferences(threadId, clientUserMessageId, resolvedSkills.textNames);
-      this.persistAttachmentReferences(threadId, clientUserMessageId, attachmentIds);
       try {
+        const promptText = removeSkillMentions(text, resolvedSkills.textNames);
+        this.persistSkillReferences(threadId, clientUserMessageId, resolvedSkills.textNames);
+        this.persistAttachmentReferences(threadId, clientUserMessageId, attachmentIds);
         return resolvedAttachments.length
           ? await this.adapter.steerTurn(threadId, expectedTurnId, promptText, clientUserMessageId, resolvedSkills.skills, resolvedAttachments)
           : await this.adapter.steerTurn(threadId, expectedTurnId, promptText, clientUserMessageId, resolvedSkills.skills);
@@ -754,6 +755,7 @@ export class SessionService extends EventEmitter {
         if (!(error instanceof OperationUncertainError)) {
           this.removePersistedSkillReferences(threadId, clientUserMessageId);
           this.removePersistedAttachmentReferences(threadId, clientUserMessageId);
+          await this.attachments?.releaseClaims(attachmentIds);
         }
         if (error instanceof OperationUncertainError) {
           this.uncertainSteers.set(threadId, { expectedTurnId, clientUserMessageId, draft: text, ...(attachmentIds.length ? { attachmentIds: [...attachmentIds] } : {}) });
@@ -1220,6 +1222,9 @@ export class SessionService extends EventEmitter {
           );
           throw new UncertainTurnAppliedError();
         }
+        await this.attachments?.releaseClaims(uncertainSteer.attachmentIds ?? []);
+        this.removePersistedSkillReferences(threadId, uncertainSteer.clientUserMessageId);
+        this.removePersistedAttachmentReferences(threadId, uncertainSteer.clientUserMessageId);
         this.uncertainSteers.delete(threadId);
         this.clearUserMessageResult(threadId, "steer", uncertainSteer.clientUserMessageId);
         this.runtimes.confirmUncertainTurnNotApplied(
@@ -1246,6 +1251,11 @@ export class SessionService extends EventEmitter {
       const clientUserMessageId = this.uncertainTurnMessageIds.get(threadId);
       const draft = this.uncertainTurnDrafts.get(threadId);
       const attachmentIds = this.uncertainTurnAttachmentIds.get(threadId);
+      await this.attachments?.releaseClaims(attachmentIds ?? []);
+      if (clientUserMessageId) {
+        this.removePersistedSkillReferences(threadId, clientUserMessageId);
+        this.removePersistedAttachmentReferences(threadId, clientUserMessageId);
+      }
       this.uncertainTurnBaselines.delete(threadId);
       this.uncertainTurnMessageIds.delete(threadId);
       this.uncertainTurnDrafts.delete(threadId);

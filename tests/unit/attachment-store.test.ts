@@ -36,6 +36,8 @@ describe("AttachmentStore", () => {
 
     await store.claim([uploaded.id]);
     await expect(store.removeDraft(uploaded.id)).resolves.toBe(false);
+    await store.releaseClaims([uploaded.id]);
+    await expect(store.removeDraft(uploaded.id)).resolves.toBe(true);
   });
 
   it("keeps arbitrary files as mention inputs and lets an unclaimed draft be removed", async () => {

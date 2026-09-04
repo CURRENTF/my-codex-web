@@ -7,11 +7,13 @@ import type { RuntimeState, SelfUpdateStatus, SubagentAgentStatus } from "@codex
 const COMMAND_OUTPUT_LIMIT = 24_000;
 const GIT_TIMEOUT_MS = 2 * 60_000;
 const NPM_TIMEOUT_MS = 20 * 60_000;
+const PROCESS_TERMINATION_GRACE_MS = 1_000;
 const NPM_CI_ARGS = ["ci", "--include=dev", "--no-audit", "--no-fund"];
 
 export interface ProcessRunOptions {
   cwd: string;
   timeoutMs: number;
+  terminationGraceMs?: number;
 }
 
 export interface ProcessRunResult {
@@ -67,28 +69,65 @@ function boundedAppend(current: string, addition: string): string {
 export const runProcess: ProcessRunner = (command, args, options) => new Promise((resolve, reject) => {
   const child = spawn(command, args, {
     cwd: options.cwd,
+    detached: process.platform !== "win32",
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
   let stderr = "";
   let timedOut = false;
+  let settled = false;
+  let forceTimer: NodeJS.Timeout | null = null;
+  const clearTimers = () => {
+    clearTimeout(timer);
+    if (forceTimer) clearTimeout(forceTimer);
+  };
+  const settle = (action: () => void) => {
+    if (settled) return;
+    settled = true;
+    clearTimers();
+    action();
+  };
+  const signalProcessTree = (signal: NodeJS.Signals) => {
+    if (child.pid && process.platform !== "win32") {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch {
+        // The group may already be gone; fall back to the direct child handle.
+      }
+    }
+    try { child.kill(signal); } catch { /* The process already exited. */ }
+  };
+  const rejectTimeout = () => settle(() => {
+    child.stdout.destroy();
+    child.stderr.destroy();
+    reject(new Error(`${command} 执行超时。`));
+  });
   const timer = setTimeout(() => {
     timedOut = true;
-    child.kill("SIGTERM");
+    signalProcessTree("SIGTERM");
+    forceTimer = setTimeout(() => {
+      if (process.platform === "win32" && child.pid) {
+        const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        killer.on("error", () => undefined);
+        killer.unref();
+      }
+      signalProcessTree("SIGKILL");
+      rejectTimeout();
+    }, options.terminationGraceMs ?? PROCESS_TERMINATION_GRACE_MS);
   }, options.timeoutMs);
   child.stdout.on("data", (chunk: Buffer) => { stdout = boundedAppend(stdout, chunk.toString()); });
   child.stderr.on("data", (chunk: Buffer) => { stderr = boundedAppend(stderr, chunk.toString()); });
   child.once("error", (error) => {
-    clearTimeout(timer);
-    reject(error);
+    if (timedOut) rejectTimeout();
+    else settle(() => reject(error));
   });
   child.once("close", (code, signal) => {
-    clearTimeout(timer);
-    if (timedOut) return reject(new Error(`${command} 执行超时。`));
-    if (code === 0) return resolve({ stdout, stderr });
+    if (timedOut) return rejectTimeout();
+    if (code === 0) return settle(() => resolve({ stdout, stderr }));
     const detail = stderr.trim() || stdout.trim() || (signal ? `signal ${signal}` : `exit ${code ?? "unknown"}`);
-    reject(new Error(`${command} 执行失败：${detail}`));
+    settle(() => reject(new Error(`${command} 执行失败：${detail}`)));
   });
 });
 

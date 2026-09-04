@@ -202,6 +202,15 @@ export class AttachmentStore {
     }));
   }
 
+  async releaseClaims(ids: readonly string[]): Promise<void> {
+    await Promise.all([...new Set(ids)].map(async (id) => {
+      const metadata = await this.readMetadata(id);
+      if (metadata.claimedAt === null) return;
+      const next = { ...metadata, claimedAt: null };
+      await writeFile(path.join(this.root, id, metadataFileName), JSON.stringify(next), { mode: 0o600 });
+    }));
+  }
+
   async removeDraft(id: string): Promise<boolean> {
     const metadata = await this.readMetadata(id);
     if (metadata.claimedAt !== null) return false;

@@ -71,6 +71,8 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 - 服务用户可以执行 `git fetch <remote> <branch>`，并且 `node`、`npm`、`git` 在服务环境的 `PATH` 中可用。
 - 重启命令只重启 Web 应用，不要顺带重启独立的 SSH tunnel、Nginx 或其他服务。
 
+更新过程中执行的 Git/npm 命令都有硬超时。超时后服务先终止命令进程组，短暂宽限后强制结束残留进程并把更新标记为失败，避免 Web 服务永久停在“正在更新”状态。
+
 用户级 systemd 服务可以按下面的结构配置；所有路径和服务名都要替换为本机实际值：
 
 ```ini
@@ -110,7 +112,7 @@ npm run build
 
 布局根据可用空间自动变化：桌面 Sidebar 使用流体宽度；Session 工作区不足 1100px 时 Side Chat 切换为顶部标签；viewport 不超过 720px 时 Sidebar 变为抽屉。Composer 在窄窗口仍保留权限、模型和 Reasoning 控件。
 
-Composer 支持选择、粘贴或拖放图片和普通文件。图片会作为 Codex 的结构化 `localImage` 输入，其他文件作为结构化文件引用；已发送附件保存在 `CODEX_WEB_DATA_DIR/attachments`，未发送草稿附件会在服务启动时清理 24 小时前的遗留数据。单个附件上限为 25 MiB，每条消息最多 10 个附件。上传和附件内容接口沿用 Web UI 的登录、CSRF 与同源保护，浏览器访问者不需要安装本地依赖。
+Composer 支持选择、粘贴或拖放图片和普通文件。图片会作为 Codex 的结构化 `localImage` 输入，其他文件作为结构化文件引用；已发送附件保存在 `CODEX_WEB_DATA_DIR/attachments`，明确发送失败的附件恢复为可删除草稿，结果不确定的附件则保留到对账完成，未发送草稿附件会在服务启动时清理 24 小时前的遗留数据。单个附件上限为 25 MiB，每条消息最多 10 个附件。上传和附件内容接口沿用 Web UI 的登录、CSRF 与同源保护，浏览器访问者不需要安装本地依赖。
 
 ## macOS 隔离集成测试
 

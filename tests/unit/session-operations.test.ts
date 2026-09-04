@@ -250,6 +250,7 @@ describe("session operation rules", () => {
       getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
       getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
       setMessageAttachmentReferences: vi.fn(),
+      removeMessageAttachmentReferences: vi.fn(),
     };
     const runtimes = {
       get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
@@ -261,6 +262,7 @@ describe("session operation rules", () => {
         { kind: "file" as const, name: "report.pdf", path: "/data/attachments/report.pdf" },
       ]),
       claim: vi.fn(async () => undefined),
+      releaseClaims: vi.fn(async () => undefined),
       decorateTurn: vi.fn((value) => value),
     };
     const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never, {} as never, attachments as never);
@@ -271,6 +273,7 @@ describe("session operation rules", () => {
 
     expect(attachments.resolvePromptAttachments).toHaveBeenCalledWith(["attachment-image", "attachment-file"]);
     expect(attachments.claim).toHaveBeenCalledWith(["attachment-image", "attachment-file"]);
+    expect(attachments.releaseClaims).not.toHaveBeenCalled();
     expect(repositories.setMessageAttachmentReferences).toHaveBeenCalledWith("thread-1", "message-attachments", ["attachment-image", "attachment-file"]);
     expect(adapter.startTurn).toHaveBeenCalledWith(
       "thread-1", "/tmp/project", "",
@@ -280,6 +283,77 @@ describe("session operation rules", () => {
         { kind: "file", name: "report.pdf", path: "/data/attachments/report.pdf" },
       ],
     );
+  });
+
+  it("releases attachment claims after a Turn is definitely rejected", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({ settings: { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" as const } })),
+      startTurn: vi.fn(async () => { throw new Error("turn rejected"); }),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+      setMessageAttachmentReferences: vi.fn(),
+      removeMessageAttachmentReferences: vi.fn(),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const attachments = {
+      resolvePromptAttachments: vi.fn(async () => [{ kind: "file" as const, name: "report.pdf", path: "/data/attachments/report.pdf" }]),
+      claim: vi.fn(async () => undefined),
+      releaseClaims: vi.fn(async () => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never, {} as never, attachments as never);
+
+    await expect(service.startTurn("thread-1", "", {
+      clientUserMessageId: "message-rejected", attachmentIds: ["attachment-file"],
+    }, "request-rejected")).rejects.toThrow("turn rejected");
+
+    expect(attachments.releaseClaims).toHaveBeenCalledWith(["attachment-file"]);
+    expect(repositories.removeMessageAttachmentReferences).toHaveBeenCalledWith("thread-1", "message-rejected");
+  });
+
+  it("retains attachment claims while a Turn result is uncertain", async () => {
+    const snapshot = { id: "thread-1", preview: "", name: null, cwd: "/tmp/project", createdAt: 1, updatedAt: 1, ephemeral: false, forkedFromId: null, turns: [] };
+    const adapter = Object.assign(new EventEmitter(), {
+      resumeSession: vi.fn(async () => ({
+        thread: snapshot,
+        settings: { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" as const },
+      })),
+      readSession: vi.fn(async () => snapshot),
+      startTurn: vi.fn(async () => { throw new OperationUncertainError("turn/start"); }),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+      setMessageAttachmentReferences: vi.fn(),
+      removeMessageAttachmentReferences: vi.fn(),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+      markOperationUncertain: vi.fn(),
+      confirmUncertainTurnNotApplied: vi.fn(),
+    };
+    const attachments = {
+      resolvePromptAttachments: vi.fn(async () => [{ kind: "file" as const, name: "report.pdf", path: "/data/attachments/report.pdf" }]),
+      claim: vi.fn(async () => undefined),
+      releaseClaims: vi.fn(async () => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never, {} as never, attachments as never);
+
+    await expect(service.startTurn("thread-1", "", {
+      clientUserMessageId: "message-uncertain", attachmentIds: ["attachment-file"],
+    }, "request-uncertain")).rejects.toBeInstanceOf(OperationUncertainError);
+
+    expect(attachments.releaseClaims).not.toHaveBeenCalled();
+    expect(repositories.removeMessageAttachmentReferences).not.toHaveBeenCalled();
+
+    await expect(service.resolveUncertainTurn("thread-1")).resolves.toMatchObject({ status: "notApplied", attachmentIds: ["attachment-file"] });
+    expect(attachments.releaseClaims).toHaveBeenCalledWith(["attachment-file"]);
+    expect(repositories.removeMessageAttachmentReferences).toHaveBeenCalledWith("thread-1", "message-uncertain");
   });
 
   it("rejects unknown or disabled Skills before starting a Turn", async () => {
@@ -313,6 +387,34 @@ describe("session operation rules", () => {
 
     await service.steer("thread-1", "$review check this", "active-turn", "message-steer", "request-steer", ["review"]);
     expect(adapter.steerTurn).toHaveBeenCalledWith("thread-1", "active-turn", "check this", "message-steer", [{ name: "review", path: "/skills/review/SKILL.md" }]);
+  });
+
+  it("releases attachment claims after a Steer is definitely rejected", async () => {
+    const adapter = Object.assign(new EventEmitter(), {
+      steerTurn: vi.fn(async () => { throw new Error("steer rejected"); }),
+    });
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project" })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", available: true, defaultModel: null, defaultReasoning: null, defaultAccessMode: "fullAccess" })),
+      setMessageAttachmentReferences: vi.fn(),
+      removeMessageAttachmentReferences: vi.fn(),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "running", activeTurnId: "active-turn", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(() => undefined),
+    };
+    const attachments = {
+      resolvePromptAttachments: vi.fn(async () => [{ kind: "file" as const, name: "report.pdf", path: "/data/attachments/report.pdf" }]),
+      claim: vi.fn(async () => undefined),
+      releaseClaims: vi.fn(async () => undefined),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never, {} as never, attachments as never);
+
+    await expect(service.steer("thread-1", "more", "active-turn", "message-steer", "request-steer", [], ["attachment-file"]))
+      .rejects.toThrow("steer rejected");
+
+    expect(attachments.releaseClaims).toHaveBeenCalledWith(["attachment-file"]);
+    expect(repositories.removeMessageAttachmentReferences).toHaveBeenCalledWith("thread-1", "message-steer");
   });
 
   it("starts compact and inline review only while the Session is idle", async () => {

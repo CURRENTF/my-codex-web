@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,6 +62,27 @@ describe("self update", () => {
   it("does not wait for a spawned restart process that exits by SIGTERM", async () => {
     const directory = await testDirectory();
     await expect(launchRestartProcess(process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"], { cwd: directory })).resolves.toBeUndefined();
+  });
+
+  it.skipIf(process.platform === "win32")("force-kills a timed-out process that ignores SIGTERM", async () => {
+    const directory = await testDirectory();
+    const marker = path.join(directory, "sigterm-received");
+    const script = [
+      "const { writeFileSync } = require('node:fs')",
+      "process.on('SIGTERM', () => writeFileSync(process.argv[1], 'received'))",
+      "process.stdout.write('ready\\n')",
+      "setInterval(() => undefined, 1000)",
+    ].join(";");
+    const startedAt = Date.now();
+
+    await expect(runProcess(process.execPath, ["-e", script, marker], {
+      cwd: directory,
+      timeoutMs: 150,
+      terminationGraceMs: 100,
+    })).rejects.toThrow("执行超时");
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    await expect(readFile(marker, "utf8")).resolves.toBe("received");
   });
 
   it("stays unavailable until a server-owned restart command is configured", async () => {

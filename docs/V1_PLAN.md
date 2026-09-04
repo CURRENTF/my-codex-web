@@ -31,7 +31,7 @@
 
 按 Project 分组，每组 Session 只有一层，不展示 Fork/subagent 树。Project 顺序由用户拖动决定；组内 Session 服从全局排序。每组默认 8 条，超出显示“展开其余 N 个”。Project 行的 `+` 直接在该目录创建 Session。
 
-Project 菜单只保留：新建 Session、重新扫描、在文件管理器显示、修改显示名称、从侧边栏移除。移除只删 Web UI 映射，不删目录或 Codex Session。
+Project 菜单保留：新建 Session、重新扫描、可用时在 code-server 中打开、修改显示名称、从侧边栏移除。主要部署目标是无头 Server，因此不要求提供依赖本机图形文件管理器的入口。移除只删 Web UI 映射，不删目录或 Codex Session。
 
 ## 四、Project 添加与 Session 发现
 
@@ -77,9 +77,9 @@ Composer 包含输入区、Full Access、模型、Reasoning 和发送按钮。�
 
 ## 九、运行中 Steer
 
-空闲发送调用 `turn/start`；运行中 Composer 自动切 Steer 模式，发送调用 `turn/steer`，停止调用 `turn/interrupt`。Steer 消息归属当前 Turn，不创建新 Turn。
+空闲发送调用 `turn/start`；运行中 Composer 自动切 Steer 模式，发送调用 `turn/steer`，停止调用 `turn/interrupt`。成功送达的 Steer 消息归属当前 Turn，不创建新 Turn。
 
-`turn/steer` 必须携带和当前 activeTurnId 一致的 `expectedTurnId`，并发送 `clientUserMessageId`。若发送瞬间 Turn 已结束，不得自动转成下一 Turn；保留输入，显示“当前执行刚刚结束”，提供“作为下一条消息发送”和“继续编辑”。
+`turn/steer` 必须携带和当前 activeTurnId 一致的 `expectedTurnId`，并发送 `clientUserMessageId`。若发送瞬间 Turn 已结束且后端明确返回 `turn_finished`，Composer 使用新的 `clientRequestId` 将同一输入自动作为下一 Turn 发送；其他冲突仍保留输入并显示真实错误。
 
 每 Thread 后端串行锁。活动 Turn 期间只允许 steer、interrupt、读取、普通 Fork、Side Chat，不允许第二次 `turn/start`。
 
@@ -165,11 +165,11 @@ Full Access 在 Composer 持续显示盾牌。每个 Project 首次启用时仅�
 
 协议测试分 Fake App Server fixture 与真实 App Server；真实测试进入受控 CI，验证字段、通知顺序、错误码和版本兼容。
 
-Playwright 至少覆盖：添加文件夹并发现 Session；两种 Sidebar；正/倒序；创建 Session 设置；运行状态；Steer 不新建 Turn；Steer 竞态保留消息；Fork 边界；Side Chat 并行且不进列表；Goal 恢复和实时事件；刷新重同步；App Server 崩溃恢复；Project 删除不删文件/Session；多标签页同 Thread 写操作串行。
+Playwright 至少覆盖：添加文件夹并发现 Session；两种 Sidebar；正/倒序；创建 Session 设置；运行状态；正常 Steer 不新建 Turn；Steer 与 Turn 完成竞态自动发送下一 Turn；Fork 边界；Side Chat 并行且不进列表；Goal 恢复和实时事件；刷新重同步；App Server 崩溃恢复；Project 删除不删文件/Session；多标签页同 Thread 写操作串行。
 
 ## 二十一、明确不做
 
-V1 不做账户登录/退出、套餐/用量、云同步、多用户、团队权限、插件、Sites、PR 页面、计划任务、完整终端、代码编辑器、Git GUI、worktree、subagent 树、持久化 Side Chat、Side Chat 再 Fork、消息队列、语音、MCP 管理、复杂审批中心。
+初始 V1 不做账户登录/退出、套餐/用量、云同步、多用户、团队权限、插件、Sites、PR 页面、计划任务、完整终端、代码编辑器、Git GUI、worktree、持久化 Side Chat、Side Chat 再 Fork、语音、MCP 管理、复杂审批中心。当前实现已在该闭环之上增加 Subagent 状态树和 Session 内 FIFO 消息队列；这两项是后续扩展，不再属于“不做”清单。
 
 只围绕 `Project -> Session -> Goal / Model / Reasoning / Full Access -> Turn -> Status -> Steer -> Fork -> Side Chat` 形成稳定闭环。
 
