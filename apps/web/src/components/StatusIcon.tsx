@@ -1,4 +1,4 @@
-import { CheckCircle, Circle, PauseCircle, SpinnerGap, WarningCircle, XCircle } from "@phosphor-icons/react";
+import { CheckCircle, Circle, PauseCircle, SpinnerGap, WarningCircle, WifiSlash, XCircle } from "@phosphor-icons/react";
 import type { RuntimeState } from "@codex-web/shared-types";
 
 export function StatusIcon({ state, size = 15, label }: { state: RuntimeState; size?: number; label?: string }) {
@@ -7,7 +7,7 @@ export function StatusIcon({ state, size = 15, label }: { state: RuntimeState; s
   if (state === "justFinished") return <CheckCircle className="status-icon success" size={size} weight="fill" aria-label={label ?? "刚刚完成"} />;
   if (state === "failed") return <XCircle className="status-icon danger" size={size} weight="fill" aria-label={label ?? "执行失败"} />;
   if (state === "interrupted") return <WarningCircle className="status-icon muted" size={size} weight="fill" aria-label={label ?? "已中断"} />;
-  if (state === "disconnected") return <WarningCircle className="status-icon danger" size={size} weight="fill" aria-label={label ?? "连接中断"} />;
+  if (state === "disconnected") return <WifiSlash className="status-icon danger" size={size} weight="bold" aria-label={label ?? "连接中断"} />;
   return <Circle className="status-icon idle" size={size} aria-label={label ?? "空闲"} />;
 }
 

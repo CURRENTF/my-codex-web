@@ -64,6 +64,8 @@ describe("viewport layout CSS", () => {
     expect(sidebarSource).not.toContain("session-row-more");
     expect(rule(".session-status-menu")).toContain("display: grid");
     expect(rule(".session-status-menu")).not.toContain("opacity: 0");
+    expect(rule(".session-status-more-icon")).toContain("opacity: 0");
+    expect(rule('.session-status-menu[data-state="open"] .session-status-more-icon')).toContain("opacity: 1");
     expect(rule(".session-status-menu.running")).toContain("color: var(--accent)");
     expect(rule(".session-status-menu.justFinished")).toContain("color: var(--success)");
     expect(rule(".session-status-menu.waitingForInput")).toContain("color: var(--warning)");
