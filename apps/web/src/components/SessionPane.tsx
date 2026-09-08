@@ -10,7 +10,7 @@ import { questionForTurn } from "../fork-boundary";
 import { shouldShowFullAccessNotice } from "../full-access-notice";
 import { refreshProjectAvailabilityAfterError } from "../project-refresh";
 import { canBranchSession } from "../session-selection";
-import { patchCachedSessionSummary, removeCachedSessionSummary, upsertCachedSessionSummary } from "../session-summary-cache";
+import { optimisticallyRenameSession, patchCachedSessionSummary, removeCachedSessionSummary, upsertCachedSessionSummary } from "../session-summary-cache";
 import { fetchMergedSession } from "../session-query";
 import { useAppStore } from "../store";
 import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
@@ -102,7 +102,14 @@ export function SessionPane({ threadId, project, projects, models, codeServer, s
     void refreshProjectAvailabilityAfterError(error, (queryKey) => queryClient.invalidateQueries({ queryKey }));
   } });
   const requestSideChat = (anchorTurnId: string | null, clientRequestId = newClientRequestId()): Promise<boolean> => side.mutateAsync({ parentThreadId: threadId, anchorTurnId, clientRequestId }).then(() => true, () => false);
-  const rename = useMutation({ mutationFn: async (name: string) => api<{ name: string }>(`/api/sessions/${threadId}/name`, { method: "PATCH", body: JSON.stringify({ name, clientRequestId: newClientRequestId() }) }), onSuccess: (result) => {
+  const rename = useMutation({ mutationFn: async (name: string) => api<{ name: string }>(`/api/sessions/${threadId}/name`, { method: "PATCH", body: JSON.stringify({ name, clientRequestId: newClientRequestId() }) }), onMutate: async (name) => {
+    const rollback = await optimisticallyRenameSession(queryClient, threadId, name);
+    setRenameOpen(false);
+    return { rollback };
+  }, onError: (_error, _name, context) => {
+    context?.rollback();
+    if (mountedForThread.current) setRenameOpen(true);
+  }, onSuccess: (result) => {
     setRenameOpen(false);
     queryClient.setQueryData<SessionPayload>(["session", threadId], (current) => current ? { ...current, thread: { ...current.thread, name: result.name } } : current);
     patchCachedSessionSummary(queryClient, threadId, { title: result.name, updatedAt: Date.now() });

@@ -1,5 +1,27 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import type { RuntimeState, SessionSummary } from "@codex-web/shared-types";
+import type { SessionPayload } from "./api";
+
+export async function optimisticallyRenameSession(client: QueryClient, threadId: string, name: string): Promise<() => void> {
+  await Promise.all([
+    client.cancelQueries({ queryKey: ["session", threadId] }),
+    client.cancelQueries({ queryKey: ["sessions"] }),
+  ]);
+  const previousName = client.getQueryData<SessionPayload>(["session", threadId])?.thread.name;
+  const previousSummary = client.getQueriesData<SessionSummary[]>({ queryKey: ["sessions"] })
+    .flatMap(([, summaries]) => summaries ?? []).find((summary) => summary.threadId === threadId);
+  client.setQueryData<SessionPayload>(["session", threadId], (current) => current
+    ? { ...current, thread: { ...current.thread, name } } : current);
+  patchCachedSessionSummary(client, threadId, { title: name });
+  return () => {
+    // Restore only the name; preserve Turn events and other changes received while saving.
+    client.setQueryData<SessionPayload>(["session", threadId], (current) => current && current.thread.name === name && previousName !== undefined
+      ? { ...current, thread: { ...current.thread, name: previousName } } : current);
+    const currentSummary = client.getQueriesData<SessionSummary[]>({ queryKey: ["sessions"] })
+      .flatMap(([, summaries]) => summaries ?? []).find((summary) => summary.threadId === threadId);
+    if (previousSummary && currentSummary?.title === name) patchCachedSessionSummary(client, threadId, { title: previousSummary.title });
+  };
+}
 
 function listOptions(queryKey: QueryKey): { search: string; sortDirection: "asc" | "desc" } {
   return {

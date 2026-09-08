@@ -161,7 +161,7 @@ export function projectAdapterEvent(notification: Notification): AdapterEvent | 
     const settings = params.threadSettings;
     return isThreadSettings(settings) ? { type: "settingsUpdated", threadId, settings: projectSettings(settings) } : null;
   }
-  if (notification.method === "thread/name/updated") return { type: "nameUpdated", threadId, ...(typeof params.name === "string" ? { name: params.name } : {}) };
+  if (notification.method === "thread/name/updated") return { type: "nameUpdated", threadId, ...(typeof params.threadName === "string" ? { name: params.threadName } : {}) };
   return null;
 }
 

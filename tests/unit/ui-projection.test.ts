@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { projectAdapterEvent, projectItemDelta, projectThread, projectThreadItem, projectTurn, projectTurnPlan } from "@codex-web/codex-adapter";
 
 describe("Codex UI projection", () => {
+  it("reads rename notifications from the protocol threadName field", () => {
+    expect(projectAdapterEvent({ method: "thread/name/updated", params: { threadId: "thread-1", threadName: "My session" } }))
+      .toEqual({ type: "nameUpdated", threadId: "thread-1", name: "My session" });
+    expect(projectAdapterEvent({ method: "thread/name/updated", params: { threadId: "thread-1" } }))
+      .toEqual({ type: "nameUpdated", threadId: "thread-1" });
+  });
+
   it("preserves the exact thread source and subagent parent on thread/started", () => {
     const event = projectAdapterEvent({
       method: "thread/started",

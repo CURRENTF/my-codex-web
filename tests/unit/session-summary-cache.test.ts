@@ -1,8 +1,10 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { SessionSummary } from "@codex-web/shared-types";
+import type { SessionPayload } from "../../apps/web/src/api";
 import {
   applyCachedSessionSummaryEvent,
+  optimisticallyRenameSession,
   patchCachedSessionSummary,
   removeCachedSessionSummary,
   upsertCachedSessionSummary,
@@ -17,6 +19,32 @@ function summary(threadId: string, title: string, updatedAt: number): SessionSum
 }
 
 describe("Session summary cache", () => {
+  it("shows a pending rename immediately and rolls back only the name after failure", async () => {
+    const client = new QueryClient();
+    client.setQueryData(["sessions", "", "desc"], [summary("thread-1", "Original prompt", 10)]);
+    client.setQueryData(["session", "thread-1"], { thread: { name: null, preview: "Original prompt", turns: [] } });
+    const rollback = await optimisticallyRenameSession(client, "thread-1", "New name");
+    expect(client.getQueryData<SessionPayload>(["session", "thread-1"])?.thread.name).toBe("New name");
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.[0]?.title).toBe("New name");
+    patchCachedSessionSummary(client, "thread-1", { updatedAt: 20, pinned: true });
+    rollback();
+    expect(client.getQueryData<SessionPayload>(["session", "thread-1"])?.thread.name).toBeNull();
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.[0])
+      .toMatchObject({ title: "Original prompt", updatedAt: 20, pinned: true });
+  });
+
+  it("does not roll back a newer name received while saving", async () => {
+    const client = new QueryClient();
+    client.setQueryData(["sessions", "", "desc"], [summary("thread-1", "Original", 10)]);
+    client.setQueryData(["session", "thread-1"], { thread: { name: "Original" } });
+    const rollback = await optimisticallyRenameSession(client, "thread-1", "Pending");
+    patchCachedSessionSummary(client, "thread-1", { title: "External rename" });
+    client.setQueryData(["session", "thread-1"], { thread: { name: "External rename" } });
+    rollback();
+    expect(client.getQueryData<SessionPayload>(["session", "thread-1"])?.thread.name).toBe("External rename");
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.[0]?.title).toBe("External rename");
+  });
+
   it("inserts a created Session into cached lists immediately and preserves each sort order", () => {
     const client = new QueryClient();
     client.setQueryData(["sessions", "", "desc"], [summary("old", "Old", 10)]);
