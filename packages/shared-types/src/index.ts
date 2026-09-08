@@ -105,6 +105,8 @@ export interface PendingRequestSummary {
   method: string;
   params: {
     type: "userInput";
+    /** Missing on older Web servers; treat as blocking. */
+    isBlocking?: boolean;
     questions: Array<{
       id: string;
       header: string;
@@ -162,9 +164,14 @@ export interface UserMessagePart {
   downloadUrl?: string;
 }
 
+export interface AsyncUserInputQuestion {
+  title: string;
+  options?: string[];
+}
+
 export type SessionItem =
   | { type: "userMessage"; id: string; clientId?: string | null; content: UserMessagePart[] }
-  | { type: "agentMessage"; id: string; text: string; phase?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }
+  | { type: "agentMessage"; id: string; text: string; phase?: string; delivery?: "async"; questions?: AsyncUserInputQuestion[]; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }
   | { type: "reasoning"; id: string; summary: string[] }
   | { type: "plan"; id: string; text: string }
   | { type: "commandExecution"; id: string; command: string; cwd: string; status: string; aggregatedOutput: string | null; exitCode: number | null; durationMs: number | null }

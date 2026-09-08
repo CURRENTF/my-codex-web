@@ -59,7 +59,7 @@ function projectRequestParams(method: string, params: Record<string, unknown>): 
       }) : null;
       return [{ id: question.id, header: question.header, question: question.question, isOther: question.isOther === true, isSecret: question.isSecret === true, options }];
     });
-    return { type: "userInput", questions, autoResolutionMs: typeof params.autoResolutionMs === "number" ? params.autoResolutionMs : null };
+    return { type: "userInput", isBlocking: params.isBlocking !== false, questions, autoResolutionMs: typeof params.autoResolutionMs === "number" ? params.autoResolutionMs : null };
   }
   if (method === "mcpServer/elicitation/request" && typeof params.mode === "string" && ["form", "openai/form", "url"].includes(params.mode)) {
     return {

@@ -249,6 +249,13 @@ export class ThreadRuntimeRegistry {
     return "reconciled";
   }
 
+  private hasBlockingRequests(ids: string[]): boolean {
+    return ids.some((id) => {
+      const params = this.pendingRequests.get(id)?.summary.params;
+      return params?.type !== "userInput" || params.isBlocking !== false;
+    });
+  }
+
   handlePendingRequest(request: AdapterPendingRequest): void {
     const requestId = request.id;
     this.pendingRequests.set(requestId, request);
@@ -258,7 +265,7 @@ export class ThreadRuntimeRegistry {
       this.activeThreadHints.add(threadId);
       const runtime = this.get(threadId);
       this.setRuntime(threadId, {
-        state: "waitingForInput",
+        state: this.hasBlockingRequests([...runtime.pendingRequestIds, requestId]) ? "waitingForInput" : "running",
         pendingRequestIds: [...new Set([...runtime.pendingRequestIds, requestId])],
       });
     }
@@ -281,7 +288,7 @@ export class ThreadRuntimeRegistry {
       const terminalVisualState = runtime.state === "justFinished" || runtime.state === "interrupted" || runtime.state === "failed";
       this.setRuntime(threadId, {
         pendingRequestIds,
-        state: pendingRequestIds.length
+        state: this.hasBlockingRequests(pendingRequestIds)
           ? "waitingForInput"
           : terminalVisualState
             ? runtime.state
@@ -321,7 +328,7 @@ export class ThreadRuntimeRegistry {
         const activeFlags = event.activeFlags;
         const current = this.get(threadId);
         const terminalVisualState = current.state === "justFinished" || current.state === "interrupted" || current.state === "failed";
-        const waitingForInput = current.pendingRequestIds.length > 0
+        const waitingForInput = this.hasBlockingRequests(current.pendingRequestIds)
           || activeFlags.some((flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput");
         const state: RuntimeState = event.status === "active"
           ? (waitingForInput ? "waitingForInput" : "running")

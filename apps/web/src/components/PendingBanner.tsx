@@ -1,13 +1,22 @@
-import { useEffect, useState } from "react";
-import { ShieldWarning } from "@phosphor-icons/react";
+import { useState } from "react";
+import { ChatCircleText, ShieldWarning } from "@phosphor-icons/react";
 import { useMutation } from "@tanstack/react-query";
+import type { PendingRequestSummary } from "@codex-web/shared-types";
 import { api, newClientRequestId } from "../api";
 import { useAppStore } from "../store";
 
 export function PendingBanner({ threadId }: { threadId: string }) {
   const runtime = useAppStore((state) => state.runtimes[threadId]); const requests = useAppStore((state) => state.pendingRequests);
-  const requestId = runtime?.pendingRequestIds[0]; const pending = requestId ? requests[requestId] : undefined;
+  const ids = runtime?.pendingRequestIds ?? [];
+  if (!ids.length) return null;
+  return <div className="pending-stack" aria-label="待处理请求">{ids.map((id) =>
+    <PendingRequestCard key={`${threadId}:${id}`} requestId={id} pending={requests[id]} />,
+  )}</div>;
+}
+
+function PendingRequestCard({ requestId, pending }: { requestId: string; pending?: PendingRequestSummary }) {
   const [answers, setAnswers] = useState<Record<string, string | string[] | boolean | number>>({});
+  const [customQuestions, setCustomQuestions] = useState<Record<string, boolean>>({});
   const respond = useMutation({ mutationFn: ({ allow, values = {} }: { allow: boolean; values?: Record<string, string | string[] | boolean | number> }) => api(`/api/pending-requests/${requestId}/respond`, {
     method: "POST",
     body: JSON.stringify({
@@ -20,26 +29,47 @@ export function PendingBanner({ threadId }: { threadId: string }) {
       clientRequestId: newClientRequestId(),
     }),
   }) });
-  useEffect(() => { setAnswers({}); respond.reset(); }, [requestId]);
-  if (!requestId) return null;
+  if (!pending) return <div className="pending-banner pending-loading" role="status" aria-busy="true">正在加载请求…</div>;
   const responseError = respond.isError
-    ? <p className="pending-response-error" role="alert">响应未送达：{respond.error.message}。Codex 仍在等待，请重试。</p>
+    ? <p className="pending-response-error" role="alert">响应未送达：{respond.error.message}。请重试。</p>
     : null;
   if (pending?.params?.type === "userInput") {
-    const complete = pending.params.questions.every((question) => { const value = answers[question.id]; return typeof value === "string" && !!value.trim(); });
-    return <div className="pending-banner pending-user-input"><div className="pending-heading"><ShieldWarning size={17} weight="fill" /><span>Codex 正在等待你的输入</span></div>
-      <div className="pending-questions">{pending.params.questions.map((question) => {
+    const { questions, isBlocking } = pending.params;
+    const complete = questions.length > 0 && questions.every((question) => {
+      const value = answers[question.id];
+      return typeof value === "string" && !!value.trim();
+    });
+    const submitting = respond.isPending || respond.isSuccess;
+    return <form className="pending-banner pending-user-input question-card" aria-label="Codex 问题" aria-busy={submitting}
+      onSubmit={(event) => { event.preventDefault(); if (complete && !submitting) respond.mutate({ allow: true, values: answers }); }}>
+      <div className="pending-heading"><ChatCircleText size={18} /><span>{isBlocking === false ? "Codex 想听听你的意见" : "Codex 正在等待你的输入"}</span></div>
+      <p className="question-hint">{isBlocking === false ? "你可以稍后回答，Codex 会继续处理其他工作。" : "回答后，Codex 将继续当前任务。"}</p>
+      <div className="pending-questions">{questions.map((question, index) => {
         const rawAnswer = answers[question.id];
         const answer = typeof rawAnswer === "string" ? rawAnswer : "";
-        const optionLabels = question.options?.map((option) => option.label) ?? [];
-        const customValue = optionLabels.includes(answer) ? "" : answer;
-        return <fieldset key={question.id}><legend><strong>{question.header}</strong><span>{question.question}</span></legend>
-          {!!question.options?.length && <div className="pending-options">{question.options.map((option) => <button type="button" key={option.label} className={answers[question.id] === option.label ? "selected" : ""} title={option.description} onClick={() => setAnswers((current) => ({ ...current, [question.id]: option.label }))}><strong>{option.label}</strong><small>{option.description}</small></button>)}</div>}
-          {(question.isOther || !question.options?.length) && <input type={question.isSecret ? "password" : "text"} autoComplete="off" value={customValue} placeholder={question.isOther ? "其他答案" : "输入答案"} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} />}
+        const isCustom = customQuestions[question.id] === true;
+        const customValue = isCustom ? answer : "";
+        const inputId = `question-${requestId}-${index}`;
+        return <fieldset key={question.id} disabled={submitting}>
+          <legend>{question.header && <strong>{question.header}</strong>}<span>{question.question}</span></legend>
+          {!!question.options?.length && <div className="question-options">{question.options.map((option) =>
+            <label key={option.label} className={!isCustom && answer === option.label ? "question-option selected" : "question-option"}>
+              <input type="radio" name={inputId} value={option.label} checked={!isCustom && answer === option.label}
+                onChange={() => { setCustomQuestions((current) => ({ ...current, [question.id]: false })); setAnswers((current) => ({ ...current, [question.id]: option.label })); }} />
+              <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+            </label>,
+          )}</div>}
+          {(isBlocking === false || question.isOther || !question.options?.length) && <div className="question-custom">
+            <label htmlFor={inputId}>{question.options?.length ? "或填写自己的答案" : "你的答案"}</label>
+            {question.isSecret
+              ? <input id={inputId} type="password" autoComplete="off" value={customValue} onChange={(event) => { setCustomQuestions((current) => ({ ...current, [question.id]: true })); setAnswers((current) => ({ ...current, [question.id]: event.target.value })); }} />
+              : <textarea id={inputId} rows={2} value={customValue} onChange={(event) => { setCustomQuestions((current) => ({ ...current, [question.id]: true })); setAnswers((current) => ({ ...current, [question.id]: event.target.value })); }} />}
+          </div>}
         </fieldset>;
       })}</div>
-      {responseError}<div className="pending-actions"><button onClick={() => respond.mutate({ allow: false })} disabled={respond.isPending}>拒绝</button><button className="primary" onClick={() => respond.mutate({ allow: true, values: answers })} disabled={respond.isPending || !complete}>发送答案</button></div>
-    </div>;
+      {!questions.length && <p role="alert">问题内容为空，请跳过此请求。</p>}
+      {responseError}<div className="pending-actions"><button type="button" onClick={() => respond.mutate({ allow: false })} disabled={submitting}>跳过</button><button type="submit" className="primary" disabled={submitting || !complete}>{respond.isPending ? "正在发送…" : respond.isSuccess ? "已发送" : "发送答案"}</button></div>
+    </form>;
   }
   if (pending?.params?.type === "elicitation") {
     const requiredComplete = pending.params.fields.every((field) => !field.required || (() => { const value = answers[field.id] ?? field.defaultValue; return Array.isArray(value) ? value.length > 0 : value !== null && value !== ""; })());

@@ -197,3 +197,12 @@ npm run schema:check
 服务只绑定 `127.0.0.1`，校验 Origin、HttpOnly SameSite Cookie、CSRF Header 和 WebSocket 会话。HTTP API 不提供任意 Shell 或文件读取能力，日志默认不记录 Prompt、密码、完整命令输出或文件内容。
 
 如需通过 HTTPS 反向代理远程访问，必须显式配置公开 Origin，并建议同时设置 `CODEX_WEB_PASSWORD_HASH`。启用密码后，未认证浏览器无法读取 Bootstrap/API，也无法建立实时 WebSocket；登录失败会按来源 IP 限速。反向代理仍应只转发到服务的回环地址，不要把 Fastify 或 Codex App Server 直接绑定到公网。
+
+### 对话内问题卡片
+
+Codex 有两条不同的提问路径：
+
+- `item/tool/requestUserInput` 是待响应的服务端请求，显示在对话顶部。支持选项、协议允许的自由文本回答及密码输入；点击“发送答案”才会发送，“跳过”返回空答案。缺少 `isBlocking` 的旧版请求按同步处理，明确为 `false` 时不把运行状态改成等待。多个请求分别展示。
+- `request_user_input_async` 在 Codex 0.153.x 中通过 `agentMessage` 的 `delivery: "async"` 和 `questions` 字段发送，显示为对话历史中的问题卡片。首个选项默认选中，也始终允许自由回答。点击“填入输入框”将问题和答案追加到已有草稿，再通过普通发送按钮提交；不会自动发送。这样沿用现有的追加消息、下一轮发送和失败恢复流程。旧历史中的结构化问题也可以显示，卡片不会随原 Turn 结束而消失。
+
+网页刷新后，服务端请求从 Web 运行时快照恢复；历史问题从 App Server 历史读取。卡片内未填入输入框的答案只保存在组件内存中。服务端请求由 `serverRequest/resolved` 或任务结束等运行时清理移除，不根据旧的 `autoResolutionMs` 自动回答。该功能取决于所连接 Codex 的模型与协议能力，Web 界面不会自行启用模型的异步提问工具。

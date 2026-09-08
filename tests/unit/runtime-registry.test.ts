@@ -462,9 +462,42 @@ describe("runtime projection", () => {
     } } as never);
 
     expect(registry.listPendingRequests()).toEqual([{ id: "8", method: "item/tool/requestUserInput", params: {
-      type: "userInput", autoResolutionMs: 60_000,
+      type: "userInput", isBlocking: true, autoResolutionMs: 60_000,
       questions: [{ id: "choice", header: "Mode", question: "Choose one", isOther: true, isSecret: false, options: [{ label: "Safe", description: "Use safe mode" }] }],
     } }]);
+  });
+
+  it("keeps async questions answerable without blocking work, including alongside approvals", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("t1", "turn-1");
+    pending(registry, { id: 1, method: "item/tool/requestUserInput", params: {
+      threadId: "t1", isBlocking: false, autoResolutionMs: 1,
+      questions: [{ id: "scope", header: "Scope", question: "Choose scope", options: null }],
+    } });
+    expect(registry.get("t1")).toMatchObject({ state: "running", pendingRequestIds: ["1"] });
+    expect(registry.listPendingRequests()[0]?.params).toMatchObject({ isBlocking: false });
+    notify(registry, { method: "thread/status/changed", params: { threadId: "t1", status: { type: "active", activeFlags: [] } } });
+    expect(registry.get("t1").state).toBe("running");
+    pending(registry, { id: 2, method: "item/commandExecution/requestApproval", params: { threadId: "t1" } });
+    expect(registry.get("t1").state).toBe("waitingForInput");
+    registry.resolveServerRequest("2");
+    expect(registry.get("t1")).toMatchObject({ state: "running", pendingRequestIds: ["1"] });
+    notify(registry, { method: "serverRequest/resolved", params: { threadId: "t1", requestId: 1 } });
+    expect(registry.listPendingRequests()).toEqual([]);
+    expect(registry.get("t1").state).toBe("running");
+  });
+
+  it("clears asynchronous question cards when the turn ends", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    registry.setActiveTurn("t1", "turn-1");
+    pending(registry, { id: 3, method: "item/tool/requestUserInput", params: { threadId: "t1", isBlocking: false, questions: [] } });
+    notify(registry, { method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1", status: "completed" } } });
+    expect(registry.listPendingRequests()).toEqual([]);
+    expect(registry.get("t1")).toMatchObject({ state: "justFinished", pendingRequestIds: [] });
   });
 
   it("stays waiting while another server request is still pending", () => {

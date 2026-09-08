@@ -1481,9 +1481,9 @@ describe("session operation rules", () => {
     expect(projectPendingRequest({ id: 9, method: "account/chatgptAuthTokens/refresh", params: { threadId: "thread-1" } })).toBeNull();
   });
 
-  it("keeps request_user_input pending until the browser submits answers", async () => {
+  it.each([true, false])("keeps request_user_input (isBlocking=%s) pending until the browser submits answers", async (isBlocking) => {
     const request = { id: 10, method: "item/tool/requestUserInput", params: {
-      threadId: "thread-1", turnId: "turn-1", itemId: "tool-1", autoResolutionMs: null,
+      threadId: "thread-1", turnId: "turn-1", itemId: "tool-1", isBlocking, autoResolutionMs: null,
       questions: [{ id: "mode", header: "Mode", question: "Choose", isOther: false, isSecret: false, options: [{ label: "Safe", description: "Safe mode" }] }],
     } };
     const adapter = Object.assign(new EventEmitter(), { respondPendingRequest: vi.fn() });

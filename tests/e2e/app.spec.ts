@@ -339,7 +339,7 @@ test("renders and resolves a model request_user_input server request", async ({ 
   await page.getByRole("textbox", { name: "要求后续变更" }).fill("必须调用 request_user_input 工具，询问一个 header 为 Mode、id 为 mode、问题为 Continue? 的单选题，选项标签为 Continue。收到答案后只回复 PENDING_REQUEST_RESOLVED。");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByText("Codex 正在等待你的输入", { exact: true })).toBeVisible({ timeout: 90_000 });
-  await page.getByRole("button", { name: /^Continue/ }).click();
+  await page.getByRole("radio", { name: /^Continue/ }).click();
   await page.getByRole("button", { name: "发送答案", exact: true }).click();
   await expect(page.getByText("Codex 正在等待你的输入", { exact: true })).toBeHidden({ timeout: 30_000 });
   await expect(page.locator(".agent-message").filter({ hasText: "PENDING_REQUEST_RESOLVED" })).toBeVisible({ timeout: 90_000 });

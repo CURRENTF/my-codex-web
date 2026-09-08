@@ -8,6 +8,7 @@ import { forkBoundaryForTurn } from "../fork-boundary";
 import { useAppStore, type OptimisticUserMessage } from "../store";
 import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages, type ActivityItem } from "../timeline-presentation";
 import { AgentMessage } from "./AgentMessage";
+import { AsyncQuestionCard, QuestionThreadContext } from "./AsyncQuestionCard";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
 function textFromUser(item: Extract<CodexItem, { type: "userMessage" }>): string { return item.content.map((part) => part.type === "skill" && part.name ? `$${part.name}` : part.text ?? "").filter(Boolean).join("\n"); }
@@ -78,6 +79,7 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
 function Item({ item, turnStatus, onOpenDiff, codeServer, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; codeServer: CodeServerStatus; cwd: string; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
   if (item.type === "userMessage") return <UserMessage item={item} />;
+  if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) return <AsyncQuestionCard itemId={item.id} questions={item.questions} />;
   if (item.type === "agentMessage") return <AgentMessage text={mergeStreamingText(item.text, delta)} codeServer={codeServer} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
@@ -156,5 +158,5 @@ export function Timeline({ threadId, turns, canFork = true, codeServer, cwd, onF
   const timeline = turns.length <= 40
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} codeServer={codeServer} cwd={cwd} />; })}{optimistic}</div>
     : <Virtuoso className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} codeServer={codeServer} cwd={cwd} />; }} />;
-  return <div className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div>;
+  return <QuestionThreadContext.Provider value={threadId}><div className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
 }

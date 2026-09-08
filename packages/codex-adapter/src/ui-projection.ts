@@ -8,7 +8,18 @@ import type { FileChangePatchUpdatedNotification } from "@codex-web/codex-schema
 
 export function projectThreadItem(item: ThreadItem): SessionItem | null {
   if (item.type === "userMessage") return { type: "userMessage", id: item.id, clientId: item.clientId, content: item.content.map((part) => ({ type: part.type, ...("text" in part ? { text: part.text } : {}), ...("path" in part && part.type !== "skill" ? { path: part.path } : {}), ...("name" in part ? { name: part.name } : {}), ...("url" in part ? { url: part.url } : {}) })) };
-  if (item.type === "agentMessage") return { type: "agentMessage", id: item.id, text: item.text, ...(item.phase ? { phase: item.phase } : {}) };
+  if (item.type === "agentMessage") {
+    // Codex 0.153.x sends request_user_input_async as a persisted agentMessage,
+    // not as a pending JSON-RPC server request. Older generated types omit questions.
+    const extended = item as typeof item & { delivery?: unknown; questions?: unknown };
+    const questions = Array.isArray(extended.questions) ? extended.questions.flatMap((value) => {
+      if (!value || typeof value !== "object" || typeof value.title !== "string" || !value.title.trim()) return [];
+      const options = Array.isArray(value.options) ? value.options.filter((option: unknown): option is string => typeof option === "string" && !!option.trim()) : [];
+      return [{ title: value.title, ...(options.length ? { options } : {}) }];
+    }) : [];
+    return { type: "agentMessage", id: item.id, text: item.text, ...(item.phase ? { phase: item.phase } : {}),
+      ...(extended.delivery === "async" ? { delivery: "async", ...(questions.length ? { questions } : {}) } : {}) };
+  }
   if (item.type === "reasoning") return { type: "reasoning", id: item.id, summary: item.summary };
   if (item.type === "plan") return { type: "plan", id: item.id, text: item.text };
   if (item.type === "commandExecution") return { type: "commandExecution", id: item.id, command: item.command, cwd: item.cwd, status: item.status, aggregatedOutput: item.aggregatedOutput, exitCode: item.exitCode, durationMs: item.durationMs };

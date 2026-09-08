@@ -798,3 +798,31 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Question forms share the app theme; the stack bounds multiple pending requests. */
+.pending-stack { grid-area: pending; min-width: 0; max-height: min(55dvh, 580px); overflow: auto; }
+.question-card { gap: 12px; padding: 14px; border-color: var(--line-strong); background: var(--surface); }
+.pending-stack .pending-user-input { max-height: none; overflow: visible; }
+.question-card .pending-heading { color: var(--text); font-size: 13px; }
+.question-hint { margin: -6px 0 0; color: var(--text-soft); line-height: 1.5; }
+.question-card .pending-questions { gap: 16px; }
+.question-card fieldset { min-width: 0; padding: 0; border: 0; background: transparent; }
+.question-card legend { display: grid; width: 100%; gap: 4px; margin-bottom: 8px; padding: 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.question-card legend span { color: var(--text); }
+.question-options { display: grid; gap: 6px; }
+.question-option { display: flex; align-items: start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-strong); cursor: pointer; overflow-wrap: anywhere; }
+.question-option:hover { background: var(--surface-hover); }
+.question-option.selected { border-color: var(--accent); background: var(--accent-soft); }
+.question-option:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.question-option input[type="radio"] { flex: 0 0 auto; width: 16px; height: 16px; min-height: 0; margin: 2px 0 0; padding: 0; accent-color: var(--accent); }
+.question-option > span { display: grid; min-width: 0; gap: 3px; line-height: 1.5; }
+.question-option small { color: var(--text-soft); font-size: 12px; }
+.question-custom { display: grid; gap: 6px; }
+.question-custom label { color: var(--text-soft); }
+.question-custom textarea { width: 100%; min-height: 64px; padding: 9px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-strong); color: var(--text); line-height: 1.5; }
+.question-card .pending-actions button { min-height: 34px; padding: 6px 12px; white-space: nowrap; }
+.question-card .pending-actions button.primary { background: var(--text); color: var(--surface); }
+.question-card fieldset:disabled .question-option { cursor: default; opacity: .65; }
+@media (max-width: 767px) { .question-card { padding: 12px; } .question-option { padding: 9px; } }
+
+.async-question-card { grid-area: auto; margin: 0 0 18px; max-height: none; overflow: visible; }
