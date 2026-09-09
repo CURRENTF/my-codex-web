@@ -23,7 +23,6 @@ describe("Turn error rendering", () => {
         durationMs: 2_000,
       }] as never,
       canFork: false,
-      codeServer: { url: null, state: "unconfigured", checkedAt: null },
       cwd: "/tmp/project",
       onFork: () => undefined,
       onSideChat: () => undefined,

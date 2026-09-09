@@ -4,19 +4,10 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
-import type { CodeServerStatus } from "@codex-web/shared-types";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
-import { codeServerFileUrl, codeServerFolderUrl } from "../code-server-url";
+import { codeViewUrl } from "../code-view-url";
 
-const UNCONFIGURED_CODE_SERVER: CodeServerStatus = { url: null, state: "unconfigured", checkedAt: null };
-
-function unavailableTitle(codeServer: CodeServerStatus): string {
-  if (codeServer.state === "checking") return "正在检查 code-server";
-  if (codeServer.state === "unconfigured") return "未配置 code-server";
-  return "code-server 当前不可用";
-}
-
-function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls, localPathKinds }: { text: string; codeServer: CodeServerStatus; cwd: string; localImageUrls: Record<string, string>; localPathUrls: Record<string, string>; localPathKinds: Record<string, "file" | "directory"> }) {
+function MarkdownMessage({ text, cwd, localImageUrls, localPathUrls, localPathKinds }: { text: string; cwd: string; localImageUrls: Record<string, string>; localPathUrls: Record<string, string>; localPathKinds: Record<string, "file" | "directory"> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}
@@ -29,9 +20,7 @@ function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls,
         if (href?.startsWith("/")) {
           const isDirectory = localPathKinds[href] === "directory";
           const PathIcon = isDirectory ? FolderOpen : FileCode;
-          if (codeServer.state !== "available" || !codeServer.url) return <span className="agent-inline-link file unavailable" aria-disabled="true" title={`${href} · ${unavailableTitle(codeServer)}`}><PathIcon size={14} />{children}</span>;
-          if (isDirectory) return <a className="agent-inline-link file" href={codeServerFolderUrl(codeServer.url, href)} target="_blank" rel="noreferrer" title={href}><PathIcon size={14} />{children}</a>;
-          return <a className="agent-inline-link file" href={codeServerFileUrl(codeServer.url, href, cwd)} target="_blank" rel="noreferrer" title={href}><FileCode size={14} />{children}</a>;
+          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(href) : codeViewUrl(cwd, href)} target="_blank" rel="noreferrer" title={href}><PathIcon size={14} />{children}</a>;
         }
         if (href && /^https?:\/\//.test(href)) {
           return <a className="agent-inline-link external" href={href} target="_blank" rel="noreferrer"><ArrowSquareOut size={14} />{children}</a>;
@@ -47,13 +36,11 @@ function MarkdownMessage({ text, codeServer, cwd, localImageUrls, localPathUrls,
   >{normalizeLooseDisplayMath(text)}</ReactMarkdown>;
 }
 
-function CodeCommentCard({ comment, codeServer, cwd }: { comment: CodeCommentBlock; codeServer: CodeServerStatus; cwd: string }) {
+function CodeCommentCard({ comment, cwd }: { comment: CodeCommentBlock; cwd: string }) {
   const priority = comment.priority === null ? null : Math.max(0, Math.trunc(comment.priority));
   const title = priority === null ? comment.title : comment.title.replace(new RegExp(`^\\[P${priority}\\]\\s*`, "i"), "");
   const line = comment.start === null ? "" : comment.end !== null && comment.end !== comment.start ? `${comment.start}-${comment.end}` : String(comment.start);
-  const target = codeServer.state === "available" && codeServer.url
-    ? codeServerFileUrl(codeServer.url, comment.file, cwd, comment.start)
-    : null;
+  const target = codeViewUrl(cwd, comment.file, comment.start);
   const severity = priority === null
     ? { code: "Review", label: "审查建议", icon: MagnifyingGlass }
     : {
@@ -75,15 +62,11 @@ function CodeCommentCard({ comment, codeServer, cwd }: { comment: CodeCommentBlo
       </header>
       <p>{comment.body}</p>
       <footer>
-        {target ? <a className="code-comment-location" href={target} target="_blank" rel="noreferrer" title={comment.file}>
+        <a className="code-comment-location" href={target} target="_blank" rel="noreferrer" title={comment.file}>
           <FileCode size={14} />
           <code>{comment.file}{line && `:${line}`}</code>
           <span>打开文件 <ArrowSquareOut size={13} /></span>
-        </a> : <span className="code-comment-location unavailable" aria-disabled="true" title={unavailableTitle(codeServer)}>
-          <FileCode size={14} />
-          <code>{comment.file}{line && `:${line}`}</code>
-          <span>{unavailableTitle(codeServer)}</span>
-        </span>}
+        </a>
       </footer>
     </div>
   </section>;
@@ -107,10 +90,10 @@ function GitReceipt({ receipt }: { receipt: GitReceiptBlock }) {
   </section>;
 }
 
-export function AgentMessage({ text, codeServer = UNCONFIGURED_CODE_SERVER, cwd = "/", localImageUrls = {}, localPathUrls = {}, localPathKinds = {} }: { text: string; codeServer?: CodeServerStatus; cwd?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }) {
+export function AgentMessage({ text, cwd = "/", localImageUrls = {}, localPathUrls = {}, localPathKinds = {} }: { text: string; cwd?: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }) {
   return <article className="agent-message">{parseAgentMessage(text).map((block, index) => {
-    if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} codeServer={codeServer} cwd={cwd} />;
+    if (block.kind === "codeComment") return <CodeCommentCard key={index} comment={block} cwd={cwd} />;
     if (block.kind === "gitReceipt") return <GitReceipt key={index} receipt={block} />;
-    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} codeServer={codeServer} cwd={cwd} localImageUrls={localImageUrls} localPathUrls={localPathUrls} localPathKinds={localPathKinds} /></div>;
+    return <div className="agent-message-text" key={index}><MarkdownMessage text={block.text} cwd={cwd} localImageUrls={localImageUrls} localPathUrls={localPathUrls} localPathKinds={localPathKinds} /></div>;
   })}</article>;
 }

@@ -99,7 +99,7 @@ describe("viewport layout CSS", () => {
   });
 
   it("keeps Goal in the Session header action row and collapses it to an icon in narrow panes", () => {
-    expect(sessionPaneSource).toMatch(/<header className="session-header">[\s\S]*<GoalBar[\s\S]*Side Chat[\s\S]*code-server[\s\S]*<\/header>/);
+    expect(sessionPaneSource).toMatch(/<header className="session-header">[\s\S]*<GoalBar[\s\S]*Side Chat[\s\S]*Code View[\s\S]*<\/header>/);
     expect(rule(".session-pane")).not.toContain('"goal"');
     expect(rule(".goal-bar")).toContain("max-width: min(310px, 31cqw)");
     expect(styles).toMatch(/@container session-pane \(max-width: 760px\)[\s\S]*\.goal-bar \{ width: 32px; max-width: 32px; flex: 0 0 32px; \}/);

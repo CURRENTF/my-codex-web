@@ -25,7 +25,6 @@ describe("persisted asynchronous questions", () => {
     const turn = projectTurn({ id: "turn", status: "completed", items: [item], error: null } as never);
     const html = renderToStaticMarkup(createElement(Timeline, {
       threadId: "thread", turns: [turn], cwd: "/tmp", canFork: false,
-      codeServer: { url: null, state: "unconfigured", checkedAt: null },
       onFork: () => {}, onSideChat: () => {},
     }));
     expect(html).toContain('aria-label="异步问题"');

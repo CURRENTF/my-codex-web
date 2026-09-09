@@ -51,14 +51,14 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 | `CODEX_WEB_COOKIE_SECURE` | HTTPS Origin 自动启用 | 强制登录 Cookie 仅通过 HTTPS 发送 |
 | `CODEX_WEB_TRUST_PROXY` | `0` | 只在服务仍绑定回环地址且前方是可信反向代理时设为 `1` |
 | `CODEX_WEB_SESSION_COOKIE_NAME` | `my_codex_web_session` | 登录 Cookie 名；同一域名部署多个 Web UI 时应保持唯一 |
-| `CODEX_WEB_CODE_SERVER_URL` | 未设置 | 浏览器打开 B 上文件时使用的 code-server HTTP(S) URL，例如 `https://0513jtrc.beer:12334` |
-| `CODEX_WEB_CODE_SERVER_HEALTH_URL` | `<CODEX_WEB_CODE_SERVER_URL>/healthz` | 服务端健康探测 URL；同机部署建议使用 `http://127.0.0.1:12334/healthz` |
 | `CODEX_WEB_UPDATE_REPOSITORY` | `CODEX_WEB_PROJECT_ROOT` | 自动更新使用的干净 Git checkout 根目录 |
 | `CODEX_WEB_UPDATE_REMOTE` | `origin` | 自动更新拉取的 Git remote |
 | `CODEX_WEB_UPDATE_BRANCH` | `main` | 自动更新要求检出并快进的分支 |
 | `CODEX_WEB_UPDATE_RESTART_COMMAND_JSON` | 未设置 | 更新完成后的重启命令 JSON 参数数组；设置后才启用左上角更新按钮，例如 `["systemctl","--user","restart","my-codex-web.service"]` |
 
-配置 code-server 后，Project、普通文件链接和代码审查位置都只通过 code-server 打开。Web UI 每 15 秒从服务端探测一次健康状态；探测失败时入口会显示为不可用，不会回退到客户端的 `vscode://`。若 code-server 迁移端口，只需更新上述两个环境变量并重启 Web UI。
+Project、Session 的 `code` 入口、回复中的文本文件链接和代码审查行号直接打开内置 Code View（新标签页）。不需要 code-server 或额外端口；旧 `CODEX_WEB_CODE_SERVER_URL` / `CODEX_WEB_CODE_SERVER_HEALTH_URL` 配置不再使用。
+
+Code View 使用按需加载的 CodeMirror，支持目录浏览、当前目录筛选、语法高亮、行号跳转、查找、撤销和 `⌘/Ctrl+S` 保存已有文件。仅接受已添加 Project 下 1 MiB 以内的 UTF-8 普通文件；隐藏 `.git` / `.codex`，拒绝 Codex 状态目录、越界路径、二进制文件和硬链接保存。目录列表不跟随符号链接，文件请求会校验真实路径。文件读写复用 Web 登录和 CSRF 防护。保存前检查内容版本并在同目录原子替换；与外部进程的最后一次检查和替换之间仍有极短竞争窗口，不提供跨进程文件锁。未保存修改会在切换文件和离开页面时提醒。首版不提供新建、删除、终端、扩展或语言服务器。
 
 ## 启用更新按钮
 

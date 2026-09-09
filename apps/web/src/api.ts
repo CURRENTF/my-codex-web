@@ -1,4 +1,4 @@
-import type { BootstrapPayload, CodeServerStatus, Goal, Preferences, Project, SelfUpdateStatus, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
+import type { BootstrapPayload, Goal, Preferences, Project, SelfUpdateStatus, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
@@ -53,7 +53,6 @@ export async function authenticateWebUi(password: string): Promise<void> {
 }
 
 export const endpoints = {
-  codeServerStatus: () => api<CodeServerStatus>("/api/code-server/status", { cache: "no-store" }),
   selfUpdateStatus: () => api<SelfUpdateStatus>("/api/system/update", { cache: "no-store" }),
   startSelfUpdate: () => api<SelfUpdateStatus>("/api/system/update", { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }),
   projects: () => api<Project[]>("/api/projects"),

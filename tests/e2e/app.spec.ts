@@ -44,7 +44,6 @@ test("keeps Subagents, context usage, and code access compact in the session hea
     const payload = await response.json() as {
       runtimeStates: Array<Record<string, unknown>>;
       subagents: Array<Record<string, unknown>>;
-      codeServer: Record<string, unknown>;
     };
     const runtime = payload.runtimeStates.find((entry) => entry.threadId === parentThreadId);
     if (runtime) runtime.contextUsage = { usedTokens: 28_400, maxTokens: 258_000 };
@@ -71,14 +70,8 @@ test("keeps Subagents, context usage, and code access compact in the session hea
       agentStatus: "running",
       statusMessage: "Checking the header",
     }];
-    payload.codeServer = { url: "https://code.example.test", state: "available", checkedAt: Date.now() };
     await route.fulfill({ response, json: payload });
   });
-  await page.route("**/api/code-server/status", (route) => route.fulfill({ json: {
-    url: "https://code.example.test",
-    state: "available",
-    checkedAt: Date.now(),
-  } }));
   await page.reload();
 
   const contextUsage = page.locator(".context-usage");
@@ -94,7 +87,7 @@ test("keeps Subagents, context usage, and code access compact in the session hea
 
   const codeLink = page.getByRole("link", { name: "code", exact: true });
   await expect(codeLink).toBeVisible();
-  await expect(codeLink).toHaveAttribute("href", /code\.example\.test/);
+  await expect(codeLink).toHaveAttribute("href", /\/code\?root=/);
 
   const subagentTrigger = page.getByRole("button", { name: /Subagents，1 运行中，共 1 个/ });
   await expect(subagentTrigger).toBeVisible();

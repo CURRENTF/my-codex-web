@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 1. 产品定位与协议/账户约束 | 完成 | `CodexProcessSupervisor` 只启动 stdio App Server；`CodexAdapter.initialize()` 严格执行 `initialize -> initialized`，以 `experimentalApi: true` 初始化当前 0.151 协议，`ensureAccountChecked()` 保证产品生命周期只读一次账户；`bootstrap-gate.ts` 和 `App.tsx` 提供 CLI 登录阻断页。`codex-adapter-initialize.test.ts` 检查初始化顺序、experimental capability 和单次账户读取。 |
 | 2. 单 Sidebar、主 Session、Side Chat、响应式布局 | 完成 | `App.tsx` 只有单 Sidebar；`styles.css` 使用 workspace/session container query，工作区小于 1100px 自动切顶部标签，720px 以下 Sidebar 为抽屉；分隔条保存 `sideChatWidth`。Session notice 由单一容器纵向堆叠，Full Access、并行写和错误提示不会占用同一 grid 区域重叠。`layout-css.test.ts`、`side-chat-layout.test.ts` 和 Safari 多宽度实测覆盖。 |
-| 3. 最近/项目 Sidebar | 完成 | `Sidebar.tsx` 实现全局平级最近列表、目标/Fork/状态信号、正倒序、Project 拖动、每组 8 条和面向无头 Server 的限定菜单；code-server 可用时提供打开入口，不依赖服务端本机图形文件管理器；相对更新时间由 30 秒时钟推进；失效 Project 的创建入口禁用。`CodexAdapter.listSessions()` 显式传 `cli/vscode/appServer`；Runtime 只在 Turn 边界/命名/Goal/扫描发 summary 更新，不在 token Delta 重排。 |
+| 3. 最近/项目 Sidebar | 完成 | `Sidebar.tsx` 实现全局平级最近列表、目标/Fork/状态信号、正倒序、Project 拖动、每组 8 条和面向无头 Server 的限定菜单；内置 Code View 提供文件浏览与编辑入口，不依赖服务端本机图形文件管理器；相对更新时间由 30 秒时钟推进；失效 Project 的创建入口禁用。`CodexAdapter.listSessions()` 显式传 `cli/vscode/appServer`；Runtime 只在 Turn 边界/命名/Goal/扫描发 summary 更新，不在 token Delta 重排。 |
 | 4. Project 添加与 Session 发现 | 完成 | `native-directory-picker.ts` 实现 macOS/Windows/Linux picker，前端在无结果时回退绝对路径输入；picker POST 使用 `clientRequestId` 去重。`ProjectIndexer` 做 realpath、立即根扫描、后台全量分页、最长路径归属、手工覆盖、启动/焦点/手动扫描和失效目录检测，新 Project 使用最大顺序索引加一；后端拒绝在失效目录创建 Session；手动重扫同时刷新 Project 可用性和 Session。`project-indexer.test.ts`、`project-refresh.test.ts` 覆盖来源、嵌套路径、分页、顺序、恢复刷新和 tombstone。 |
 | 5. Session 主页面与 Timeline | 完成 | `SessionPane.tsx` 提供面包屑、状态、Side Chat、编辑器和更多菜单；`Timeline.tsx` 提供用户/Agent 样式、可折叠 Plan/Reasoning Summary/工具卡、命令尾行与展开、文件统计和右侧 Diff；超过 40 Turns 使用 `React Virtuoso`。Adapter 不把完整 reasoning content 或 reasoning text Delta暴露给 Web。Safari 验证滚动、Composer 固定和实时工具卡。 |
 | 6. Composer、动态模型和 Reasoning | 完成 | `model/list` 结果投影为稳定 `ModelOption`，Composer 只显示模型支持的 reasoning；`SessionService.resolveSessionSettings()` 实现 Session -> Project -> model default 的优先级，Project 设置持久化；运行中控件可见且禁用。E2E 源码覆盖 Project 默认设置与持久设置。 |
@@ -39,7 +39,7 @@
 ## 2026-09-04 当前实现校订
 
 - Steer 与 Turn 完成竞态现在自动把同一输入发送为下一 Turn；这是明确保留的产品行为，测试与 `V1_PLAN.md` 已同步。
-- Project 菜单以无头 Server 为主要部署目标，不要求本机图形文件管理器入口；code-server 可用时提供远程打开能力。
+- Project 菜单以无头 Server 为主要部署目标，不要求本机图形文件管理器入口；内置 Code View 提供远程文件浏览与编辑能力。
 - 协议基线为 Codex CLI 0.151.0，并启用 experimental API；SQLite 增加消息 Skill/附件引用表，用于在稳定历史缺失结构化输入细节时恢复展示。
 - Subagent 状态树和 Session 内 FIFO 消息队列是 V1 闭环之后的正式扩展。
 - 附件在 Turn/Steer 确定失败或对账确认未应用后恢复为可删除草稿；结果不确定期间继续保留，避免丢失可能已经使用的输入。

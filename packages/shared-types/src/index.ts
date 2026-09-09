@@ -250,7 +250,6 @@ export interface BootstrapPayload {
   connection: { state: "connected" | "connecting" | "disconnected"; codexVersion: string | null };
   authReady: boolean;
   csrfToken: string;
-  codeServer: CodeServerStatus;
   projects: Project[];
   preferences: Preferences;
   models: ModelOption[];
@@ -260,12 +259,6 @@ export interface BootstrapPayload {
   itemDeltas: Record<string, string>;
   sessionPrefills: Record<string, string>;
   pendingRequests: PendingRequestSummary[];
-}
-
-export interface CodeServerStatus {
-  url: string | null;
-  state: "checking" | "available" | "unavailable" | "unconfigured";
-  checkedAt: number | null;
 }
 
 export type SelfUpdateState = "unavailable" | "idle" | "running" | "upToDate" | "restarting" | "succeeded" | "failed";

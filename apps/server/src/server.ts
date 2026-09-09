@@ -25,7 +25,7 @@ import { safeErrorForLog } from "./safe-error.js";
 import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
 import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, streamLocalFile } from "./attachment-store.js";
 import { acceptsSpaDocument } from "./spa-fallback.js";
-import { initialCodeServerStatus, probeCodeServer } from "./code-server.js";
+import { CodeViewError, CodeViewFiles } from "./code-view.js";
 import { restoreSubagentSnapshot } from "./subagent-restoration.js";
 import { countUpdateBlockingExecutions, SelfUpdateConflictError, SelfUpdateManager, SelfUpdateUnavailableError } from "./self-update.js";
 
@@ -79,6 +79,7 @@ export async function createServer() {
   };
 
   const repositories = new Repositories(config.databasePath);
+  const codeFiles = new CodeViewFiles(() => repositories.listProjects().map((project) => project.canonicalPath), config.codexHome);
   const attachments = new AttachmentStore(config.dataDir);
   await attachments.initialize();
   const adapter = new CodexAdapter({
@@ -181,7 +182,7 @@ export async function createServer() {
     if (request.method !== "GET" && request.method !== "HEAD" && !secureEqual(request.headers["x-csrf-token"] as string | undefined, csrfToken)) {
       return reply.code(403).send({ error: "Invalid CSRF token" });
     }
-    if (request.method !== "GET" && request.method !== "HEAD" && connectionState !== "connected") {
+    if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/code/file" && connectionState !== "connected") {
       return reply.code(503).send({ error: "Codex App Server is still reconnecting" });
     }
     const updateState = selfUpdater.getStatus().state;
@@ -211,6 +212,12 @@ export async function createServer() {
   });
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof CodeViewError) return reply.code(error.statusCode).send({ message: error.message });
+    if (_request.url.startsWith("/api/code/") && error instanceof Error && "code" in error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return reply.code(404).send({ message: "文件或目录已不存在，请刷新目录。" });
+      if (code === "EACCES" || code === "EPERM" || code === "EROFS") return reply.code(403).send({ message: "当前服务用户没有读取或保存此文件的权限。" });
+    }
     if ((error as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE") return reply.code(413).send({ error: "attachment_too_large", message: `单个附件不能超过 ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MiB。` });
     if (error instanceof z.ZodError) return reply.code(400).send({ error: "Invalid request", details: z.treeifyError(error) });
     if (error instanceof DirectoryBrowserError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
@@ -267,7 +274,6 @@ export async function createServer() {
       connection: { state: connectionState, codexVersion: null },
       authReady: adapter.account !== null,
       csrfToken,
-      codeServer: initialCodeServerStatus(config.codeServerUrl),
       projects: repositories.listProjects(),
       preferences: repositories.getPreferences(),
       models: adapter.models,
@@ -279,9 +285,21 @@ export async function createServer() {
       pendingRequests: runtimes.listPendingRequests(),
     };
   });
-  app.get("/api/code-server/status", async (_request, reply) => {
-    reply.header("cache-control", "no-store, max-age=0");
-    return probeCodeServer(config.codeServerUrl, config.codeServerHealthUrl);
+  const codePathSchema = z.object({ root: z.string().min(1).max(4096), path: z.string().max(4096).default(".") });
+  app.get("/api/code/directory", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const input = codePathSchema.parse(request.query);
+    return codeFiles.list(input.root, input.path);
+  });
+  app.get("/api/code/file", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const input = codePathSchema.parse(request.query);
+    return codeFiles.read(input.root, input.path);
+  });
+  app.put("/api/code/file", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const input = codePathSchema.extend({ content: z.string().max(1024 * 1024), version: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.body);
+    return codeFiles.save(input.root, input.path, input.content, input.version);
   });
   app.get("/api/system/update", async (_request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");

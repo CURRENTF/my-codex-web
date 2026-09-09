@@ -14,7 +14,6 @@ function packageVersion(packageJsonPath: string): string {
 function render(text: string, localImageUrls?: Record<string, string>, localPathUrls?: Record<string, string>, localPathKinds?: Record<string, "file" | "directory">) {
   return renderToStaticMarkup(createElement(AgentMessage, {
     text,
-    codeServer: { url: "https://0513jtrc.beer:12334", state: "available", checkedAt: Date.now() },
     cwd: "/home/haojitai/project",
     localImageUrls,
     localPathUrls,
@@ -152,38 +151,37 @@ describe("Agent message Markdown rendering", () => {
     const pathUrl = "/api/local-paths/00000000-0000-4000-8000-000000000000/content";
     const html = render(`[打开图片](${localPath})\n\n[报告](/data2/report.md)`, undefined, { [localPath]: pathUrl });
     expect(html).toContain(`href="${pathUrl}"`);
-    expect(html).toContain("https://0513jtrc.beer:12334/?folder=/home/haojitai/project&amp;payload=");
-    expect(html).toContain("vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fdata2%2Freport.md");
+    expect(html).toContain("/code?root=%2Fhome%2Fhaojitai%2Fproject&amp;file=");
+    expect(html).toContain("%2Fdata2%2Freport.md");
   });
 
-  it("opens a linked local directory as the code-server workspace instead of treating it as a file", () => {
+  it("opens a linked local directory as the Code View workspace instead of treating it as a file", () => {
     const directory = "/home/haojitai/projects/Sparse-vLLM/benchmark/analysis/deltakv";
     const html = render(`[分析目录](${directory})`, undefined, undefined, { [directory]: "directory" });
-    expect(html).toContain("https://0513jtrc.beer:12334/?folder=/home/haojitai/projects/Sparse-vLLM/benchmark/analysis/deltakv");
+    expect(html).toContain("/code?root=%2Fhome%2Fhaojitai%2Fprojects%2FSparse-vLLM%2Fbenchmark%2Fanalysis%2Fdeltakv");
     expect(html).not.toContain("openFile=");
   });
 
   it("preserves safe external links, remote file links, and directives", () => {
     const html = render('见 [报告](/data2/report.md) 与 [文档](https://example.com/docs)。\n\n::code-comment{title="[P1] 性能实验失败会被误判" body="失败会写成 FAILED/OOM 并正常退出。" file="/home/test/run_suite.py" start=1355 end=1369 priority=1 confidence=0.99}\n::git-push{cwd="/home/haojitai/project" branch="codex/h2o"}');
-    expect(html).toContain("https://0513jtrc.beer:12334/?folder=/home/haojitai/project&amp;payload=");
-    expect(html).toContain("vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fdata2%2Freport.md");
+    expect(html).toContain("/code?root=%2Fhome%2Fhaojitai%2Fproject&amp;file=");
+    expect(html).toContain("%2Fdata2%2Freport.md");
     expect(html).toContain('href="https://example.com/docs"');
     expect(html).toContain("P1 高优先级");
     expect(html).toContain("置信度 99%");
     expect(html).toContain("/home/test/run_suite.py:1355-1369");
-    expect(html).toContain("vscode-remote%3A%2F%2F0513jtrc.beer%3A12334%2Fhome%2Ftest%2Frun_suite.py%3A1355");
-    expect(html).toContain("gotoLineMode%22%2C%22true");
+    expect(html).toContain("%2Fhome%2Ftest%2Frun_suite.py&amp;line=1355");
+    expect(html).toContain("line=1355");
     expect(html).toContain("已推送分支");
   });
 
-  it("does not fall back to vscode links while code-server is unavailable", () => {
+  it("opens local files without an external editor service", () => {
     const html = renderToStaticMarkup(createElement(AgentMessage, {
       text: "[报告](/data2/report.md)",
-      codeServer: { url: "https://0513jtrc.beer:12334", state: "unavailable", checkedAt: Date.now() },
       cwd: "/home/haojitai/project",
     }));
-    expect(html).not.toContain("href=");
+    expect(html).toContain("/code?root=");
     expect(html).not.toContain("vscode://");
-    expect(html).toContain("code-server 当前不可用");
+    expect(html).not.toContain("unavailable");
   });
 });

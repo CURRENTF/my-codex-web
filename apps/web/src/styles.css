@@ -47,6 +47,25 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Cover dynamic scrollers (including Virtuoso), editor surfaces and portal menus. */
+* { scrollbar-width: thin; scrollbar-color: var(--text-faint) transparent; }
+@supports selector(::-webkit-scrollbar) {
+  /* Non-auto standard properties override the WebKit skin in modern Chromium. */
+  * { scrollbar-width: auto; scrollbar-color: auto; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+  *::-webkit-scrollbar-thumb { min-height: 28px; min-width: 28px; border: 2px solid transparent; border-radius: 999px; background: var(--text-faint); background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover { background-color: var(--text-soft); }
+  *::-webkit-scrollbar-thumb:active { background-color: var(--accent); }
+  *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+}
+@media (forced-colors: active) {
+  * { scrollbar-color: auto; }
+  *::-webkit-scrollbar-thumb { background-color: CanvasText; }
+  *::-webkit-scrollbar-thumb:hover, *::-webkit-scrollbar-thumb:active { background-color: Highlight; }
+}
+
 html, body, #root { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--bg); color: var(--text); font-size: 14px; -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -78,7 +97,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .sidebar-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin: 0 13px 10px; padding: 3px; border-radius: var(--radius-control); background: color-mix(in srgb, var(--line) 62%, transparent); }
 .sidebar-switch button { display: flex; height: 29px; align-items: center; justify-content: center; gap: 6px; border-radius: 7px; background: transparent; color: var(--text-soft); font-size: 12px; font-weight: 600; cursor: pointer; }
 .sidebar-switch button.active { background: var(--surface-strong); color: var(--text); box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent); }
-.sidebar-list { min-height: 0; flex: 1; overflow-y: auto; padding: 0 8px 16px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.sidebar-list { min-height: 0; flex: 1; overflow-y: auto; padding: 0 8px 16px; }
 .list-caption { display: flex; height: 30px; align-items: center; justify-content: space-between; padding: 0 8px; color: var(--text-faint); font-size: 11px; font-weight: 650; }
 .list-caption > span:first-child { color: var(--text-soft); }
 .sort-button, .caption-action { display: flex; align-items: center; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
@@ -225,7 +244,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .subagent-popover-header strong { color: var(--text); font-size: 12px; }
 .subagent-popover-header small { color: var(--text-faint); font-size: 10px; }
 .subagent-empty { margin: 0; border-top: 1px solid var(--line); padding: 20px 14px; color: var(--text-faint); font-size: 11px; text-align: center; }
-.subagent-list { display: grid; max-height: min(42dvh, 340px); overflow-y: auto; border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.subagent-list { display: grid; max-height: min(42dvh, 340px); overflow-y: auto; border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent); }
 .subagent-row { display: grid; min-width: 0; min-height: 46px; grid-template-columns: 18px minmax(110px, .85fr) minmax(210px, 1.65fr) auto; align-items: center; gap: 7px; padding-top: 7px; padding-right: 13px; padding-bottom: 7px; border-top: 1px solid color-mix(in srgb, var(--line) 48%, transparent); }
 .subagent-row:first-child { border-top: 0; }
 .subagent-row[data-state="running"], .subagent-row[data-state="waitingForInput"] { background: color-mix(in srgb, var(--accent) 4%, transparent); }
@@ -243,7 +262,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .subagent-state { color: var(--text-soft); font-size: 9px; white-space: nowrap; }
 .timeline-area { grid-area: timeline; position: relative; min-height: 0; overflow: hidden; }
 .timeline { height: 100%; }
-.timeline-static { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.timeline-static { overflow-y: auto; }
 .timeline-shell { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .timeline-shell > .timeline { min-width: 0; flex: 1; }
 .turn-block { width: min(92%, 780px); margin: 0 auto; padding: clamp(16px, 3cqw, 24px) 0 12px; }
@@ -464,7 +483,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .reasoning-select { max-width: 92px; flex: 0 1 auto; }
 .access-control:hover, .access-control:focus-within, .settings-select-trigger:hover:not(:disabled), .settings-select-trigger[data-state="open"] { background: var(--surface-hover); color: var(--text); }
 .access-control:focus-within { outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent); outline-offset: -1px; }
-.settings-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 64%, transparent); outline-offset: 1px; }
+/* Keep the focus ring inside the button so the compact toolbar cannot clip it. */
+.settings-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 64%, transparent); outline-offset: -2px; }
 .settings-select-trigger:active:not(:disabled) { transform: translateY(1px); }
 .settings-select-trigger:disabled { cursor: default; opacity: .5; }
 .access-control > span, .settings-select-value { display: block; min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -507,7 +527,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .composer-feedback.success { color: var(--success); }
 .composer-feedback.error { color: var(--danger); }
 .composer-feedback.info { color: var(--text-soft); }
-.queued-submission-list { display: grid; max-height: min(220px, 30dvh); gap: 4px; overflow-y: auto; margin-bottom: 6px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 5%, var(--surface)); padding: 5px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.queued-submission-list { display: grid; max-height: min(220px, 30dvh); gap: 4px; overflow-y: auto; margin-bottom: 6px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 5%, var(--surface)); padding: 5px; }
 .queued-submission-heading { position: sticky; top: -5px; z-index: 1; display: flex; min-height: 27px; align-items: center; gap: 7px; margin: -5px -5px 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-strong) 96%, transparent); padding: 5px 9px; color: var(--accent); font-size: 10px; font-weight: 680; }
 .queued-submission-heading small { margin-left: auto; color: var(--text-faint); font-size: 9px; font-weight: 620; }
 .queued-command-banner { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 6px 7px; color: var(--accent); font-size: 11px; }
@@ -539,7 +559,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .menu-item[data-highlighted] { background: var(--surface-hover); }
 .menu-item.danger-item { color: var(--danger); }
 .menu-separator { height: 1px; margin: 4px; background: var(--line); }
-.settings-select-menu { z-index: 70; max-width: calc(100vw - 16px); max-height: min(390px, calc(100dvh - 24px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-strong); padding: 5px; box-shadow: var(--shadow-menu); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.settings-select-menu { z-index: 70; max-width: calc(100vw - 16px); max-height: min(390px, calc(100dvh - 24px)); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-strong); padding: 5px; box-shadow: var(--shadow-menu); }
 .settings-select-menu.model { width: min(340px, calc(100vw - 16px)); min-width: var(--radix-dropdown-menu-trigger-width); }
 .settings-select-menu.reasoning { width: min(290px, calc(100vw - 16px)); min-width: var(--radix-dropdown-menu-trigger-width); }
 .settings-select-menu-label { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px; color: var(--text-soft); font-size: 10px; font-weight: 680; }
@@ -597,7 +617,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .directory-path-form input { min-width: 0; height: 33px; border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: var(--surface); padding: 0 9px; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; }
 .directory-path-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 11%, transparent); }
 .directory-path-form .button { min-height: 33px; }
-.directory-list { min-height: 230px; max-height: min(330px, 42dvh); overflow-y: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); padding: 5px 7px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.directory-list { min-height: 230px; max-height: min(330px, 42dvh); overflow-y: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); padding: 5px 7px; }
 .directory-entry { display: grid; width: 100%; min-width: 0; min-height: 37px; align-items: center; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; border-radius: 7px; background: transparent; padding: 0 8px; color: var(--text-soft); text-align: left; cursor: pointer; }
 .directory-entry:hover { background: var(--surface-hover); color: var(--text); }
 .directory-entry:active { transform: translateY(1px); }

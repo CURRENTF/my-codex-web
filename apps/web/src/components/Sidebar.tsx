@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import type { CodeServerStatus, Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
-import { codeServerFolderUrl } from "../code-server-url";
+import type { Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
+import { codeViewUrl } from "../code-view-url";
 import { useAppStore } from "../store";
 import { StatusIcon, statusText } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
@@ -90,7 +90,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
 }
 
 export interface SidebarProps {
-  projects: Project[]; sessions: SessionSummary[]; activeThreadId: string | null; preferences: Preferences; codeServer: CodeServerStatus; notificationState: BrowserNotificationControlState;
+  projects: Project[]; sessions: SessionSummary[]; activeThreadId: string | null; preferences: Preferences; notificationState: BrowserNotificationControlState;
   search: string; onSearch(value: string): void; onMode(mode: Preferences["sidebarMode"]): void;
   onSort(direction: Preferences["sortDirection"]): void; onToggleNotifications(): void; onReorder(projectId: string, targetProjectId: string): void;
   onOpen(threadId: string): void; onNew(projectId?: string): void; onAddProject(): void;
@@ -159,9 +159,7 @@ export function Sidebar(props: SidebarProps) {
               <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="project-more" aria-label={`${project.name} 更多操作`}>•••</button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end">
                 <DropdownMenu.Item className="menu-item" disabled={!project.available} onSelect={() => props.onNew(project.id)}>新建 Session</DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRescan(project.id)}>重新扫描</DropdownMenu.Item>
-                {props.codeServer.state === "available" && props.codeServer.url && project.available
-                  ? <DropdownMenu.Item asChild><a className="menu-item" href={codeServerFolderUrl(props.codeServer.url, project.canonicalPath)} target="_blank" rel="noreferrer" title="在 code-server 中打开">code</a></DropdownMenu.Item>
-                  : <DropdownMenu.Item className="menu-item" disabled>{props.codeServer.state === "checking" ? "正在检查 code-server" : "code 不可用"}</DropdownMenu.Item>}
+                <DropdownMenu.Item asChild disabled={!project.available}><a className="menu-item" href={codeViewUrl(project.canonicalPath)} target="_blank" rel="noreferrer" title="在 Code View 中打开">code</a></DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRenameProject(project)}>修改显示名称</DropdownMenu.Item>
                 <DropdownMenu.Separator className="menu-separator" />
                 <DropdownMenu.Item className="menu-item danger-item" onSelect={() => props.onRemoveProject(project)}>从侧边栏移除</DropdownMenu.Item>

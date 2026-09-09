@@ -31,7 +31,7 @@
 
 按 Project 分组，每组 Session 只有一层，不展示 Fork/subagent 树。Project 顺序由用户拖动决定；组内 Session 服从全局排序。每组默认 8 条，超出显示“展开其余 N 个”。Project 行的 `+` 直接在该目录创建 Session。
 
-Project 菜单保留：新建 Session、重新扫描、可用时在 code-server 中打开、修改显示名称、从侧边栏移除。主要部署目标是无头 Server，因此不要求提供依赖本机图形文件管理器的入口。移除只删 Web UI 映射，不删目录或 Codex Session。
+Project 菜单保留：新建 Session、重新扫描、在内置 Code View 中打开、修改显示名称、从侧边栏移除。主要部署目标是无头 Server，因此不要求提供依赖本机图形文件管理器的入口。移除只删 Web UI 映射，不删目录或 Codex Session。
 
 ## 四、Project 添加与 Session 发现
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, WarningCircle, Wrench, X, XCircle } from "@phosphor-icons/react";
 import { Virtuoso } from "react-virtuoso";
-import { mergeStreamingText, type CodeServerStatus } from "@codex-web/shared-types";
+import { mergeStreamingText } from "@codex-web/shared-types";
 import type { CodexItem, CodexTurn } from "../api";
 import { commandOutputText, commandResultDisplay } from "../command-output";
 import { forkBoundaryForTurn } from "../fork-boundary";
@@ -76,11 +76,11 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
   return <figure className="tool-image-card"><a href={item.displayUrl} target="_blank" rel="noreferrer"><img src={item.displayUrl} alt={path?.split("/").at(-1) ?? title} loading="lazy" /></a><figcaption><ImageSquare size={15} /><span><strong>{title}</strong>{path && <code title={path}>{path}</code>}</span><a href={item.displayUrl} target="_blank" rel="noreferrer" aria-label="打开原图"><ArrowSquareOut size={15} /></a></figcaption></figure>;
 }
 
-function Item({ item, turnStatus, onOpenDiff, codeServer, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; codeServer: CodeServerStatus; cwd: string; grouped?: boolean }) {
+function Item({ item, turnStatus, onOpenDiff, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
   if (item.type === "userMessage") return <UserMessage item={item} />;
   if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) return <AsyncQuestionCard itemId={item.id} questions={item.questions} />;
-  if (item.type === "agentMessage") return <AgentMessage text={mergeStreamingText(item.text, delta)} codeServer={codeServer} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
+  if (item.type === "agentMessage") return <AgentMessage text={mergeStreamingText(item.text, delta)} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
     if (grouped) return <section className="activity-reasoning"><div className="activity-reasoning-label"><Wrench size={14} />思考摘要</div>{content}</section>;
@@ -95,10 +95,10 @@ function Item({ item, turnStatus, onOpenDiff, codeServer, cwd, grouped = false }
   return null;
 }
 
-function ActivityGroup({ items, turnStatus, onOpenDiff, codeServer, cwd }: { items: ActivityItem[]; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; codeServer: CodeServerStatus; cwd: string }) {
+function ActivityGroup({ items, turnStatus, onOpenDiff, cwd }: { items: ActivityItem[]; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string }) {
   return <details className="activity-group">
     <summary><CaretRight className="activity-caret" size={14} weight="bold" /><Wrench size={15} /><span className="activity-title">思考与执行</span><span className="activity-count">{items.length} 项</span></summary>
-    <div className="activity-group-content">{items.map((item) => <Item key={item.id} item={item} turnStatus={turnStatus} onOpenDiff={onOpenDiff} codeServer={codeServer} cwd={cwd} grouped />)}</div>
+    <div className="activity-group-content">{items.map((item) => <Item key={item.id} item={item} turnStatus={turnStatus} onOpenDiff={onOpenDiff} cwd={cwd} grouped />)}</div>
   </details>;
 }
 
@@ -123,20 +123,20 @@ function OptimisticMessages({ messages }: { messages: OptimisticUserMessage[] })
   })}</section>;
 }
 
-function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDiff, codeServer, cwd }: { turn: CodexTurn; previousTurnId: string | null; canFork: boolean; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; codeServer: CodeServerStatus; cwd: string }) {
+function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDiff, cwd }: { turn: CodexTurn; previousTurnId: string | null; canFork: boolean; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string }) {
   const finalMessage = [...turn.items].reverse().find((item) => item.type === "agentMessage") as Extract<CodexItem, { type: "agentMessage" }> | undefined;
   const duration = formatTurnDuration(turn.durationMs);
   const completedAt = formatTurnCompletedAt(turn.completedAt);
   const entries = groupTimelineItems(turn.items);
   return <section className="turn-block">{entries.map((entry, index) => entry.kind === "activity"
-    ? <ActivityGroup key={`activity-${entry.items[0]?.id ?? index}`} items={entry.items} turnStatus={turn.status} onOpenDiff={onOpenDiff} codeServer={codeServer} cwd={cwd} />
-    : <Item key={entry.item.id ?? `${turn.id}-${index}`} item={entry.item} turnStatus={turn.status} onOpenDiff={onOpenDiff} codeServer={codeServer} cwd={cwd} />)}
+    ? <ActivityGroup key={`activity-${entry.items[0]?.id ?? index}`} items={entry.items} turnStatus={turn.status} onOpenDiff={onOpenDiff} cwd={cwd} />
+    : <Item key={entry.item.id ?? `${turn.id}-${index}`} item={entry.item} turnStatus={turn.status} onOpenDiff={onOpenDiff} cwd={cwd} />)}
     {!!turn.errors?.length && <TurnErrors errors={turn.errors} />}
     {turn.status !== "inProgress" && <footer className="turn-footer"><span className="turn-outcome">{turn.status === "completed" ? <Check size={13} /> : <XCircle size={13} />}{duration ? `已处理 ${duration}` : "处理完成"}{completedAt && <span className="turn-completed-at">· 完成于 {completedAt}</span>}</span>{finalMessage && <button onClick={() => copy(finalMessage.text)}><Clipboard size={13} />复制</button>}{canFork && <><button onClick={() => onFork(turn.id, "after", turn.id)}><GitFork size={13} />从此轮之后 Fork</button><button onClick={() => onFork(previousTurnId, "before", turn.id)}><GitFork size={13} />从此问题之前 Fork</button><button onClick={() => onSideChat(turn.id)}>从此处 Side Chat</button></>}</footer>}
   </section>;
 }
 
-export function Timeline({ threadId, turns, canFork = true, codeServer, cwd, onFork, onSideChat }: { threadId: string; turns: CodexTurn[]; canFork?: boolean; codeServer: CodeServerStatus; cwd: string; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void }) {
+export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideChat }: { threadId: string; turns: CodexTurn[]; canFork?: boolean; cwd: string; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void }) {
   const staticTimeline = useRef<HTMLDivElement>(null);
   const [selectedDiff, setSelectedDiff] = useState<{ path: string; kind: string; diff?: string } | null>(null);
   const optimisticMessages = useAppStore((state) => state.optimisticUserMessages[threadId] ?? EMPTY_OPTIMISTIC_MESSAGES);
@@ -156,7 +156,7 @@ export function Timeline({ threadId, turns, canFork = true, codeServer, cwd, onF
   if (!turns.length && !visibleOptimisticMessages.length) return <div className="timeline-empty"><div className="empty-mark"><TerminalWindow size={26} /></div><h2>准备开始</h2><p>描述要在这个 Project 中完成的任务。</p></div>;
   const optimistic = <OptimisticMessages messages={visibleOptimisticMessages} />;
   const timeline = turns.length <= 40
-    ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} codeServer={codeServer} cwd={cwd} />; })}{optimistic}</div>
-    : <Virtuoso className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} codeServer={codeServer} cwd={cwd} />; }} />;
+    ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
+    : <Virtuoso className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
   return <QuestionThreadContext.Provider value={threadId}><div className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
 }
