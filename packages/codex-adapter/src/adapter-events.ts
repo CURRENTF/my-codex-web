@@ -11,7 +11,7 @@ export type AdapterEvent =
   | { type: "threadStatusChanged"; threadId: string; status: "active" | "idle" | "notLoaded" | "systemError"; activeFlags: string[] }
   | { type: "turnStarted" | "turnCompleted"; threadId: string; turn: SessionTurn }
   | { type: "turnError"; threadId: string; turnId: string; error: SessionTurnError }
-  | { type: "itemUpserted"; threadId: string; turnId: string; item: SessionItem; completed: boolean; startedAtMs?: number; completedAtMs?: number; subagentUpdate?: SubagentToolUpdate }
+  | { type: "itemUpserted"; threadId: string; turnId: string; item: SessionItem; completed: boolean; startedAtMs?: number; completedAtMs?: number; subagentUpdate?: SubagentToolUpdate; subagentActivity?: Extract<ThreadItem, { type: "subAgentActivity" }> }
   | { type: "itemDelta"; threadId: string; turnId?: string; delta: ItemDeltaUiEventPayload }
   | { type: "goalUpdated"; threadId: string; goal: Goal }
   | { type: "goalCleared"; threadId: string }
@@ -136,6 +136,7 @@ export function projectAdapterEvent(notification: Notification): AdapterEvent | 
       ...(typeof params.startedAtMs === "number" ? { startedAtMs: params.startedAtMs } : {}),
       ...(typeof params.completedAtMs === "number" ? { completedAtMs: params.completedAtMs } : {}),
       ...(subagentUpdate ? { subagentUpdate } : {}),
+      ...(rawItem.type === "subAgentActivity" ? { subagentActivity: rawItem } : {}),
     };
   }
   const delta = projectItemDelta(notification.method, params);

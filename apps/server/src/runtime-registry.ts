@@ -412,6 +412,23 @@ export class ThreadRuntimeRegistry {
         this.events.publish("turn.error", { turnId: event.turnId, error: event.error }, this.ids(threadId));
         break;
       case "itemUpserted": {
+        if (event.subagentActivity) {
+          const activity = event.subagentActivity;
+          const existing = this.subagents.get(activity.agentThreadId);
+          // Interactions can target a nested agent. Only a start establishes
+          // ownership; later activities must retain its actual parent.
+          if (existing || activity.kind === "started") {
+            const parentThreadId = existing?.parentThreadId ?? threadId;
+            this.subagentParents.set(activity.agentThreadId, parentThreadId);
+            this.updateSubagent(activity.agentThreadId, {
+              parentThreadId,
+              agentPath: activity.agentPath,
+              ...(activity.kind === "started" ? { agentStatus: "running" as const, state: "running" as const } : {}),
+              ...(activity.kind === "completed" ? { agentStatus: "completed" as const, state: "justFinished" as const, activeTurnId: undefined, activeFlags: [] } : {}),
+              ...(activity.kind === "interrupted" ? { agentStatus: "interrupted" as const, state: "interrupted" as const, activeTurnId: undefined, activeFlags: [] } : {}),
+            });
+          }
+        }
         if (event.subagentUpdate) {
           for (const receiverThreadId of event.subagentUpdate.receiverThreadIds) {
             const agentState = event.subagentUpdate.agentsStates[receiverThreadId];

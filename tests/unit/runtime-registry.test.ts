@@ -23,6 +23,35 @@ function pending(registry: ThreadRuntimeRegistry, request: { id: number; method:
 }
 
 describe("runtime projection", () => {
+  it("discovers native Subagent activity without thread/started or legacy collab events", () => {
+    const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
+    const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
+    const publish = vi.spyOn(events, "publish");
+    const registry = new ThreadRuntimeRegistry(events, repositories);
+    const activity = (threadId: string, agentThreadId: string, kind: "started" | "interacted" | "interrupted" | "completed", method = "item/completed") => notify(registry, {
+      method, params: { threadId, turnId: "turn-1", item: {
+        type: "subAgentActivity", id: `${agentThreadId}-${kind}`, kind, agentThreadId, agentPath: `/root/${agentThreadId}`,
+      } },
+    });
+
+    activity("parent", "child", "started", "item/started");
+    activity("parent", "child", "started");
+    expect(registry.listSubagents()).toEqual([
+      expect.objectContaining({ threadId: "child", parentThreadId: "parent", agentPath: "/root/child", agentStatus: "running", state: "running" }),
+    ]);
+    expect(publish).toHaveBeenCalledWith("subagent.changed", expect.objectContaining({ threadId: "child" }), { threadId: "parent" });
+
+    activity("child", "nested", "started");
+    activity("parent", "nested", "interacted");
+    expect(registry.listSubagents().find((agent) => agent.threadId === "nested")).toMatchObject({ parentThreadId: "child", agentStatus: "running" });
+    activity("parent", "nested", "interrupted");
+    expect(registry.listSubagents().find((agent) => agent.threadId === "nested")).toMatchObject({ parentThreadId: "child", state: "interrupted", agentStatus: "interrupted" });
+    activity("parent", "child", "completed");
+    expect(registry.listSubagents().find((agent) => agent.threadId === "child")).toMatchObject({ state: "justFinished", agentStatus: "completed" });
+    activity("parent", "unknown-nested", "interacted");
+    expect(registry.listSubagents()).toHaveLength(2);
+  });
+
   it("restores a persisted Subagent tree when the WebUI process missed the live spawn events", () => {
     const repositories = new Repositories(path.join(mkdtempSync(path.join(tmpdir(), "codex-web-runtime-")), "app.db"));
     const events = new EventGateway(() => true); cleanups.push(() => { events.close(); repositories.close(); });
