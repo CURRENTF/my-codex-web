@@ -3,6 +3,7 @@ import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Lightn
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ContextUsage, Goal, ModelOption, Project, RuntimeState, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 import { ApiError, api, endpoints, newClientRequestId } from "../api";
+import { emptyAttachmentDraft, MAX_ATTACHMENTS, useAttachmentDrafts } from "../attachment-drafts";
 import { commandArgumentSuggestions, composerTrigger, isCompletedSkillTrigger, isSupportedSlashCommand, parseSlashCommand, referencedSkillNames, slashArgumentTrigger, slashCommands, type CompletedSkillMention, type SlashCommandName } from "../composer-commands";
 import { expectedSteerTurnId, isTurnFinishedConflict } from "../composer-intent";
 import { resizeComposerTextarea } from "../composer-textarea";
@@ -24,8 +25,6 @@ type MenuOption = { key: string; value: string; label: string; description?: str
 type MenuState = { kind: "command" | "skill" | "argument"; options: MenuOption[]; title: string; hint: string };
 type DeliveryMode = "steer" | "queue";
 type SlashCommandExecutionResult = { turnId?: string; queuedSettings?: QueuedMessageSettings };
-
-const MAX_ATTACHMENTS = 10;
 
 function formatAttachmentSize(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
@@ -97,17 +96,19 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("steer");
   const [menuIndex, setMenuIndex] = useState(0); const [dismissedMenuDraft, setDismissedMenuDraft] = useState<string | null>(null);
   const [completedSkillMention, setCompletedSkillMention] = useState<CompletedSkillMention | null>(null);
-  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
-  const [uploadingCount, setUploadingCount] = useState(0);
+  const attachmentDraft = useAttachmentDrafts((state) => state.drafts[threadId] ?? emptyAttachmentDraft);
+  const { attachments, pending: pendingUploads, error: uploadError } = attachmentDraft;
+  const uploadingCount = pendingUploads.length;
+  const setAttachments = useCallback((update: UploadedAttachment[] | ((current: UploadedAttachment[]) => UploadedAttachment[])) => {
+    useAttachmentDrafts.getState().setAttachments(threadId, update);
+  }, [threadId]);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [queuedCommandPendingId, setQueuedCommandPendingId] = useState<string | null>(null);
-  const attachmentThread = useRef(threadId);
   const running = runtimeState === "running" || runtimeState === "waitingForInput"; const disconnected = runtimeState === "disconnected"; const blocked = (disabled || disconnected) && !running;
   const blockedMessage = disabled ? "Project 目录不可用；恢复该目录后重新扫描即可继续。" : "Session 尚未完成重同步；请等待状态恢复后继续。";
   const skills = useQuery({ queryKey: ["skills", project.id], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: project.available && !disconnected, staleTime: 60_000 });
 
   useEffect(() => {
-    attachmentThread.current = threadId;
     const nextModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
     const option = models.find((item) => item.model === nextModel || item.id === nextModel);
     const nextReasoning = queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(option);
@@ -119,7 +120,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     setServiceTier(nextServiceTier);
     setAccessMode(nextAccessMode);
     steerDraftTurnId.current = null;
-    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setAttachments([]); setUploadingCount(0); setDraggingFiles(false); setQueuedCommandPendingId(null);
+    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setDraggingFiles(false); setQueuedCommandPendingId(null);
   }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.serviceTier, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
   useEffect(() => {
     if (!selectedModel || selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) return;
@@ -194,24 +195,10 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     window.requestAnimationFrame(() => { textarea.current?.focus(); textarea.current?.setSelectionRange(nextCursor, nextCursor); });
   }, [setDraft, threadId]);
 
-  const uploadFiles = useCallback(async (files: readonly File[]) => {
-    const remaining = MAX_ATTACHMENTS - attachments.length - uploadingCount;
-    if (remaining <= 0) { setFeedback({ tone: "error", text: `每条消息最多添加 ${MAX_ATTACHMENTS} 个附件。` }); return; }
-    const selected = [...files].slice(0, remaining);
-    if (!selected.length) return;
-    const targetThread = threadId;
-    setUploadingCount((count) => count + selected.length); setFeedback(null);
-    const results = await Promise.allSettled(selected.map((file) => endpoints.uploadAttachment(file)));
-    const uploaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-    if (attachmentThread.current === targetThread) setAttachments((current) => [...current, ...uploaded].slice(0, MAX_ATTACHMENTS));
-    else await Promise.all(uploaded.map((attachment) => endpoints.removeAttachment(attachment.id).catch(() => undefined)));
-    const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
-    if (attachmentThread.current === targetThread && failures.length) {
-      const first = failures[0]; setFeedback({ tone: "error", text: `有 ${failures.length} 个附件上传失败：${first instanceof Error ? first.message : "未知错误"}` });
-    }
-    setUploadingCount((count) => Math.max(0, count - selected.length));
+  const uploadFiles = useCallback((files: readonly File[]) => {
     if (fileInput.current) fileInput.current.value = "";
-  }, [attachments.length, threadId, uploadingCount]);
+    return useAttachmentDrafts.getState().upload(threadId, files);
+  }, [threadId]);
 
   const removeAttachment = useCallback(async (attachment: UploadedAttachment) => {
     setAttachments((current) => current.filter((candidate) => candidate.id !== attachment.id));
@@ -553,8 +540,9 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
             <span className="attachment-copy"><strong>{attachment.name}</strong><small>{formatAttachmentSize(attachment.size)}</small></span>
             <button type="button" aria-label={`移除附件 ${attachment.name}`} title="移除附件" onClick={() => void removeAttachment(attachment)}><X size={12} /></button>
           </div>)}
-          {Array.from({ length: uploadingCount }, (_, index) => <div className="attachment-chip uploading" key={`uploading-${index}`}><span className="attachment-file-icon"><SpinnerGap className="spinning" size={18} /></span><span className="attachment-copy"><strong>正在上传</strong><small>请稍候</small></span></div>)}
+          {pendingUploads.map((upload) => <div className="attachment-chip uploading" key={upload.id}><span className="attachment-file-icon"><SpinnerGap className="spinning" size={18} /></span><span className="attachment-copy"><strong>{upload.name}</strong><small>正在上传</small></span></div>)}
         </div>}
+        {uploadError && <p className="dialog-error" role="alert">{uploadError}</p>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
         <textarea ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
