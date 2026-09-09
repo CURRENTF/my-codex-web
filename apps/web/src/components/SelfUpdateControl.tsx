@@ -66,7 +66,7 @@ function StatusIcon({ status, showResult = true }: { status: SelfUpdateStatus; s
   return <ArrowClockwise size={17} />;
 }
 
-export function SelfUpdateControl() {
+export function SelfUpdateControl({ settingsRow = false }: { settingsRow?: boolean }) {
   const [open, setOpen] = useState(false);
   const [presentationNow, setPresentationNow] = useState(() => Date.now());
   const statusQuery = useQuery({
@@ -122,8 +122,9 @@ export function SelfUpdateControl() {
   const triggerState = resultStateExpired ? "idle" : (status?.state ?? "loading");
   const controlLabel = status ? (resultStateExpired ? "检查更新" : stepLabel(status)) : "检查更新";
   return <>
-    <button className={`icon-button self-update-trigger ${triggerState}`} onClick={() => setOpen(true)} aria-label={`更新 Codex Web：${controlLabel}`} title={`更新 Codex Web：${controlLabel}`}>
+    <button className={`${settingsRow ? "app-settings-row" : "icon-button"} self-update-trigger ${triggerState}`} onClick={() => setOpen(true)} aria-label={`更新 Codex Web：${controlLabel}`} title={`更新 Codex Web：${controlLabel}`}>
       {status ? <StatusIcon status={status} showResult={showRecentResult} /> : <SpinnerGap size={17} className="spinning" />}
+      {settingsRow && <span><strong>更新</strong><small>{controlLabel}</small></span>}
     </button>
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>

@@ -846,3 +846,19 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 @media (max-width: 767px) { .question-card { padding: 12px; } .question-option { padding: 9px; } }
 
 .async-question-card { grid-area: auto; margin: 0 0 18px; max-height: none; overflow: visible; }
+
+.app-settings { width: min(340px, calc(100vw - 24px)); padding: 8px; }
+.app-settings-title { margin: 4px 10px 8px; font-size: 13px; font-weight: 600; color: var(--text-soft); }
+.app-settings-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 10px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.app-settings-row:hover { background: var(--surface-hover); }
+.app-settings-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.app-settings-row:disabled { cursor: default; }
+.app-settings-row > svg { flex-shrink: 0; }
+.app-settings-row > span:first-of-type { flex: 1; min-width: 0; }
+.app-settings-row strong { display: block; font-size: 13px; font-weight: 500; }
+.app-settings-row small { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--text-soft); }
+.settings-state { font-size: 11px; white-space: nowrap; color: var(--text-soft); }
+.settings-toggle { flex: 0 0 30px; height: 18px; padding: 3px; border-radius: 20px; background: var(--text-soft); }
+.settings-toggle > span { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); }
+.settings-toggle.enabled { background: var(--accent); }
+.settings-toggle.enabled > span { transform: translateX(12px); }

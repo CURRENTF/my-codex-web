@@ -1,5 +1,7 @@
+import * as Popover from "@radix-ui/react-popover";
+import { useComposerPreferences } from "../composer-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
+import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
 import { codeViewUrl } from "../code-view-url";
@@ -99,6 +101,8 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
+  const setLongTextConfirmation = useComposerPreferences((state) => state.setLongTextConfirmation);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
@@ -127,13 +131,27 @@ export function Sidebar(props: SidebarProps) {
   const sessionRow = (session: SessionSummary, projectName: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} projectName={projectName} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onArchive={(target) => void runSessionAction(target, "archive")} />;
   const projectNames = useMemo(() => Object.fromEntries(props.projects.map((p) => [p.id, p.name])), [props.projects]);
   const notificationLabel = props.notificationState === "enabled" ? "关闭 Session 完成通知"
-    : props.notificationState === "blocked" ? "Chrome 已禁止此站点发送通知，请在网站设置中允许"
+    : props.notificationState === "blocked" ? "浏览器已禁止此站点发送通知，请在网站设置中允许"
       : props.notificationState === "unsupported" ? "当前浏览器不支持系统通知" : "开启 Session 完成通知";
   return <aside className="sidebar">
     <div className="sidebar-top">
       <button className="new-session-button" aria-label="新建 Session" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建</button>
-      <button className={`icon-button notification-button ${props.notificationState}`} aria-label={notificationLabel} title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} weight={props.notificationState === "enabled" ? "fill" : "regular"} />}</button>
-      <SelfUpdateControl />
+      <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label="设置" title="设置"><Gear size={19} /></button></Popover.Trigger>
+        <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" aria-label="设置">
+          <h2 className="app-settings-title">设置</h2>
+          <SelfUpdateControl settingsRow />
+          <button className="app-settings-row" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
+            {props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} />}
+            <span><strong>完成通知</strong><small>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? notificationLabel : "Session 完成时发送系统通知"}</small></span>
+            <span className="settings-state">{props.notificationState === "enabled" ? "已开启" : "已关闭"}</span>
+          </button>
+          <div className="menu-separator" />
+          <button className="app-settings-row" role="switch" aria-checked={longTextConfirmation} aria-label="长文本双回车发送" onClick={() => setLongTextConfirmation(!longTextConfirmation)}>
+            <span><strong>长文本双回车发送</strong><small>超过 50 字 / 词时，按两次 Enter 或点击发送。中文按字，英文按词。</small></span>
+            <span className={`settings-toggle ${longTextConfirmation ? "enabled" : ""}`} aria-hidden="true"><span /></span>
+          </button>
+        </Popover.Content></Popover.Portal>
+      </Popover.Root>
       <button className="icon-button" aria-label="添加 Project" onClick={props.onAddProject}><FolderOpen size={18} /></button>
     </div>
     <label className="search-field"><MagnifyingGlass size={15} /><input value={props.search} onChange={(event) => props.onSearch(event.target.value)} placeholder="搜索 Session" aria-label="搜索 Session" />{props.search && <button onClick={() => props.onSearch("")} aria-label="清除搜索"><X size={13} /></button>}</label>

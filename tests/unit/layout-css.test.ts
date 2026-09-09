@@ -126,8 +126,8 @@ describe("viewport layout CSS", () => {
     expect(rule(".no-selection .button")).toContain("margin-top: 22px");
   });
 
-  it("keeps the global update action in the upper-left toolbar", () => {
-    expect(sidebarSource).toMatch(/sidebar-top[\s\S]*notification-button[\s\S]*<SelfUpdateControl \/>[\s\S]*添加 Project[\s\S]*<\/div>/);
+  it("keeps the global update action in the upper-left settings panel", () => {
+    expect(sidebarSource).toMatch(/sidebar-top[\s\S]*aria-label="设置"[\s\S]*<SelfUpdateControl settingsRow[\s\S]*添加 Project/);
     expect(selfUpdateSource).toContain("self-update-trigger");
     expect(selfUpdateSource).toContain("shouldShowUpdateResultIndicator(status, presentationNow)");
     expect(selfUpdateSource.match(/showResult=\{showRecentResult\}/g)).toHaveLength(2);

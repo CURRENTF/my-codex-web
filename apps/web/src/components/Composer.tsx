@@ -1,3 +1,4 @@
+import { composerWordCount, useComposerPreferences } from "../composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Lightning, Paperclip, ShieldCheck, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -92,6 +93,10 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   const effectiveSettings = useRef<QueuedMessageSettings>({ model, reasoning, serviceTier, accessMode });
   effectiveSettings.current = { model, reasoning, serviceTier, accessMode };
   const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
+  const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
+  const [confirmedDraft, setConfirmedDraft] = useState<string | null>(null);
+  useEffect(() => { setConfirmedDraft(null); }, [draft, longTextConfirmation, threadId]);
+  useEffect(() => { useComposerPreferences.getState().rememberSessionModel(threadId, model); }, [threadId, model]);
   const [feedback, setFeedback] = useState<Feedback | null>(null); const [cursor, setCursor] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("steer");
   const [menuIndex, setMenuIndex] = useState(0); const [dismissedMenuDraft, setDismissedMenuDraft] = useState<string | null>(null);
@@ -449,6 +454,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
 
   const rememberSteerIntent = () => { if (deliveryMode === "steer" && running && activeTurnId) steerDraftTurnId.current ??= activeTurnId; };
   const submit = () => {
+    setConfirmedDraft(null);
     if (blocked || send.isPending || uploadingCount > 0 || !hasPayload) return;
     const parsed = parseSlashCommand(draft);
     if (parsed) {
@@ -481,7 +487,8 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) { setConfirmedDraft(null); return; }
+    if (event.key !== "Enter" || event.shiftKey) setConfirmedDraft(null);
     const parsed = parseSlashCommand(draft);
     if (event.key === "Tab" && running && !menu && parsed && isSupportedSlashCommand(parsed.name)) { event.preventDefault(); queueCommand(draft); return; }
     if (menu) {
@@ -489,7 +496,15 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       if ((event.key === "Enter" || event.key === "Tab") && menu.options[menuIndex]) { event.preventDefault(); selectMenuOption(menu.options[menuIndex]!); return; }
       if (event.key === "Escape") { event.preventDefault(); setDismissedMenuDraft(draft); return; }
     }
-    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); rememberSteerIntent(); submit(); }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (event.repeat) return;
+      if (longTextConfirmation && composerWordCount(draft) > 50 && confirmedDraft !== draft) {
+        setConfirmedDraft(draft);
+        return;
+      }
+      rememberSteerIntent(); submit();
+    }
   };
 
   const stopPrimaryAction = running && !hasPayload;
@@ -544,7 +559,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
         </div>}
         {uploadError && <p className="dialog-error" role="alert">{uploadError}</p>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
-        <textarea ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
+        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
           <div className="access-control"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><span aria-hidden="true">{accessModeLabel(accessMode)}</span><select aria-label="权限" value={accessMode} onChange={(event) => { const next = event.target.value as AccessMode; effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div>
           <div className="composer-controls">
@@ -567,6 +582,7 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
     </div>
     {blocked && !uncertainTurnStart && <p className="composer-error">{blockedMessage}</p>}
     {resolutionMessage && <p className={resolutionMessage.startsWith("无法") ? "composer-error" : "composer-resolution"}>{resolutionMessage}</p>}
+    {confirmedDraft !== null && <p className="composer-feedback info" role="status">再按一次 Enter 发送，或点击发送按钮。Shift+Enter 换行。</p>}
     {feedback && <p className={`composer-feedback ${feedback.tone}`}>{feedback.text}</p>}
     {skills.isError && trigger?.kind === "skill" && <p className="composer-error">Skills 加载失败：{skills.error.message}</p>}
     {persistAccessMode.error && <p className="composer-error">权限设置保存失败：{persistAccessMode.error.message}</p>}

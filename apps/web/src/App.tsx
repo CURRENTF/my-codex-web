@@ -1,3 +1,4 @@
+import { useComposerPreferences } from "./composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, Trash, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -368,7 +369,10 @@ export function App() {
     setSessionCreateError(null);
     try {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
-      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ clientRequestId: crypto.randomUUID() }) });
+      const rememberedModel = useComposerPreferences.getState().lastCreatedModel;
+      const model = bootstrapData?.models.find((item) => item.model === rememberedModel || item.id === rememberedModel)?.model;
+      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ model, clientRequestId: crypto.randomUUID() }) });
+      useComposerPreferences.getState().rememberCreatedSession(result.thread.id, model ?? null);
       upsertCachedSessionSummary(client, result.summary);
       navigate(`/sessions/${result.thread.id}`);
     } catch (error) {
