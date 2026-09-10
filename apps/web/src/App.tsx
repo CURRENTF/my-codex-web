@@ -1,4 +1,4 @@
-import { useComposerPreferences } from "./composer-preferences";
+import { sessionCreationDefaults, useComposerPreferences } from "./composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, Trash, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -369,10 +369,8 @@ export function App() {
     setSessionCreateError(null);
     try {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
-      const rememberedModel = useComposerPreferences.getState().lastCreatedModel;
-      const model = bootstrapData?.models.find((item) => item.model === rememberedModel || item.id === rememberedModel)?.model;
-      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ model, clientRequestId: crypto.randomUUID() }) });
-      useComposerPreferences.getState().rememberCreatedSession(result.thread.id, model ?? null);
+      const defaults = sessionCreationDefaults(useComposerPreferences.getState(), bootstrapData?.models ?? []);
+      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, clientRequestId: crypto.randomUUID() }) });
       upsertCachedSessionSummary(client, result.summary);
       navigate(`/sessions/${result.thread.id}`);
     } catch (error) {
@@ -469,7 +467,7 @@ export function App() {
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
   if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
-  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={requestRemoveProject} onPin={pinSession} onArchive={archiveFromSidebar} />
+  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar models={bootstrapData.models} projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={requestRemoveProject} onPin={pinSession} onArchive={archiveFromSidebar} />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
         {sessionCreateError && <div className="workspace-error"><WarningCircle size={15} weight="fill" /><span>{sessionCreateError}</span><button onClick={() => setSessionCreateError(null)} aria-label="关闭新建 Session 错误"><X size={14} /></button></div>}

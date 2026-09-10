@@ -3,11 +3,12 @@ import { useComposerPreferences } from "../composer-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import type { Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
+import type { ModelOption, Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
 import { codeViewUrl } from "../code-view-url";
 import { useAppStore } from "../store";
 import { StatusIcon, statusText } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
+import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
 
 export function relativeTime(timestamp: number, now = Date.now()): string {
@@ -92,6 +93,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
 }
 
 export interface SidebarProps {
+  models?: ModelOption[];
   projects: Project[]; sessions: SessionSummary[]; activeThreadId: string | null; preferences: Preferences; notificationState: BrowserNotificationControlState;
   search: string; onSearch(value: string): void; onMode(mode: Preferences["sidebarMode"]): void;
   onSort(direction: Preferences["sortDirection"]): void; onToggleNotifications(): void; onReorder(projectId: string, targetProjectId: string): void;
@@ -140,6 +142,7 @@ export function Sidebar(props: SidebarProps) {
         <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" aria-label="设置">
           <h2 className="app-settings-title">设置</h2>
           <SelfUpdateControl settingsRow />
+          <SessionDefaultsSettings models={props.models ?? []} />
           <button className="app-settings-row" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
             {props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} />}
             <span><strong>完成通知</strong><small>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? notificationLabel : "Session 完成时发送系统通知"}</small></span>

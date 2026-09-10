@@ -99,7 +99,6 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
   const [confirmedDraft, setConfirmedDraft] = useState<string | null>(null);
   useEffect(() => { setConfirmedDraft(null); }, [draft, longTextConfirmation, threadId]);
-  useEffect(() => { useComposerPreferences.getState().rememberSessionModel(threadId, model); }, [threadId, model]);
   const [feedback, setFeedback] = useState<Feedback | null>(null); const [cursor, setCursor] = useState(0);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("steer");
   const [menuIndex, setMenuIndex] = useState(0); const [dismissedMenuDraft, setDismissedMenuDraft] = useState<string | null>(null);
