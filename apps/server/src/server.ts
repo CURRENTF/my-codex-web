@@ -79,7 +79,7 @@ export async function createServer() {
   };
 
   const repositories = new Repositories(config.databasePath);
-  const codeFiles = new CodeViewFiles(() => repositories.listProjects().map((project) => project.canonicalPath), config.codexHome);
+  const codeFiles = new CodeViewFiles();
   const attachments = new AttachmentStore(config.dataDir);
   await attachments.initialize();
   const adapter = new CodexAdapter({

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, link, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, symlink, link, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,7 +13,7 @@ describe("built-in workspace editor", () => {
     await mkdir(root);
     target = path.join(root, "hello.ts");
     await writeFile(target, "export const hello = '你好';\r\n", { mode: 0o755 });
-    files = new CodeViewFiles(() => [root], path.join(base, "private"));
+    files = new CodeViewFiles();
   });
   afterEach(async () => { await rm(base, { recursive: true, force: true }); });
   it("round trips text, preserves mode, supports retry and rejects stale edits", async () => {
@@ -34,18 +34,28 @@ describe("built-in workspace editor", () => {
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   });
-  it("rejects traversal, unregistered roots, symlink escapes and protected directories", async () => {
-    await writeFile(path.join(base, "outside"), "private");
+  it("browses and edits external paths, symlink targets and hidden directories", async () => {
+    await writeFile(path.join(base, "outside"), "external text");
     await symlink(path.join(base, "outside"), path.join(root, "escape"));
-    await mkdir(path.join(root, ".git"));
-    await writeFile(path.join(root, ".git", "config"), "private");
-    await expect(files.read(root, "../outside")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(files.read(base, "outside")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(files.read(root, "escape")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(files.read(root, ".git/config")).rejects.toMatchObject({ statusCode: 403 });
+    for (const directory of [path.join(root, ".git"), path.join(root, ".codex"), path.join(base, "private")]) {
+      await mkdir(directory);
+      await writeFile(path.join(directory, "config"), "protected text");
+    }
+    for (const [browseRoot, input] of [
+      [root, "../outside"], [base, "outside"], [root, "escape"],
+      [root, path.join(base, "outside")], [root, ".git/config"],
+      [root, ".codex/config"], [base, "private/config"],
+    ]) {
+      const data = await files.read(browseRoot!, input!);
+      const content = `${data.content} updated`;
+      await files.save(browseRoot!, input!, content, data.version);
+      expect(await readFile(data.path, "utf8")).toBe(content);
+    }
     const listing = await files.list(root);
-    expect(listing.entries.map((entry) => entry.name)).toEqual(["hello.ts"]);
-    expect(listing.parent).toBeNull();
+    expect(listing.entries.map((entry) => entry.name)).toEqual([".codex", ".git", "hello.ts"]);
+    expect(listing.parent).toBe(await realpath(base));
+    expect((await files.list(root, "..")).entries.some((entry) => entry.name === "outside")).toBe(true);
+    expect((await files.list(root, path.parse(root).root)).parent).toBeNull();
   });
   it("rejects binary, invalid UTF-8, oversized and hard-linked files", async () => {
     for (const content of [Buffer.from([0, 1]), Buffer.from([255, 254]), Buffer.alloc(MAX_CODE_BYTES + 1, 97)]) {

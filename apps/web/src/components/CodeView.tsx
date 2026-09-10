@@ -31,7 +31,7 @@ export default function CodeView() {
     const data = await api<Listing>(`/api/code/directory?${query(target)}`, { cache: "no-store" });
     setListing(data); setFilter("");
   }
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<unknown>) {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setError(""); setStatus("");
     try { await action(); } catch (reason) { setError(message(reason)); }
@@ -40,6 +40,7 @@ export default function CodeView() {
   async function load(target: string) {
     const data = await api<FileData>(`/api/code/file?${query(target)}`, { cache: "no-store" });
     setFile(data); setContent(data.content); setGeneration((value) => value + 1);
+    return data;
   }
   const guard = (action: () => void) => { if (dirty) setPending(() => action); else action(); };
   const save = () => {
@@ -60,12 +61,10 @@ export default function CodeView() {
     if (!ready) return;
     void run(async () => {
       if (!root) throw new Error("请从 Project 或 Session 的 code 入口打开工作目录。");
-      await directory(root);
       if (initialFile) {
-        await load(initialFile);
-        const parent = initialFile.slice(0, initialFile.lastIndexOf("/"));
-        if (parent && parent !== root) await directory(parent);
-      }
+        const data = await load(initialFile);
+        await directory(data.path.slice(0, data.path.lastIndexOf("/")) || "/");
+      } else await directory(root);
     });
   }, [ready]);
   useEffect(() => {
@@ -77,7 +76,7 @@ export default function CodeView() {
   return <main className="code-view">
     <header className="code-view-header"><a className="header-button" href="/" onClick={(event) => { if (dirty) { event.preventDefault(); guard(() => { window.location.href = "/"; }); } }} aria-label="返回 Session"><ArrowLeft size={18} /></a><strong>Code View</strong><span className="code-root" title={root}>{root}</span></header>
     {needsLogin ? <form className="code-login" onSubmit={(event) => { event.preventDefault(); void run(async () => { await authenticateWebUi(password); await bootstrap(); setNeedsLogin(false); setReady(true); }); }}><h2>登录 Code View</h2><label>访问密码<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><button className="button primary" disabled={busy}>登录</button></form> :
-    <div className="code-workspace"><aside className="code-files" aria-label="工作目录">
+    <div className="code-workspace"><aside className="code-files" aria-label="文件目录">
       <div className="code-directory-bar"><button className="header-button" disabled={busy || !listing?.parent} aria-label="上级目录" onClick={() => void run(() => directory(listing!.parent!))}><ArrowUp size={16} /></button><span title={listing?.path}>{listing?.path.split("/").pop() || "文件"}</span><button className="header-button" disabled={busy || !listing} aria-label="刷新目录" onClick={() => void run(() => directory(listing!.path))}><ArrowClockwise size={16} /></button></div>
       <label className="code-filter">筛选文件<input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="当前目录中的文件名" /></label>
       <div className="code-file-list">{!listing && busy ? <div className="code-loading">正在读取目录…</div> : listing?.entries.filter((entry) => entry.name.toLowerCase().includes(filter.toLowerCase())).map((entry) => <button key={entry.path} className={`code-file-entry ${file?.path === entry.path ? "selected" : ""}`} disabled={busy} title={entry.name} onClick={() => entry.directory ? void run(() => directory(entry.path)) : guard(() => void run(() => load(entry.path)))}>{entry.directory ? <Folder size={16} /> : <FileCode size={16} />}<span>{entry.name}</span></button>)}{listing && !listing.entries.some((entry) => entry.name.toLowerCase().includes(filter.toLowerCase())) && <p className="code-empty">{filter ? "没有匹配的文件" : "此目录为空"}</p>}{listing?.truncated && <p>仅显示前 2000 项</p>}</div>

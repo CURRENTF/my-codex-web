@@ -8,32 +8,24 @@ export const MAX_CODE_BYTES = 1024 * 1024;
 export class CodeViewError extends Error {
   constructor(readonly statusCode: number, message: string) { super(message); }
 }
-const within = (root: string, target: string) => target === root || target.startsWith(`${root}${path.sep}`);
 const version = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
-/** Existing workspace files only. Canonical paths prevent symlink escapes. */
+/** Human-operated file access uses the Web service's host permissions. */
 export class CodeViewFiles {
   private locks = new KeyedOperationLock();
-  constructor(private roots: () => string[], private protectedRoot: string) {}
 
   private async resolve(rootInput: string, input: string) {
     const root = await realpath(rootInput);
-    const registered = await Promise.all(this.roots().map((item) => realpath(item).catch(() => "")));
-    if (!registered.some((item) => item && within(item, root))) throw new CodeViewError(403, "只能打开已添加的 Project 内的文件。");
     const target = await realpath(path.resolve(root, input || "."));
-    const protectedPath = await realpath(this.protectedRoot).catch(() => path.resolve(this.protectedRoot));
-    if (!within(root, target) || within(protectedPath, target) || target.split(path.sep).some((part) => part === ".git" || part === ".codex")) {
-      throw new CodeViewError(403, "此路径不在可编辑的工作目录内。");
-    }
     return { root, target };
   }
 
   async list(rootInput: string, input = ".") {
     const { root, target } = await this.resolve(rootInput, input);
     const entries = (await readdir(target, { withFileTypes: true }))
-      .filter((entry) => (entry.isDirectory() || entry.isFile()) && ![".git", ".codex"].includes(entry.name))
+      .filter((entry) => (entry.isDirectory() || entry.isFile()))
       .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
-    return { root, path: target, parent: target === root ? null : path.dirname(target), truncated: entries.length > 2000,
+    return { root, path: target, parent: target === path.dirname(target) ? null : path.dirname(target), truncated: entries.length > 2000,
       entries: entries.slice(0, 2000).map((entry) => ({ name: entry.name, path: path.join(target, entry.name), directory: entry.isDirectory() })) };
   }
 
