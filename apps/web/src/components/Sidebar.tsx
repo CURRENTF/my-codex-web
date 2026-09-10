@@ -11,6 +11,8 @@ import type { BrowserNotificationControlState } from "../browser-notifications";
 import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
 
+const PROJECT_SESSION_PAGE_SIZE = 12;
+
 export function relativeTime(timestamp: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - timestamp) / 1_000));
   if (seconds < 60) return "刚刚";
@@ -106,7 +108,7 @@ export function Sidebar(props: SidebarProps) {
   const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
   const setLongTextConfirmation = useComposerPreferences((state) => state.setLongTextConfirmation);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
   const [busyThreadId, setBusyThreadId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
@@ -172,7 +174,9 @@ export function Sidebar(props: SidebarProps) {
         {props.projects.map((project) => {
           const isExpanded = expanded[project.id] ?? true;
           const projectSessions = props.sessions.filter((session) => session.projectId === project.id);
-          const visible = showAll[project.id] ? projectSessions : projectSessions.slice(0, 8);
+          const visibleCount = visibleCounts[project.id] ?? PROJECT_SESSION_PAGE_SIZE;
+          const visible = projectSessions.slice(0, visibleCount);
+          const nextPageSize = Math.min(PROJECT_SESSION_PAGE_SIZE, projectSessions.length - visible.length);
           return <section className="project-group" key={project.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/project-id", project.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const source = event.dataTransfer.getData("text/project-id"); if (source && source !== project.id) props.onReorder(source, project.id); }}>
             <div className="project-row">
               <button className={`project-toggle ${project.available ? "" : "unavailable"}`} onClick={() => setExpanded((state) => ({ ...state, [project.id]: !isExpanded }))}>{isExpanded ? <CaretDown size={14} /> : <CaretRight size={14} />}<span>{project.name}</span>{!project.available && <small>目录不可用</small>}</button>
@@ -187,7 +191,7 @@ export function Sidebar(props: SidebarProps) {
               </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
             </div>
             {isExpanded && <div className="project-sessions">{visible.map((session) => sessionRow(session, project.name))}
-              {!showAll[project.id] && projectSessions.length > 8 && <button className="show-more" onClick={() => setShowAll((state) => ({ ...state, [project.id]: true }))}>展开其余 {projectSessions.length - 8} 个</button>}
+              {nextPageSize > 0 && <button className="show-more" onClick={() => setVisibleCounts((state) => ({ ...state, [project.id]: (state[project.id] ?? PROJECT_SESSION_PAGE_SIZE) + PROJECT_SESSION_PAGE_SIZE }))}>再展开 {nextPageSize} 个</button>}
             </div>}
           </section>;
         })}
