@@ -71,7 +71,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
     <div ref={track} className="session-swipe-track" onScroll={() => { suppressClick.current = true; }} onScrollEnd={settleScroll} onTouchStart={() => { programmaticTarget.current = null; if (!revealed) onReveal(null); }}>
       <div className="session-row-content">
         <div className="session-row-line">
-          <button className="session-row" onClick={open}>
+          <button className="session-row" aria-current={active ? "page" : undefined} onClick={open}>
             <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>

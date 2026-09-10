@@ -103,9 +103,15 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .sort-button, .caption-action { display: flex; align-items: center; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
 .session-row-shell { position: relative; overflow: hidden; border-radius: 10px; transition: background .14s ease; }
 .session-swipe-track { min-width: 0; }
-.session-row-content { background: var(--sidebar); transition: background .14s ease; }
+.session-row-content { display: flow-root; border-radius: inherit; background: var(--sidebar); transition: background .14s ease; }
 .session-row-shell:hover .session-row-content { background: var(--surface-hover); }
-.session-row-shell.active .session-row-content { background: var(--surface-strong); box-shadow: inset 0 0 0 1px var(--line); }
+.session-swipe-track { border-radius: inherit; }
+.session-row-shell.active .session-row-content { background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, var(--line)); }
+.session-row-shell.active:hover .session-row-content { background: color-mix(in srgb, var(--accent-soft) 68%, var(--surface)); }
+.session-row:focus-visible { border-radius: var(--radius-control); outline-offset: -3px; }
+@media (forced-colors: active) {
+  .session-row-shell.active .session-row-content { outline: 1px solid Highlight; outline-offset: -1px; }
+}
 .session-row-line { display: flex; align-items: center; }
 .session-row { display: flex; width: 100%; min-width: 0; min-height: 58px; flex: 1; align-items: center; gap: 9px; padding: 8px 5px 8px 9px; background: transparent; text-align: left; cursor: pointer; }
 .session-status-menu { display: grid; width: 30px; height: 30px; flex: 0 0 30px; margin-right: 4px; place-items: center; border-radius: 7px; background: transparent; color: var(--text-faint); cursor: pointer; transition: background .14s ease, color .14s ease, transform .12s ease; }
