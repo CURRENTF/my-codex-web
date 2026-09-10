@@ -14,6 +14,7 @@ import { optimisticallyRenameSession, patchCachedSessionSummary, removeCachedSes
 import { fetchMergedSession } from "../session-query";
 import { useAppStore } from "../store";
 import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
+import { ErrorNotice } from "./ErrorNotice";
 import { Composer } from "./Composer";
 import { TextInputDialog } from "./ActionDialog";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
@@ -49,6 +50,7 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   const liveRuntime = useAppStore((state) => state.runtimes[threadId]); const connectionState = useAppStore((state) => state.connectionState); const payload = query.data;
   const runtime = liveRuntime ?? payload?.runtime; const state: RuntimeState = connectionState === "connected" ? (runtime?.state ?? "idle") : "disconnected";
   const title = sideChat ? "Side Chat" : payload?.thread.name || payload?.thread.preview || "Session";
+  const [errorTarget, setErrorTarget] = useState<HTMLDivElement | null>(null);
   const [pendingFork, setPendingFork] = useState<PendingFork | null>(null);
   const [inheritGoal, setInheritGoal] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -124,6 +126,7 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   }, [canReconcileOptimistic, reconcileOptimisticUserMessages, threadId, turns]);
   const latestCompletedTurnId = useMemo(() => [...turns].reverse().find((turn) => turn.status === "completed")?.id ?? null, [turns]);
   const latestTurn = turns.at(-1);
+  const latestError = latestTurn?.errors?.at(-1);
   const hasActiveTurn = state === "running" || state === "waitingForInput";
   const activeStartedAt = useMemo(() => turns.find((turn) => turn.status === "inProgress")?.startedAt ?? null, [turns]);
   const [now, setNow] = useState(Date.now());
@@ -148,13 +151,15 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
     </header>
     <PendingBanner threadId={threadId} />
     <div className="session-notices">
+      <div ref={setErrorTarget} className="session-operation-errors" />
+      {latestError && (latestTurn?.status === "inProgress" || latestTurn?.status === "failed") && <ErrorNotice key={`${latestTurn.id}-${latestError.occurredAt ?? latestTurn.errors?.length}-${latestError.message}`} timestamp={latestError.occurredAt ?? null} message={`${latestTurn.status === "inProgress" ? latestError.willRetry ? "执行出错，正在自动重试" : "执行出错" : "本轮执行失败"}：${latestError.message}`} />}
       {!pendingFork && fork.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Fork 创建失败：{fork.error.message}</span><button onClick={() => fork.reset()} aria-label="关闭 Fork 创建错误"><X size={14} /></button></div>}
       {!sideChat && side.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Side Chat 创建失败：{side.error.message}</span><button onClick={() => side.reset()} aria-label="关闭 Side Chat 创建错误"><X size={14} /></button></div>}
       {shouldShowFullAccessNotice(payload.settings.accessMode, composerAccessMode, fullAccessNoticeSeen) && <div className="full-access-notice"><ShieldWarning size={16} weight="fill" /><span><strong>此 Project 已启用 Full Access</strong>Codex 可以修改工作区外的文件并执行不经逐次审批的命令。</span><button onClick={onAcknowledgeFullAccess}>知道了</button></div>}
       {parallelWriteWarning && <div className="parallel-write-warning"><WarningCircle size={15} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}
     </div>
     <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} cwd={payload.thread.cwd} onFork={(turnId, position, sourceTurnId) => void requestFork(turnId, position, sourceTurnId)} onSideChat={(turnId) => void requestSideChat(turnId)} /></div>
-    <Composer threadId={threadId} project={project} models={models} runtimeState={state} activeTurnId={runtime?.activeTurnId} uncertainTurnStart={runtime?.uncertainTurnStart} initialSettings={payload.settings} goal={payload.goal} contextUsage={runtime?.contextUsage} latestCompletedTurnId={latestCompletedTurnId} latestTurnId={latestTurn?.id ?? null} latestTurnStatus={latestTurn?.status ?? null} compact={sideChat} disabled={!project.available} onTextareaReady={onComposerReady} onAccessModeChange={setComposerAccessMode} onForkLatest={!sideChat && latestCompletedTurnId ? (clientRequestId) => requestFork(latestCompletedTurnId, "after", latestCompletedTurnId, clientRequestId) : undefined} onOpenSideChat={!sideChat ? (clientRequestId) => requestSideChat(latestCompletedTurnId, clientRequestId) : undefined} />
+    <Composer errorTarget={errorTarget} threadId={threadId} project={project} models={models} runtimeState={state} activeTurnId={runtime?.activeTurnId} uncertainTurnStart={runtime?.uncertainTurnStart} initialSettings={payload.settings} goal={payload.goal} contextUsage={runtime?.contextUsage} latestCompletedTurnId={latestCompletedTurnId} latestTurnId={latestTurn?.id ?? null} latestTurnStatus={latestTurn?.status ?? null} compact={sideChat} disabled={!project.available} onTextareaReady={onComposerReady} onAccessModeChange={setComposerAccessMode} onForkLatest={!sideChat && latestCompletedTurnId ? (clientRequestId) => requestFork(latestCompletedTurnId, "after", latestCompletedTurnId, clientRequestId) : undefined} onOpenSideChat={!sideChat ? (clientRequestId) => requestSideChat(latestCompletedTurnId, clientRequestId) : undefined} />
     {!sideChat && <TextInputDialog open={renameOpen} title="重命名 Session" description="设置一个便于在侧边栏识别的名称。" icon={<PencilSimple size={18} weight="fill" />} label="Session 名称" value={renameName} maxLength={200} pending={rename.isPending} error={rename.isError ? rename.error.message : null} submitLabel="保存名称" onValueChange={setRenameName} onOpenChange={(open) => { setRenameOpen(open); if (!open) rename.reset(); }} onSubmit={() => rename.mutate(renameName.trim())} />}
     <Dialog.Root open={!!pendingFork} onOpenChange={(open) => { if (!open && !fork.isPending) { pendingFork?.settle(false); setPendingFork(null); setInheritGoal(false); } }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content fork-dialog" aria-describedby="fork-dialog-description" onEscapeKeyDown={(event) => { if (fork.isPending) event.preventDefault(); }} onPointerDownOutside={(event) => { if (fork.isPending) event.preventDefault(); }}><div className="dialog-heading"><GitFork size={18} weight="fill" /><Dialog.Title>创建 Fork</Dialog.Title></div><Dialog.Description className="dialog-description" id="fork-dialog-description">新 Session 会复制到所选 Turn 边界，并继承当前模型、Reasoning、Fast 模式和权限；父 Session 的排队内容不会带入。</Dialog.Description><label className="goal-inherit-option"><input type="checkbox" checked={inheritGoal} disabled={fork.isPending} onChange={(event) => setInheritGoal(event.target.checked)} /><span><Target size={16} weight="fill" /><span><strong>继承父 Session 的 Goal</strong><small>默认关闭，避免分叉任务意外推进原目标。</small></span></span></label>{fork.isError && <p className="dialog-error">{fork.error.message}</p>}<div className="dialog-actions"><Dialog.Close asChild><button className="button secondary" disabled={fork.isPending}>取消</button></Dialog.Close><button className="button primary" disabled={fork.isPending || !pendingFork || !branchActionsAvailable} onClick={() => { const request = pendingFork; if (!request) return; void fork.mutateAsync({ ...request, inheritGoal }).then((result) => { request.settle(true); finishFork(result, request); }, () => undefined); }}><GitFork size={14} />创建 Fork</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </section>;

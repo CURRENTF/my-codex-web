@@ -223,7 +223,13 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .pending-actions { justify-content: flex-end; }
 .pending-actions button.primary { background: var(--accent); color: #fff; }
 .pending-response-error { order: 10; flex: 1 1 100%; margin: 0; color: var(--danger); font-size: 11px; line-height: 1.4; }
-.session-notices { grid-area: notice; display: grid; min-height: 0; }
+.session-notices { grid-area: notice; display: grid; min-height: 0; max-height: 30cqh; overflow-y: auto; }
+.session-operation-errors:empty { display: none; }
+.session-error-notice { align-items: flex-start; }
+.session-error-notice > svg { flex: 0 0 auto; margin-top: 3px; }
+.session-error-notice > span { display: grid; gap: 3px; }
+.session-error-message { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.session-error-notice time, .session-error-notice small, .turn-error-card time, .turn-error-card > small { color: var(--text-soft); font-size: 10px; font-variant-numeric: tabular-nums; }
 .session-action-error { display: flex; min-height: 38px; align-items: center; gap: 8px; margin: 8px 20px 0; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--danger) 8%, var(--surface)); color: var(--danger); font-size: 11px; }
 .session-action-error span { min-width: 0; flex: 1; color: var(--text-soft); }
 .session-action-error button { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: transparent; color: var(--text-soft); cursor: pointer; }

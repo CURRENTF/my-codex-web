@@ -76,13 +76,14 @@ function turnErrorKey(error: SessionTurnError): string {
 }
 
 function mergeTurnErrors(current: SessionTurnError[] = [], incoming: SessionTurnError[] = []): SessionTurnError[] {
-  const seen = new Set<string>();
-  return [...current, ...incoming].filter((error) => {
-    const key = turnErrorKey(error);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const merged: SessionTurnError[] = [];
+  for (const error of [...current, ...incoming]) {
+    const index = merged.findIndex((previous) => turnErrorKey(previous) === turnErrorKey(error)
+      && (previous.occurredAt == null || error.occurredAt == null || previous.occurredAt === error.occurredAt));
+    if (index < 0) merged.push(error);
+    else if (merged[index]!.occurredAt == null && error.occurredAt != null) merged[index] = error;
+  }
+  return merged;
 }
 
 function appendTurnError(turns: CodexTurn[], turnId: string, error: SessionTurnError): CodexTurn[] {
@@ -152,7 +153,7 @@ export function applySessionEvent(
   if (event.type === "turn.error") {
     const { turnId, error } = event.payload as Partial<TurnErrorUiEventPayload>;
     if (!turnId || !error) return current;
-    return { ...current, thread: { ...current.thread, turns: appendTurnError(current.thread.turns, turnId, error) } };
+    return { ...current, thread: { ...current.thread, turns: appendTurnError(current.thread.turns, turnId, { ...error, occurredAt: error.occurredAt ?? event.emittedAt }) } };
   }
   if (event.type === "item.upserted") {
     const { turnId, item, startedAtMs } = event.payload as Partial<ItemUiEventPayload>;

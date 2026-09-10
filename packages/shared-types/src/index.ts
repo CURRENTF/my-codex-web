@@ -182,6 +182,8 @@ export type SessionItem =
   | { type: "genericToolCall"; id: string; title: string; status: string; details?: string };
 
 export interface SessionTurnError {
+  /** Error notification time in milliseconds; absent in untimed historical snapshots. */
+  occurredAt?: number;
   message: string;
   code: string | null;
   httpStatusCode: number | null;

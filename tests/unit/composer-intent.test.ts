@@ -40,8 +40,8 @@ describe("Composer submission intent", () => {
     expect(submissionBlocks.every((block) => block.includes('queryKey: ["sessions"]'))).toBe(true);
   });
 
-  it("renders an Interrupt failure instead of silently leaving the Turn running", () => {
-    expect(composerSource).toContain("interrupt.error && <p className=\"composer-error\"");
+  it("renders an Interrupt failure in a dismissible notice", () => {
+    expect(composerSource).toContain("interrupt.error && <ErrorNotice");
   });
 
   it("disables submission while a Session is waiting for reconnect reconciliation", () => {

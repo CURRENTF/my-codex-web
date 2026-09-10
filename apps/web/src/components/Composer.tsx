@@ -12,6 +12,8 @@ import { refreshProjectAvailabilityAfterError } from "../project-refresh";
 import { advanceQueuedTurnBarrier, isQueuedTimelineSettled, type QueuedTurnBarrier } from "../queued-turn-barrier";
 import { fastServiceTierForModel, serviceTierForModel } from "../service-tier";
 import { useAppStore, type QueuedMessageSettings, type QueuedSubmission } from "../store";
+import { createPortal } from "react-dom";
+import { ErrorNotice } from "./ErrorNotice";
 import { SettingsSelect } from "./SettingsSelect";
 
 function requestId(): string { return crypto.randomUUID(); }
@@ -55,7 +57,8 @@ function normalizeAccessMode(value: string): AccessMode | null {
   return null;
 }
 
-export function Composer({ threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
+export function Composer({ errorTarget, threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
+  errorTarget?: HTMLElement | null;
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
   initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode };
@@ -581,11 +584,16 @@ export function Composer({ threadId, project, models, runtimeState, activeTurnId
       </div>
     </div>
     {blocked && !uncertainTurnStart && <p className="composer-error">{blockedMessage}</p>}
-    {resolutionMessage && <p className={resolutionMessage.startsWith("无法") ? "composer-error" : "composer-resolution"}>{resolutionMessage}</p>}
+    {resolutionMessage && !resolutionMessage.startsWith("无法") && <p className="composer-resolution">{resolutionMessage}</p>}
     {confirmedDraft !== null && <p className="composer-feedback info" role="status">再按一次 Enter 发送，或点击发送按钮。Shift+Enter 换行。</p>}
-    {feedback && <p className={`composer-feedback ${feedback.tone}`}>{feedback.text}</p>}
-    {skills.isError && trigger?.kind === "skill" && <p className="composer-error">Skills 加载失败：{skills.error.message}</p>}
-    {persistAccessMode.error && <p className="composer-error">权限设置保存失败：{persistAccessMode.error.message}</p>}
-    {send.error && !uncertainTurnStart && !resolutionMessage && <p className="composer-error">{send.error.message}</p>}{interrupt.error && <p className="composer-error">{interrupt.error.message}</p>}
+    {feedback && feedback.tone !== "error" && <p className={`composer-feedback ${feedback.tone}`}>{feedback.text}</p>}
+    {errorTarget && createPortal(<>
+      {resolutionMessage?.startsWith("无法") && <ErrorNotice key={`resolution-${resolutionMessage}`} message={resolutionMessage} onDismiss={() => setResolutionMessage(null)} />}
+      {feedback?.tone === "error" && <ErrorNotice key={`feedback-${feedback.text}`} message={feedback.text} onDismiss={() => setFeedback(null)} />}
+      {skills.isError && trigger?.kind === "skill" && <ErrorNotice key={`skills-${skills.errorUpdatedAt}`} message={`Skills 加载失败：${skills.error.message}`} timestamp={skills.errorUpdatedAt} />}
+      {persistAccessMode.error && <ErrorNotice key={`access-${persistAccessMode.submittedAt}`} message={`权限设置保存失败：${persistAccessMode.error.message}`} onDismiss={() => persistAccessMode.reset()} />}
+      {send.error && !uncertainTurnStart && !resolutionMessage && <ErrorNotice key={`send-${send.submittedAt}`} message={`发送失败：${send.error.message}`} onDismiss={() => send.reset()} />}
+      {interrupt.error && <ErrorNotice key={`interrupt-${interrupt.submittedAt}`} message={`停止失败：${interrupt.error.message}`} onDismiss={() => interrupt.reset()} />}
+    </>, errorTarget)}
   </div>;
 }

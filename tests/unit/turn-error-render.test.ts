@@ -9,13 +9,14 @@ describe("Turn error rendering", () => {
       threadId: "thread-1",
       turns: [{
         id: "turn-1",
-        status: "failed",
+        status: "completed",
         errors: [{
           message: "Connection reset while streaming",
           code: "responseStreamConnectionFailed",
           httpStatusCode: 503,
           additionalDetails: "upstream temporarily unavailable",
           willRetry: true,
+          occurredAt: 1750000000000,
         }],
         items: [],
         startedAt: 10,
@@ -29,7 +30,9 @@ describe("Turn error rendering", () => {
     }));
 
     expect(html).toContain("Connection reset while streaming");
-    expect(html).toContain("将自动重试");
+    expect(html).toContain("已恢复 · 历史错误");
+    expect(html).not.toContain("将自动重试");
+    expect(html).toContain('dateTime="2025-06-15T15:06:40.000Z"');
     expect(html).toContain("responseStreamConnectionFailed");
     expect(html).toContain("HTTP 503");
     expect(html).toContain("upstream temporarily unavailable");

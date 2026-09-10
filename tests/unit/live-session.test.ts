@@ -29,6 +29,7 @@ describe("applySessionEvent", () => {
     }))!;
 
     expect((failed.thread.turns[0] as unknown as { errors: unknown[] }).errors).toEqual([{
+      occurredAt: expect.any(Number),
       message: "Connection reset while streaming",
       code: "responseStreamConnectionFailed",
       httpStatusCode: 503,
@@ -54,9 +55,20 @@ describe("applySessionEvent", () => {
     } }))!;
 
     expect(failed.thread.turns[0]?.errors).toEqual([
-      { message: "Stream disconnected", code: "responseStreamDisconnected", httpStatusCode: 502, additionalDetails: null, willRetry: true },
+      { occurredAt: expect.any(Number), message: "Stream disconnected", code: "responseStreamDisconnected", httpStatusCode: 502, additionalDetails: null, willRetry: true },
       { message: "Retry attempts exhausted", code: "responseTooManyFailedAttempts", httpStatusCode: 502, additionalDetails: null, willRetry: false },
     ]);
+  });
+
+  it("retains distinct repeat times, deduplicates replay, and preserves time across snapshots", () => {
+    const error = { message: "Disconnected", code: null, httpStatusCode: null, additionalDetails: null, willRetry: true };
+    const first = { ...event("turn.error", { turnId: "turn-1", error }), emittedAt: 1000 };
+    const second = { ...first, seq: 2, emittedAt: 2000 };
+    const live = applySessionEvent(applySessionEvent(session, first), second)!;
+    const replayed = applySessionEvent(live, second)!;
+    expect(replayed.thread.turns[0]?.errors?.map((item) => item.occurredAt)).toEqual([1000, 2000]);
+    const refreshed = mergeSessionSnapshot(replayed, { ...session, thread: { ...session.thread, turns: [{ ...replayed.thread.turns[0]!, errors: [error] }] } });
+    expect(refreshed.thread.turns[0]?.errors?.map((item) => item.occurredAt)).toEqual([1000, 2000]);
   });
 
   it("builds a live turn from item events and preserves its items when completion omits them", () => {
