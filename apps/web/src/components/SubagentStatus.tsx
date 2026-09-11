@@ -8,14 +8,12 @@ import { StatusIcon } from "./StatusIcon";
 
 const ACTIVE_STATES = new Set(["running", "waitingForInput"]);
 
-export function SubagentAgentRow({ agent, nestingDepth, agentsById, rootSettings }: {
+export function SubagentAgentRow({ agent, nestingDepth }: {
   agent: SubagentRuntime;
   nestingDepth: number;
-  agentsById: ReadonlyMap<string, SubagentRuntime>;
-  rootSettings: { model: string | null; reasoning: string | null };
 }) {
   const state = displaySubagentState(agent);
-  const settings = effectiveSubagentSettings(agent, agentsById, rootSettings);
+  const settings = effectiveSubagentSettings(agent);
   const secondary = [agent.agentRole !== subagentDisplayName(agent) ? agent.agentRole : null, agent.agentPath].filter(Boolean).join(" / ");
   const statusLabel = subagentStateLabel(agent, state);
   return <div className="subagent-row" role="listitem" style={{ paddingLeft: `${12 + Math.min(nestingDepth, 4) * 18}px` }} data-state={state} title={agent.statusMessage ?? agent.prompt ?? undefined}>
@@ -23,20 +21,18 @@ export function SubagentAgentRow({ agent, nestingDepth, agentsById, rootSettings
     <div className="subagent-identity"><strong>{subagentDisplayName(agent)}</strong>{secondary && <small title={secondary}>{secondary}</small>}</div>
     <div className="subagent-meta">
       <span className="subagent-context"><GitFork size={12} />{subagentContextLabel(agent)}</span>
-      <code title={`模型：${settings.model}${settings.inheritedModel ? "（继承）" : ""}`}><span>{settings.model}</span>{settings.inheritedModel && <em>继承</em>}</code>
-      <span className="subagent-effort" title={`Reasoning effort：${settings.reasoning}${settings.inheritedReasoning ? "（继承）" : ""}`}><Brain size={12} />{settings.reasoning}{settings.inheritedReasoning && <em>继承</em>}</span>
+      <code title={`模型：${settings.model}${settings.requestedModel ? "（请求值，实际配置待确认）" : ""}`}><span>{settings.model}</span>{settings.requestedModel && <em>请求值</em>}</code>
+      <span className="subagent-effort" title={`Reasoning effort：${settings.reasoning}${settings.requestedReasoning ? "（请求值，实际配置待确认）" : ""}`}><Brain size={12} />{settings.reasoning}{settings.requestedReasoning && <em>请求值</em>}</span>
     </div>
     <span className="subagent-state">{statusLabel}</span>
   </div>;
 }
 
-export function SubagentStatusView({ parentThreadId, rootSettings, allAgents }: {
+export function SubagentStatusView({ parentThreadId, allAgents }: {
   parentThreadId: string;
-  rootSettings: { model: string | null; reasoning: string | null };
   allAgents: SubagentRuntime[];
 }) {
   const entries = useMemo(() => descendantSubagents(allAgents, parentThreadId), [allAgents, parentThreadId]);
-  const agentsById = useMemo(() => new Map(allAgents.map((agent) => [agent.threadId, agent])), [allAgents]);
   const activeCount = entries.filter(({ agent }) => ACTIVE_STATES.has(displaySubagentState(agent))).length;
   const failedCount = entries.filter(({ agent }) => displaySubagentState(agent) === "failed").length;
   const summary = activeCount > 0
@@ -54,16 +50,15 @@ export function SubagentStatusView({ parentThreadId, rootSettings, allAgents }: 
   </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content subagent-popover" sideOffset={8} align="end">
     <header className="subagent-popover-header"><span><UsersThree size={17} /><strong>Subagents</strong></span><small>{summary}</small></header>
     {entries.length
-      ? <div className="subagent-list" role="list">{entries.map(({ agent, nestingDepth }) => <SubagentAgentRow key={agent.threadId} agent={agent} nestingDepth={nestingDepth} agentsById={agentsById} rootSettings={rootSettings} />)}</div>
+      ? <div className="subagent-list" role="list">{entries.map(({ agent, nestingDepth }) => <SubagentAgentRow key={agent.threadId} agent={agent} nestingDepth={nestingDepth} />)}</div>
       : <p className="subagent-empty">当前 Session 没有 Subagent</p>}
   </Popover.Content></Popover.Portal></Popover.Root>;
 }
 
-export function SubagentStatus({ parentThreadId, rootSettings }: {
+export function SubagentStatus({ parentThreadId }: {
   parentThreadId: string;
-  rootSettings: { model: string | null; reasoning: string | null };
 }) {
   const subagentMap = useAppStore((state) => state.subagents);
   const allAgents = useMemo(() => Object.values(subagentMap), [subagentMap]);
-  return <SubagentStatusView parentThreadId={parentThreadId} rootSettings={rootSettings} allAgents={allAgents} />;
+  return <SubagentStatusView parentThreadId={parentThreadId} allAgents={allAgents} />;
 }

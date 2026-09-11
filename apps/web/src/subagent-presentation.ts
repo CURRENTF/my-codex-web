@@ -8,8 +8,8 @@ export interface SubagentTreeEntry {
 export interface EffectiveSubagentSettings {
   model: string;
   reasoning: string;
-  inheritedModel: boolean;
-  inheritedReasoning: boolean;
+  requestedModel: boolean;
+  requestedReasoning: boolean;
 }
 
 export function descendantSubagents(subagents: readonly SubagentRuntime[], parentThreadId: string): SubagentTreeEntry[] {
@@ -48,30 +48,14 @@ export function subagentDisplayName(agent: SubagentRuntime): string {
   return agent.agentNickname || agent.agentRole || agent.agentPath?.split("/").filter(Boolean).at(-1) || `Agent ${agent.threadId.slice(0, 6)}`;
 }
 
-export function effectiveSubagentSettings(
-  agent: SubagentRuntime,
-  agentsById: ReadonlyMap<string, SubagentRuntime>,
-  root: { model: string | null; reasoning: string | null },
-): EffectiveSubagentSettings {
-  const visited = new Set<string>([agent.threadId]);
-  let parent = agentsById.get(agent.parentThreadId);
-  let inheritedModel = agent.model === null && agent.requestedModel === null;
-  let inheritedReasoning = agent.reasoning === null && agent.requestedReasoning === null;
-  let model = agent.model ?? agent.requestedModel;
-  let reasoning = agent.reasoning ?? agent.requestedReasoning;
-  while (parent && (!model || !reasoning) && !visited.has(parent.threadId)) {
-    visited.add(parent.threadId);
-    model ??= parent.model ?? parent.requestedModel;
-    reasoning ??= parent.reasoning ?? parent.requestedReasoning;
-    parent = agentsById.get(parent.parentThreadId);
-  }
-  model ??= root.model;
-  reasoning ??= root.reasoning;
+export function effectiveSubagentSettings(agent: SubagentRuntime): EffectiveSubagentSettings {
+  // Missing child settings are not evidence of inheritance. In particular,
+  // native subAgentActivity events contain no model or reasoning metadata.
   return {
-    model: model || "默认模型",
-    reasoning: reasoning || "默认 effort",
-    inheritedModel,
-    inheritedReasoning,
+    model: agent.model || agent.requestedModel || "模型待确认",
+    reasoning: agent.reasoning || agent.requestedReasoning || "effort 待确认",
+    requestedModel: !agent.model && !!agent.requestedModel,
+    requestedReasoning: !agent.reasoning && !!agent.requestedReasoning,
   };
 }
 

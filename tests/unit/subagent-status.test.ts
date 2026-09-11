@@ -42,20 +42,28 @@ describe("Subagent status", () => {
     ]);
   });
 
-  it("resolves actual settings before requested and inherited settings", () => {
+  it("keeps missing child settings unknown even when its parent has settings", () => {
     const parent = agent({ threadId: "parent", parentThreadId: "root", model: "gpt-parent", reasoning: "high" });
-    const child = agent({ threadId: "child", parentThreadId: "parent", requestedReasoning: "max" });
-    const inherited = effectiveSubagentSettings(child, new Map([[parent.threadId, parent], [child.threadId, child]]), {
-      model: "gpt-root",
-      reasoning: "medium",
+    const child = agent({ threadId: "child", parentThreadId: parent.threadId });
+    expect(effectiveSubagentSettings(child)).toEqual({
+      model: "模型待确认", reasoning: "effort 待确认", requestedModel: false, requestedReasoning: false,
     });
+    const html = renderToStaticMarkup(createElement(SubagentAgentRow, { agent: child, nestingDepth: 1 }));
+    expect(html).toContain("模型待确认");
+    expect(html).not.toContain("gpt-parent");
+    expect(html).not.toContain("继承");
+  });
 
-    expect(inherited).toEqual({ model: "gpt-parent", reasoning: "max", inheritedModel: true, inheritedReasoning: false });
-    expect(effectiveSubagentSettings({ ...child, model: "gpt-actual" }, new Map(), { model: "gpt-root", reasoning: "medium" })).toMatchObject({
-      model: "gpt-actual",
-      reasoning: "max",
-      inheritedModel: false,
-      inheritedReasoning: false,
+  it("distinguishes requested settings from reported child settings", () => {
+    const child = agent({ threadId: "child", parentThreadId: "root", requestedModel: "gpt-requested", requestedReasoning: "max" });
+    expect(effectiveSubagentSettings(child)).toEqual({
+      model: "gpt-requested", reasoning: "max", requestedModel: true, requestedReasoning: true,
+    });
+    const html = renderToStaticMarkup(createElement(SubagentAgentRow, { agent: child, nestingDepth: 0 }));
+    expect(html).toContain("gpt-requested");
+    expect(html).toContain("请求值，实际配置待确认");
+    expect(effectiveSubagentSettings({ ...child, model: "gpt-actual", reasoning: "high" })).toEqual({
+      model: "gpt-actual", reasoning: "high", requestedModel: false, requestedReasoning: false,
     });
   });
 
@@ -81,14 +89,11 @@ describe("Subagent status", () => {
     });
     const triggerHtml = renderToStaticMarkup(createElement(SubagentStatusView, {
       parentThreadId: "root",
-      rootSettings: { model: "gpt-5.6-sol", reasoning: "high" },
       allAgents: [child],
     }));
     const rowHtml = renderToStaticMarkup(createElement(SubagentAgentRow, {
       agent: child,
       nestingDepth: 0,
-      agentsById: new Map([[child.threadId, child]]),
-      rootSettings: { model: "gpt-5.6-sol", reasoning: "high" },
     }));
 
     expect(triggerHtml).toContain('aria-expanded="false"');
@@ -97,9 +102,9 @@ describe("Subagent status", () => {
     expect(rowHtml).toContain("reviewer");
     expect(rowHtml).toContain("review/nested");
     expect(rowHtml).toContain("Fork 上下文");
-    expect(rowHtml).toContain("gpt-5.6-sol");
+    expect(rowHtml).toContain("模型待确认");
     expect(rowHtml).toContain("max");
-    expect(rowHtml).toContain("继承");
+    expect(rowHtml).toContain("请求值");
     expect(rowHtml).toContain('aria-label="正在执行"');
     expect(rowHtml).toContain("正在执行");
   });
