@@ -9,6 +9,32 @@ interface AttachmentDraft {
   error: string | null;
 }
 export const emptyAttachmentDraft: AttachmentDraft = { attachments: [], pending: [], error: null };
+const STORAGE_KEY = "codex-web:attachment-drafts:v1";
+
+function readDrafts(): Record<string, AttachmentDraft> {
+  try {
+    const stored: unknown = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "{}");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+    return Object.fromEntries(Object.entries(stored).flatMap(([threadId, value]) => {
+      if (!value || typeof value !== "object") return [];
+      const draft = value as Partial<AttachmentDraft>;
+      if (!Array.isArray(draft.attachments)) return [];
+      const attachments = draft.attachments.filter((item): item is UploadedAttachment => item
+        && typeof item.id === "string" && typeof item.name === "string" && typeof item.url === "string"
+        && typeof item.mimeType === "string" && typeof item.size === "number" && Number.isFinite(item.size)
+        && (item.kind === "image" || item.kind === "file")).slice(0, MAX_ATTACHMENTS);
+      // A page reload cancels the browser's uploads; they cannot resume from metadata.
+      const error = Array.isArray(draft.pending) && draft.pending.length
+        ? "页面刷新中断了未完成的上传，请重新选择文件。已上传的附件已保留。"
+        : typeof draft.error === "string" ? draft.error : null;
+      return attachments.length || error ? [[threadId, { attachments, pending: [], error }]] : [];
+    }));
+  } catch {
+    // Storage may be unavailable, full, or contain a damaged previous draft.
+    return {};
+  }
+}
+
 interface AttachmentDraftStore {
   drafts: Record<string, AttachmentDraft>;
   setAttachments(threadId: string, update: UploadedAttachment[] | ((current: UploadedAttachment[]) => UploadedAttachment[])): void;
@@ -17,7 +43,7 @@ interface AttachmentDraftStore {
 
 // Uploads belong to a Session draft, independent of the mounted Composer.
 export const useAttachmentDrafts = create<AttachmentDraftStore>((set, get) => ({
-  drafts: {},
+  drafts: readDrafts(),
   setAttachments: (threadId, update) => set((state) => {
     const draft = state.drafts[threadId] ?? emptyAttachmentDraft;
     return { drafts: { ...state.drafts, [threadId]: { ...draft, attachments: typeof update === "function" ? update(draft.attachments) : update } } };
@@ -49,3 +75,15 @@ export const useAttachmentDrafts = create<AttachmentDraftStore>((set, get) => ({
     }));
   },
 }));
+
+useAttachmentDrafts.subscribe(({ drafts }) => {
+  try {
+    // Keep descriptors only, never File objects or image bytes. sessionStorage
+    // survives refresh without sharing an editable draft with another tab.
+    const active = Object.fromEntries(Object.entries(drafts).filter(([, draft]) =>
+      draft.attachments.length || draft.pending.length || draft.error));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(active));
+  } catch {
+    // Upload completion must not fail because browser storage is unavailable.
+  }
+});

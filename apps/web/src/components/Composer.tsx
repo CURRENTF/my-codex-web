@@ -211,7 +211,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     setAttachments((current) => current.filter((candidate) => candidate.id !== attachment.id));
     try { await endpoints.removeAttachment(attachment.id); }
     catch (error) { setFeedback({ tone: "error", text: `删除附件失败：${error instanceof Error ? error.message : "未知错误"}` }); }
-  }, []);
+  }, [setAttachments]);
 
   const attachmentIds = attachments.map((attachment) => attachment.id);
   const hasPayload = draft.trim().length > 0 || attachments.length > 0;
