@@ -20,6 +20,9 @@ codex-web
 
 默认地址为 `http://127.0.0.1:7373`。`codex-web` 会自动打开浏览器；设置 `CODEX_WEB_OPEN_BROWSER=0` 可关闭此行为。
 
+设置中的「显示机器资源」开关默认关闭，仅保存到当前浏览器。开启后，右侧悬浮栏显示运行 Web 服务的主机 CPU 利用率和最高 GPU 利用率；点击展开可查看每张卡的显存、功率及利用率，以及主机内存。前台每 3 秒刷新，后台标签页暂停轮询，关闭后停止请求。服务端合并并发采样并缓存 2 秒。GPU 需要服务用户可以执行 `nvidia-smi`，支持多张 NVIDIA GPU；AMD / Apple GPU 和 CPU 功率暂不采集，缺失指标显示不可用。CPU / 内存为主机视角，不代表容器配额或单个 Session 用量。资源接口沿用 Web 登录保护。
+
+
 通过反向 SSH 隧道和 HTTPS 反向代理部署到远程 Linux/WSL 主机时，参见 [Worker-A 远程部署运行手册](docs/DEPLOYMENT_LINUX_REVERSE_TUNNEL.md)。
 
 ## 数据目录与 CODEX_HOME

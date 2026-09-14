@@ -8,6 +8,7 @@ import { codeViewUrl } from "../code-view-url";
 import { useAppStore } from "../store";
 import { StatusIcon, statusText } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
+import { MachineMonitorSetting } from "./MachineMonitor";
 import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
 
@@ -145,6 +146,7 @@ export function Sidebar(props: SidebarProps) {
           <h2 className="app-settings-title">设置</h2>
           <SelfUpdateControl settingsRow />
           <SessionDefaultsSettings models={props.models ?? []} />
+          <MachineMonitorSetting />
           <button className="app-settings-row" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
             {props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} />}
             <span><strong>完成通知</strong><small>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? notificationLabel : "Session 完成时发送系统通知"}</small></span>

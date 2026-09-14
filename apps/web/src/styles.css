@@ -879,3 +879,24 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .settings-toggle > span { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); }
 .settings-toggle.enabled { background: var(--accent); }
 .settings-toggle.enabled > span { transform: translateX(12px); }
+
+/* Resource trigger sits below sidebar/scrim (30); details use the existing popover layer (50). */
+.machine-monitor-trigger { position: fixed; right: max(10px, env(safe-area-inset-right)); top: 62px; z-index: 20; display: flex; align-items: center; gap: 6px; min-height: 36px; max-width: calc(100vw - 20px); border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-strong); padding: 0 10px; color: var(--text-soft); box-shadow: var(--shadow-menu); cursor: pointer; font: 11px ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.machine-monitor-trigger:hover { background: var(--surface-hover); color: var(--text); }
+.machine-monitor-trigger:active { transform: scale(.98); }
+.machine-monitor-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.machine-monitor-gpu { margin-left: 9px; }
+.machine-monitor-panel { width: min(330px, calc(100vw - 16px)); max-height: min(480px, var(--radix-popover-content-available-height)); overflow: auto; padding: 12px; background: var(--surface-strong); }
+.machine-monitor-panel header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.machine-monitor-panel header small { display: block; margin-top: 3px; color: var(--text-soft); overflow-wrap: anywhere; }
+.machine-monitor-panel section { margin-top: 12px; }
+.machine-monitor-device { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+.machine-monitor-device > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 11px; }
+.machine-monitor-panel dl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; margin: 7px 0 0; }
+.machine-monitor-panel dt { color: var(--text-soft); font-size: 10px; }
+.machine-monitor-panel dd { margin: 3px 0 0; font: 11px ui-monospace, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.machine-monitor-panel p, .machine-monitor-panel footer { margin: 12px 0 0; color: var(--text-soft); font-size: 11px; line-height: 1.6; }
+@media (max-width: 767px) {
+  .machine-monitor-trigger { top: 62px; min-height: 32px; padding-inline: 8px; gap: 5px; font-size: 10px; }
+  .machine-monitor-gpu { margin-left: 7px; }
+}

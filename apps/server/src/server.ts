@@ -1,3 +1,4 @@
+import { MachineMetricsSampler } from "./machine-metrics.js";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -80,6 +81,7 @@ export async function createServer() {
 
   const repositories = new Repositories(config.databasePath);
   const codeFiles = new CodeViewFiles();
+  const machineMetrics = new MachineMetricsSampler();
   const attachments = new AttachmentStore(config.dataDir);
   await attachments.initialize();
   const adapter = new CodexAdapter({
@@ -359,6 +361,11 @@ export async function createServer() {
   app.get("/api/models", async () => adapter.models);
   app.get("/api/projects", async () => repositories.listProjects());
   app.get("/api/projects/:projectId/skills", async (request) => sessions.listProjectSkills(idSchema.parse((request.params as { projectId: string }).projectId)));
+  app.get("/api/machine-metrics", async (_request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return machineMetrics.read();
+  });
+
   app.get("/api/preferences", async () => repositories.getPreferences());
   app.patch("/api/preferences", async (request) => {
     const { clientRequestId, ...changes } = z.object({

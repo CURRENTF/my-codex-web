@@ -238,6 +238,15 @@ export interface SkillOption {
   scope: "user" | "repo" | "system" | "admin";
 }
 
+export interface MachineMetrics {
+  sampledAt: string;
+  hostname: string;
+  cpu: { utilizationPercent: number | null; logicalCores: number; powerWatts: number | null };
+  memory: { usedBytes: number; totalBytes: number };
+  gpuStatus: "available" | "unavailable";
+  gpus: Array<{ id: string; name: string; utilizationPercent: number | null; memoryUsedMiB: number | null; memoryTotalMiB: number | null; powerWatts: number | null; powerLimitWatts: number | null }>;
+}
+
 export interface Preferences {
   sidebarMode: "recent" | "projects";
   sortDirection: "asc" | "desc";
