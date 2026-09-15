@@ -1,3 +1,4 @@
+import { PromptSchedule } from "./PromptSchedule";
 import { composerWordCount, useComposerPreferences } from "../composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Lightning, Paperclip, ShieldCheck, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
@@ -571,12 +572,13 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
               {fastServiceTier && <button type="button" className={`service-tier-toggle ${fastMode ? "active" : ""}`} role="switch" aria-checked={fastMode} aria-label={`Fast 模式${fastMode ? "已开启" : "已关闭"}`} title={`${fastServiceTier.name}：${fastServiceTier.description}`} disabled={running || blocked} onClick={() => { const next = fastMode ? null : fastServiceTier.id; effectiveSettings.current = { ...effectiveSettings.current, serviceTier: next }; setServiceTier(next); }}><Lightning size={13} weight={fastMode ? "fill" : "regular"} /><span>{fastServiceTier.name}</span></button>}
             </div>
             <div className="composer-actions">
+              {!compact && <PromptSchedule key={threadId} threadId={threadId} />}
               <input ref={fileInput} className="attachment-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => void uploadFiles([...(event.target.files ?? [])])} />
               <button type="button" className="attachment-picker" aria-label="添加图片或文件" title="添加图片或文件" disabled={blocked || uploadingCount > 0 || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}>{uploadingCount > 0 ? <SpinnerGap className="spinning" size={16} /> : <Paperclip size={17} />}</button>
               <div className={`composer-running-controls ${running ? "is-active" : "is-idle"}`}>
                 <button type="button" className={`delivery-mode-toggle ${deliveryMode}`} role="switch" aria-checked={deliveryMode === "queue"} aria-label={running ? `需求发送方式：${deliveryMode === "queue" ? "排队" : "Steer"}` : "需求发送方式当前不可用，没有正在运行的 Turn"} title={running ? deliveryMode === "queue" ? "当前 Turn 完成后自动发送" : "立即追加到当前 Turn" : "当前没有正在运行的 Turn"} disabled={!running} onClick={() => { const next = deliveryMode === "steer" ? "queue" : "steer"; setDeliveryMode(next); if (next === "queue") steerDraftTurnId.current = null; }}><span className="delivery-mode-track" aria-hidden="true"><span /></span><span className="delivery-mode-label">{deliveryMode === "queue" ? "排队" : "Steer"}</span></button>
               </div>
-              <button className={stopPrimaryAction ? "stop-button" : "send-button"} onPointerDown={() => { if (!stopPrimaryAction) rememberSteerIntent(); }} onClick={runPrimaryAction} disabled={primaryActionDisabled} aria-label={stopPrimaryAction ? "停止当前 Turn" : running && deliveryMode === "queue" ? "排到下一 Turn" : running ? "Steer 当前 Turn 或排队 Slash 命令" : "发送或执行命令"} title={stopPrimaryAction ? "停止当前 Turn" : undefined}>{stopPrimaryAction ? <Square size={13} weight="fill" /> : running && deliveryMode === "queue" ? <ClockCounterClockwise size={16} weight="bold" /> : <ArrowUp size={17} weight="bold" />}</button>
+              <button className={stopPrimaryAction ? "stop-button" : "send-button"} onPointerDown={() => { if (!stopPrimaryAction) rememberSteerIntent(); }} onClick={runPrimaryAction} disabled={primaryActionDisabled} aria-label={stopPrimaryAction ? "停止当前 Turn" : running && deliveryMode === "queue" ? "排到下一 Turn" : running ? "Steer 当前 Turn 或排队 Slash 命令" : "发送或执行命令"} title={stopPrimaryAction ? "停止当前 Turn" : undefined}>{stopPrimaryAction ? <Square size={13} weight="fill" /> : running && deliveryMode === "queue" ? <ClockCounterClockwise size={16} weight="bold" /> : <ArrowUp size={15} weight="bold" />}</button>
             </div>
           </div>
         </div>

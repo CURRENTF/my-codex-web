@@ -1,3 +1,4 @@
+import { PromptScheduler } from "./prompt-scheduler.js";
 import { MachineMetricsSampler } from "./machine-metrics.js";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync } from "node:fs";
@@ -125,6 +126,7 @@ export async function createServer() {
 
   let startupPhase = true;
   let connectionState: AppServerConnectionState = "disconnected";
+  const promptScheduler = new PromptScheduler(repositories, sessions, () => connectionState === "connected");
   const recovery = new ConnectionRecovery({
     reconcile: () => sessions.reconcileAfterReconnect(),
     onState: (state) => {
@@ -423,6 +425,14 @@ export async function createServer() {
     const query = z.object({ projectId: z.string().optional(), search: z.string().optional(), sortDirection: z.enum(["asc", "desc"]).optional() }).parse(request.query);
     return sessions.listSessions(query);
   });
+  app.get("/api/sessions/:threadId/schedule", async (request) => promptScheduler.get(idSchema.parse((request.params as { threadId: string }).threadId)));
+  app.put("/api/sessions/:threadId/schedule", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const body = z.object({ intervalMinutes: z.number().int().min(1).max(525600), prompt: z.string().trim().min(1).max(32000), enabled: z.boolean() }).parse(request.body);
+    const mapping = repositories.getProjectSession(threadId);
+    if (!mapping || mapping.hidden || runtimes.getSideChat(threadId)) throw Object.assign(new Error("任务不存在或不支持定时轮询"), { statusCode: 404 });
+    return promptScheduler.set(threadId, body);
+  });
   app.get("/api/sessions/:threadId", async (request) => sessions.readSession(idSchema.parse((request.params as { threadId: string }).threadId)));
   app.post("/api/sessions/:threadId/viewed", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
@@ -558,9 +568,11 @@ export async function createServer() {
     indexer.scanAllInBackground();
   }
 
+  promptScheduler.start();
   return {
     app, adapter, events, repositories, selfUpdater,
     async close() {
+      await promptScheduler.stop();
       recovery.stop();
       sessions.dispose();
       events.close();

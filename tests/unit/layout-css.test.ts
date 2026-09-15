@@ -225,6 +225,6 @@ describe("viewport layout CSS", () => {
     expect(composerSource).toContain('<SettingsSelect className="model-select"');
     expect(composerSource).toContain('<SettingsSelect className="reasoning-select"');
     expect(composerSource).toMatch(/composer-toolbar[\s\S]*access-control[\s\S]*composer-controls[\s\S]*composer-settings[\s\S]*model-select[\s\S]*reasoning-select[\s\S]*composer-actions[\s\S]*composer-running-controls[\s\S]*send-button/);
-    expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 29px");
+    expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 25px");
   });
 });

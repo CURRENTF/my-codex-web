@@ -3477,3 +3477,33 @@ describe("session operation rules", () => {
     expect(cached?.name).toBe("另一客户端的手动标题");
   });
 });
+
+describe("scheduled Turn restoration", () => {
+  it.each(["inProgress", "completed"] as const)("reads a cold session before sending when persisted Turn is %s", async (status) => {
+    const snapshot = { id: "thread-1", turns: [turn("old-turn", status)] };
+    const adapter = {
+      resumeSession: vi.fn(async () => ({ thread: snapshot, settings: { model: "gpt-test", reasoning: "high", accessMode: "fullAccess" } })),
+      readSession: vi.fn(async () => snapshot),
+      startTurn: vi.fn(async () => ({ turn: turn("new-turn", "inProgress") })),
+    };
+    const repositories = {
+      getProjectSession: vi.fn(() => ({ project_id: "project-1", cwd_snapshot: "/tmp/project", hidden: 0 })),
+      getProject: vi.fn(() => ({ id: "project-1", canonicalPath: "/tmp/project", defaultModel: "gpt-test", defaultReasoning: "high", defaultAccessMode: "fullAccess" })),
+      setSessionTurnSettings: vi.fn(),
+    };
+    const runtimes = {
+      get: vi.fn(() => ({ threadId: "thread-1", state: "idle", activeFlags: [], pendingRequestIds: [] })),
+      getSideChat: vi.fn(), setActiveTurn: vi.fn(), notifySessionSummaryUpdated: vi.fn(),
+    };
+    const service = new SessionService(repositories as never, adapter as never, {} as never, runtimes as never);
+    const operation = service.startTurn("thread-1", "check", { clientUserMessageId: "scheduled-message" }, "scheduled-request", true);
+    if (status === "inProgress") {
+      await expect(operation).rejects.toBeInstanceOf(ActiveTurnConflictError);
+      expect(adapter.startTurn).not.toHaveBeenCalled();
+    } else {
+      await expect(operation).resolves.toBeDefined();
+      expect(adapter.startTurn).toHaveBeenCalledOnce();
+    }
+    expect(adapter.readSession).toHaveBeenCalledWith("thread-1");
+  });
+});

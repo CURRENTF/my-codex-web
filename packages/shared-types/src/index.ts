@@ -303,3 +303,13 @@ export function mergeStreamingText(base: string | null | undefined, update: stri
   }
   return current + incoming;
 }
+
+export interface PromptSchedule {
+  threadId: string;
+  intervalMinutes: number;
+  prompt: string;
+  enabled: boolean;
+  nextRunAt: number | null;
+  lastRunAt: number | null;
+  lastResult: string | null;
+}

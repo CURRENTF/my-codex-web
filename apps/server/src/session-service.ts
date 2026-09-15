@@ -685,8 +685,19 @@ export class SessionService extends EventEmitter {
     return { thread, settings: recovery.settings, summary };
   }
 
-  async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string; skillNames?: string[]; attachmentIds?: string[] }, clientRequestId: string) {
+  async startTurn(threadId: string, text: string, input: TurnSettings & { clientUserMessageId: string; skillNames?: string[]; attachmentIds?: string[] }, clientRequestId: string, scheduled = false) {
     return this.idempotentUserMessage(threadId, "turn", input.clientUserMessageId, clientRequestId, () => this.withLock(threadId, async () => {
+      if (scheduled) {
+        this.assertPersistentSession(threadId, "Scheduled prompts");
+        if (this.requireMapping(threadId).hidden) throw new Error("Session is archived");
+        // No browser may have loaded this session since the server restarted.
+        const runtime = this.runtimes.get(threadId);
+        if (runtime.activeTurnId || runtime.state === "running" || runtime.state === "waitingForInput") throw new ActiveTurnConflictError("Scheduled prompts");
+        await this.resumeWithPreferredSettings(threadId);
+        const snapshot = await this.adapter.readSession(threadId);
+        if (snapshot.turns.some((turn) => turn.status === "inProgress")) throw new ActiveTurnConflictError("Scheduled prompts");
+        if (this.runtimes.get(threadId).state === "disconnected") await this.reconcileRuntimeSnapshot(threadId, snapshot);
+      }
       this.assertNoActiveTurn(threadId, "Starting another Turn");
       const mapping = this.requireMapping(threadId);
       const project = this.requireAvailableProject(mapping.project_id);
