@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ModelOption, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
-import { api, endpoints, newClientRequestId, type SessionPayload } from "../api";
+import { api, ApiError, endpoints, newClientRequestId, type SessionPayload } from "../api";
 import { codeViewUrl } from "../code-view-url";
 import { questionForTurn } from "../fork-boundary";
 import { shouldShowFullAccessNotice } from "../full-access-notice";
@@ -141,8 +141,9 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   const sessionDisconnected = state === "disconnected";
   const branchActionsAvailable = canBranchSession(project.available, state);
   if (query.isLoading) return <div className="pane-loading"><div className="header-skeleton" /><div className="timeline-skeleton"><i /><i /><i /></div></div>;
-  if (query.isError || !payload) return <div className="pane-error"><TerminalWindow size={28} /><h2>{sideChat ? "Side Chat 已不可用" : "无法打开 Session"}</h2><p>{query.error?.message ?? "Session 不可用"}</p><div className="pane-error-actions"><button className="button secondary" onClick={() => query.refetch()}>重试</button>{sideChat && onCloseSideChat && <button className="button danger-ghost" onClick={onCloseSideChat}>关闭 Side Chat</button>}</div></div>;
+  if (!payload || (query.isError && query.error instanceof ApiError && [401, 403, 404].includes(query.error.status))) return <div className="pane-error"><TerminalWindow size={28} /><h2>{sideChat ? "Side Chat 已不可用" : "无法打开 Session"}</h2><p>{query.error?.message ?? "Session 不可用"}</p><div className="pane-error-actions"><button className="button secondary" onClick={() => query.refetch()}>重试</button>{sideChat && onCloseSideChat && <button className="button danger-ghost" onClick={onCloseSideChat}>关闭 Side Chat</button>}</div></div>;
   return <section className={`session-pane ${sideChat ? "side-chat-pane" : ""}`}>
+    {query.isError && <div className="parallel-write-warning" role="status"><span>显示已缓存的历史，同步失败：{query.error.message}</span><button className="button secondary" onClick={() => void query.refetch()}>重试</button></div>}
     <header className="session-header"><div className="breadcrumb"><span className="breadcrumb-project" title={projectLabel}>{projectLabel}</span><span className="breadcrumb-separator" aria-hidden="true">/</span><strong title={title}>{title}</strong></div><div className="header-status"><StatusIcon state={state} /><span>{statusText(state)}{elapsed !== null && (state === "running" || state === "waitingForInput") ? ` ${elapsed}s` : ""}</span></div><span className="header-spacer" /><SessionCost threadId={threadId} revision={`${state}:${runtime?.activeTurnId ?? ""}`} /><ContextUsageIndicator usage={runtime?.contextUsage} />
       {!sideChat && <GoalBar threadId={threadId} goal={payload.goal} disabled={sessionDisconnected} />}
       <SubagentStatus parentThreadId={threadId} />

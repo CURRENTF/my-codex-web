@@ -1,3 +1,4 @@
+import { sessionSyncResponse } from "./session-sync.js";
 import { PromptScheduler } from "./prompt-scheduler.js";
 import { MachineMetricsSampler } from "./machine-metrics.js";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -434,7 +435,12 @@ export async function createServer() {
     return promptScheduler.set(threadId, body);
   });
   app.get("/api/sessions/:threadId/cost", async (request) => sessions.readSessionCost(idSchema.parse((request.params as { threadId: string }).threadId)));
-  app.get("/api/sessions/:threadId", async (request) => sessions.readSession(idSchema.parse((request.params as { threadId: string }).threadId)));
+  app.get("/api/sessions/:threadId", async (request, reply) => {
+    const query = z.object({ sync: z.literal("1").optional(), prefixCount: z.coerce.number().int().min(0).max(1_000_000).default(0), prefixHash: z.string().max(64).default("") }).parse(request.query);
+    const payload = await sessions.readSession(idSchema.parse((request.params as { threadId: string }).threadId));
+    reply.header("Cache-Control", "no-store");
+    return query.sync ? sessionSyncResponse(payload, query.prefixCount, query.prefixHash) : payload;
+  });
   app.post("/api/sessions/:threadId/viewed", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);

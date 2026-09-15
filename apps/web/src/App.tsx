@@ -1,3 +1,4 @@
+import { removeSessionHistory } from "./session-history-cache";
 import { MachineMonitor } from "./components/MachineMonitor";
 import { sessionCreationDefaults, useComposerPreferences } from "./composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
@@ -406,6 +407,11 @@ export function App() {
     }
     try {
       await api(`/api/projects/${project.id}`, { method: "DELETE", body: JSON.stringify({ clientRequestId: newClientRequestId() }) });
+      for (const session of allSessions.filter((candidate) => candidate.projectId === project.id)) {
+        await client.cancelQueries({ queryKey: ["session", session.threadId] });
+        client.removeQueries({ queryKey: ["session", session.threadId] });
+        void removeSessionHistory(session.threadId);
+      }
       setRemovingProject(null);
       if (settingsProject?.id === project.id) setSettingsProject(null);
       await Promise.all([

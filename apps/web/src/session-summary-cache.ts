@@ -1,3 +1,4 @@
+import { removeSessionHistory } from "./session-history-cache";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import type { RuntimeState, SessionSummary } from "@codex-web/shared-types";
 import type { SessionPayload } from "./api";
@@ -68,6 +69,7 @@ export function patchCachedSessionSummary(client: QueryClient, threadId: string,
 }
 
 export function removeCachedSessionSummary(client: QueryClient, threadId: string): void {
+  void removeSessionHistory(threadId);
   updateSessionLists(client, (current) => current.filter((candidate) => candidate.threadId !== threadId));
 }
 

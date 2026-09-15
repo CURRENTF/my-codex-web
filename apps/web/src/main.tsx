@@ -10,6 +10,8 @@ const CodeView = lazy(() => import("./components/CodeView"));
 
 export const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, retry: 1, refetchOnWindowFocus: false } } });
 
+queryClient.setQueryDefaults(["session"], { gcTime: 30 * 60 * 1000 });
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode><QueryClientProvider client={queryClient}><Tooltip.Provider delayDuration={450}><BrowserRouter>{window.location.pathname === "/code" ? <Suspense fallback={<div className="pane-loading">正在加载 Code View…</div>}><CodeView /></Suspense> : <App />}</BrowserRouter></Tooltip.Provider></QueryClientProvider></React.StrictMode>,
 );

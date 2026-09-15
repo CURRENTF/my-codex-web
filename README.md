@@ -229,3 +229,11 @@ Web 按模型和服务档位记录累计用量的增量，并保存到 `CODEX_WE
 估算采用 [OpenAI API 价格表](https://developers.openai.com/api/docs/pricing) 2026-09-15 的公开短上下文价格，区分普通输入、缓存输入、缓存写入及输出；推理输出不重复相加。当前收录 GPT-6 Astra、GPT-5.6 Sol/Terra/Luna 和 GPT-5.3 Codex，支持 Standard、Fast/Priority 和已知的 Flex/Batch 价格系数。未计长上下文加价、地区附加费及工具费用。未知模型或明细缺失时不猜价格，混合用量只展示可估算部分并提示。金额显示保留 0 位小数，内部保留精度。
 
 已有会话若未返回原生费用或 token 分组，打开会话也可能没有历史用量通知，需要产生下一次用量更新后才能估算。UI 区分「Codex 提供」与「按 token 估算」，并说明缺失或历史假设；子会话独立记录，不合并到父会话。此功能不读取 Codex 内部 Session 文件或数据库。
+
+### Session 历史缓存
+
+浏览器将成功同步的 Session 快照保存到 IndexedDB，最多保留最近 20 个、约 50 MiB（按 JSON UTF-16 大小估算），7 天后过期；React Query 的 Session 内存缓存保留 30 分钟。刷新页面或切回长对话时先显示缓存，再后台同步。存储不可用时退化为网络读取；后台同步失败时保留历史并显示重试提示。归档 Session 或移除 Project 时清理对应缓存，也可通过浏览器清除此站点的数据删除全部历史缓存。
+
+`GET /api/sessions/:threadId?sync=1&prefixCount=N&prefixHash=...` 使用 SHA-256 校验前 N 个稳定 turns 的完整内容。匹配时响应的 `thread.turns` 只包含剩余部分，`sync.retainedCount` 指示客户端复用的前缀长度；不匹配或历史缩短时返回完整快照。`sync.prefixCount/prefixHash` 标识本次快照的稳定前缀，正在进行的 turn 及其后续内容不进入前缀。运行状态、设置与 Goal 每次返回。未使用 `sync=1` 的客户端仍收到原完整响应。
+
+持久快照与 WebSocket 更新分开保存，避免实时修改使前缀凭据与缓存内容不一致。此机制减少重复传输和浏览器解析，服务端仍通过 App Server 读取并校验最新历史，以识别其他客户端的更新；尚未跳过上游完整读取。
