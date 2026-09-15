@@ -18,6 +18,7 @@ import { ErrorNotice } from "./ErrorNotice";
 import { Composer } from "./Composer";
 import { TextInputDialog } from "./ActionDialog";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
+import { SessionCost } from "./SessionCost";
 import { GoalBar } from "./GoalBar";
 import { PendingBanner } from "./PendingBanner";
 import { StatusIcon, statusText } from "./StatusIcon";
@@ -142,7 +143,7 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   if (query.isLoading) return <div className="pane-loading"><div className="header-skeleton" /><div className="timeline-skeleton"><i /><i /><i /></div></div>;
   if (query.isError || !payload) return <div className="pane-error"><TerminalWindow size={28} /><h2>{sideChat ? "Side Chat 已不可用" : "无法打开 Session"}</h2><p>{query.error?.message ?? "Session 不可用"}</p><div className="pane-error-actions"><button className="button secondary" onClick={() => query.refetch()}>重试</button>{sideChat && onCloseSideChat && <button className="button danger-ghost" onClick={onCloseSideChat}>关闭 Side Chat</button>}</div></div>;
   return <section className={`session-pane ${sideChat ? "side-chat-pane" : ""}`}>
-    <header className="session-header"><div className="breadcrumb"><span className="breadcrumb-project" title={projectLabel}>{projectLabel}</span><span className="breadcrumb-separator" aria-hidden="true">/</span><strong title={title}>{title}</strong></div><div className="header-status"><StatusIcon state={state} /><span>{statusText(state)}{elapsed !== null && (state === "running" || state === "waitingForInput") ? ` ${elapsed}s` : ""}</span></div><span className="header-spacer" /><ContextUsageIndicator usage={runtime?.contextUsage} />
+    <header className="session-header"><div className="breadcrumb"><span className="breadcrumb-project" title={projectLabel}>{projectLabel}</span><span className="breadcrumb-separator" aria-hidden="true">/</span><strong title={title}>{title}</strong></div><div className="header-status"><StatusIcon state={state} /><span>{statusText(state)}{elapsed !== null && (state === "running" || state === "waitingForInput") ? ` ${elapsed}s` : ""}</span></div><span className="header-spacer" /><SessionCost threadId={threadId} revision={`${state}:${runtime?.activeTurnId ?? ""}`} /><ContextUsageIndicator usage={runtime?.contextUsage} />
       {!sideChat && <GoalBar threadId={threadId} goal={payload.goal} disabled={sessionDisconnected} />}
       <SubagentStatus parentThreadId={threadId} />
       {!sideChat && <button className="header-button" onClick={() => void requestSideChat(null)} disabled={side.isPending || !branchActionsAvailable}><SidebarSimple size={16} />Side Chat</button>}

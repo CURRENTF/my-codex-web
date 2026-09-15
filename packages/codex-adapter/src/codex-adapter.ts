@@ -26,6 +26,7 @@ import { requireSupportedCodexCli } from "./compatibility.js";
 import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
 import { projectThread, projectTurn } from "./ui-projection.js";
+import { projectSessionCost } from "./session-cost.js";
 
 export type { ReviewTarget } from "@codex-web/codex-schema/v2/ReviewTarget";
 
@@ -378,6 +379,18 @@ export class CodexAdapter extends EventEmitter {
 
   async readAccount(): Promise<GetAccountResponse> {
     return this.supervisor.transport.request<GetAccountResponse>("account/read", { refreshToken: false });
+  }
+
+  async readSessionCost(threadId: string) {
+    try {
+      const response = await this.supervisor.transport.request<unknown>("account/usage/read", { threadId });
+      return projectSessionCost(threadId, response);
+    } catch (error) {
+      if (error instanceof JsonRpcError && [-32600, -32601, -32602].includes(error.code ?? 0)) {
+        return { threadId, status: "unsupported" as const, estimatedUsd: null, groups: [] };
+      }
+      throw error;
+    }
   }
 
   private ensureAccountChecked(): Promise<void> {

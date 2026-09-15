@@ -919,3 +919,25 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 @media (max-width: 600px) { .schedule-trigger span { display: none; } }
 
 @container session-pane (max-width: 640px) { .schedule-trigger span { display: none; } }
+
+.session-cost-trigger { flex: 0 0 auto; max-width: 145px; overflow: hidden; text-overflow: ellipsis; padding: 6px 7px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text-soft); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; }
+.session-cost-trigger:hover, .session-cost-refresh:hover { background: var(--surface-hover); color: var(--text); }
+.session-cost-trigger:focus-visible, .session-cost-refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.session-cost-trigger:active, .session-cost-refresh:active { transform: scale(.98); }
+.session-cost-skeleton { display: block; width: 56px; height: 13px; border-radius: 4px; background: var(--line); }
+.session-cost-detail { width: min(340px, calc(100vw - 24px)); max-height: min(600px, var(--radix-popover-content-available-height)); overflow-y: auto; padding: 16px; }
+.session-cost-heading, .session-cost-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.session-cost-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.session-cost-amount { margin: 12px 0; font-size: 25px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.session-cost-amount small { display: block; margin-top: 4px; font-size: 11px; color: var(--text-soft); }
+.session-cost-note, .session-cost-detail [role="status"] { margin: 8px 0; color: var(--text-soft); font-size: 12px; line-height: 1.6; }
+.session-cost-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.session-cost-group h3 { margin: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.session-cost-group dl { margin: 8px 0 0; font-size: 12px; }
+.session-cost-group dl > div { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin: 6px 0; }
+.session-cost-group dt { color: var(--text-soft); }
+.session-cost-group dd { margin: 0; font-variant-numeric: tabular-nums; }
+.session-cost-footer { margin-top: 14px; color: var(--text-soft); font-size: 11px; }
+.session-cost-refresh { padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: transparent; color: var(--text); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.session-cost-refresh:disabled { cursor: default; color: var(--text-soft); }
+@media (max-width: 767px) { .session-cost-trigger { max-width: 100px; padding: 6px 3px; font-size: 10px; } }

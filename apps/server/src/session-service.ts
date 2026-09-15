@@ -452,6 +452,11 @@ export class SessionService extends EventEmitter {
     return this.withLock(threadId, () => this.readSessionUnlocked(threadId));
   }
 
+  readSessionCost(threadId: string) {
+    if (!this.runtimes.getSideChat(threadId)) this.requireMapping(threadId);
+    return this.adapter.readSessionCost(threadId);
+  }
+
   private async readSessionUnlocked(threadId: string) {
     const sideChat = this.runtimes.getSideChat(threadId);
     const sideChatSnapshot = sideChat ? this.sessionSnapshots.get(threadId) : undefined;

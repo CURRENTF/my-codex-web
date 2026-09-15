@@ -80,6 +80,21 @@ export interface SubagentRuntime extends ThreadRuntime, SubagentDescriptor {
   statusMessage?: string | null;
 }
 
+export interface SessionCost {
+  threadId: string;
+  status: "available" | "unavailable" | "unsupported";
+  /** Decimal USD from App Server's thread estimate, not account-wide usage. */
+  estimatedUsd: string | null;
+  groups: Array<{
+    model: string | null;
+    reasoningEffort: string | null;
+    speed: string | null;
+    inputTokens: string | null;
+    cachedInputTokens: string | null;
+    outputTokens: string | null;
+  }>;
+}
+
 export interface ContextUsage {
   usedTokens: number;
   maxTokens: number | null;

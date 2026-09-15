@@ -1,3 +1,4 @@
+import { SessionCostSetting } from "./SessionCost";
 import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -147,6 +148,7 @@ export function Sidebar(props: SidebarProps) {
           <SelfUpdateControl settingsRow />
           <SessionDefaultsSettings models={props.models ?? []} />
           <MachineMonitorSetting />
+          <SessionCostSetting />
           <button className="app-settings-row" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
             {props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} />}
             <span><strong>完成通知</strong><small>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? notificationLabel : "Session 完成时发送系统通知"}</small></span>

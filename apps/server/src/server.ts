@@ -433,6 +433,7 @@ export async function createServer() {
     if (!mapping || mapping.hidden || runtimes.getSideChat(threadId)) throw Object.assign(new Error("任务不存在或不支持定时轮询"), { statusCode: 404 });
     return promptScheduler.set(threadId, body);
   });
+  app.get("/api/sessions/:threadId/cost", async (request) => sessions.readSessionCost(idSchema.parse((request.params as { threadId: string }).threadId)));
   app.get("/api/sessions/:threadId", async (request) => sessions.readSession(idSchema.parse((request.params as { threadId: string }).threadId)));
   app.post("/api/sessions/:threadId/viewed", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
