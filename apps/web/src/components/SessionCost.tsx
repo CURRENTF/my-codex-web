@@ -42,12 +42,13 @@ function SessionCostContent({ threadId, revision }: { threadId: string; revision
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="session-cost-detail menu-content" sideOffset={8} align="end" collisionPadding={12} aria-label="Session API 费用明细">
       <div className="session-cost-heading"><h2>累计 API 费用</h2><Popover.Close asChild><button className="icon-button" aria-label="关闭费用明细"><X size={16} /></button></Popover.Close></div>
-      <p className="session-cost-amount">{amount != null ? formatSessionCostUsd(amount) : "暂不可用"}<small>USD 估算{query.isError && amount != null ? "，上次成功读取" : ""}</small></p>
-      <p className="session-cost-note">由 Codex 按此 Session 的计费路径返回，可能延迟更新，不代表实际账单。子会话以各自返回的用量为准。</p>
+      <p className="session-cost-amount">{amount != null ? formatSessionCostUsd(amount) : "暂不可用"}<small>{data?.source === "tokens" ? "USD · 按 token 估算" : "USD · Codex 提供"}{query.isError && amount != null ? "，上次成功读取" : ""}</small></p>
+      <p className="session-cost-note">{data?.source === "tokens" ? `按 token 用量估算，价格表更新于 ${data.pricingDate}。` : "Codex 提供的会话费用，可能延迟更新。"} 不代表实际账单。</p>
+      {data?.notes?.map((note) => <p className="session-cost-note" key={note}>{note}</p>)}
       {query.isPending && <p role="status">正在读取累计用量…</p>}
       {query.isError && <p role="status">费用读取失败，请重试。</p>}
       {data?.status === "unsupported" && <p role="status">当前 Codex 版本不支持会话费用查询。</p>}
-      {data?.status === "unavailable" && <p role="status">当前计费路径未提供美元估算，暂时无法显示总价。</p>}
+      {data?.status === "unavailable" && data.source !== "tokens" && <p role="status">当前计费路径未提供美元估算，暂时无法显示总价。</p>}
       {!!data?.groups.length && <div className="session-cost-groups">{data.groups.map((group, index) => <section className="session-cost-group" key={index}>
         <h3>{group.model ?? "未知模型"}</h3>
         {(group.reasoningEffort || group.speed) && <p className="session-cost-note">{[group.reasoningEffort, group.speed].filter(Boolean).join(" / ")}</p>}

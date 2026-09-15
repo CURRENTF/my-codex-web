@@ -222,6 +222,10 @@ Codex 有两条不同的提问路径：
 
 在左上角「设置」开启「显示 API 费用」，即可在各 Session 顶部查看累计美元估算，点击金额展开按模型分组的输入、缓存输入和输出 token。默认关闭，开关仅保存在当前浏览器。开启时每 30 秒刷新，Turn 状态变化时也会更新；关闭后停止查询。
 
-费用直接来自 App Server 的 `account/usage/read({ threadId })` 返回值 `threadUsage.estimatedUsageUsdMicros`，按百万分之一美元转换。它是该会话计费路径提供的估算，不是按公开 API 单价重算的价格，也不是实际账单。模型分组和历史范围以 App Server 返回值为准，可能有延迟；不在 Web 端合并子会话费用，也不重复累加缓存输入。
+费用优先使用 App Server 的 `account/usage/read({ threadId })` 返回的 `threadUsage.estimatedUsageUsdMicros`。没有原生金额或接口查询失败时，先尝试原生返回的按模型分组 token，再使用 Web 记录的 `thread/tokenUsage/updated.total` 累计量估算。不会把账户总用量当成当前会话用量。
 
-此功能要求运行 Web 服务的 Codex 支持带 `threadId` 参数的用量查询，且该会话计费路径提供美元估算。旧版本不支持时显示对应提示，未提供估算时显示「费用未知」，均不会用零或账户总费用替代。该功能不读取 Codex 的内部 Session 文件或数据库。
+Web 按模型和服务档位记录累计用量的增量，并保存到 `CODEX_WEB_DATA_DIR` 的应用数据库。重复通知不会重复计费，刷新浏览器或重启 Web 服务不会清空记录；开关只控制显示和费用查询，不影响已连接会话的用量记录。首次收到的历史累计量按当时模型与档位估算，后续切换模型按增量分组。计数回退时保留已记录消耗，并标记估算限制。
+
+估算采用 [OpenAI API 价格表](https://developers.openai.com/api/docs/pricing) 2026-09-15 的公开短上下文价格，区分普通输入、缓存输入、缓存写入及输出；推理输出不重复相加。当前收录 GPT-6 Astra、GPT-5.6 Sol/Terra/Luna 和 GPT-5.3 Codex，支持 Standard、Fast/Priority 和已知的 Flex/Batch 价格系数。未计长上下文加价、地区附加费及工具费用。未知模型或明细缺失时不猜价格，混合用量只展示可估算部分并提示。金额显示保留 0 位小数，内部保留精度。
+
+已有会话若未返回原生费用或 token 分组，打开会话也可能没有历史用量通知，需要产生下一次用量更新后才能估算。UI 区分「Codex 提供」与「按 token 估算」，并说明缺失或历史假设；子会话独立记录，不合并到父会话。此功能不读取 Codex 内部 Session 文件或数据库。

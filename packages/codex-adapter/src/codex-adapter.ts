@@ -383,7 +383,7 @@ export class CodexAdapter extends EventEmitter {
 
   async readSessionCost(threadId: string) {
     try {
-      const response = await this.supervisor.transport.request<unknown>("account/usage/read", { threadId });
+      const response = await this.supervisor.transport.request<unknown>("account/usage/read", { threadId }, 5_000);
       return projectSessionCost(threadId, response);
     } catch (error) {
       if (error instanceof JsonRpcError && [-32600, -32601, -32602].includes(error.code ?? 0)) {

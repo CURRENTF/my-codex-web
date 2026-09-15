@@ -1,3 +1,4 @@
+import type { CostLedger } from "./token-cost.js";
 import Database from "better-sqlite3";
 import { mkdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -77,6 +78,15 @@ export class Repositories {
   }
 
   close(): void { this.db.close(); }
+
+  getCostLedger(threadId: string): CostLedger | null {
+    const row = this.db.prepare("SELECT ledger_json FROM session_cost_usage WHERE thread_id = ?").get(threadId) as { ledger_json: string } | undefined;
+    return row ? JSON.parse(row.ledger_json) as CostLedger : null;
+  }
+
+  setCostLedger(threadId: string, ledger: CostLedger): void {
+    this.db.prepare("INSERT INTO session_cost_usage (thread_id, ledger_json) VALUES (?, ?) ON CONFLICT(thread_id) DO UPDATE SET ledger_json = excluded.ledger_json").run(threadId, JSON.stringify(ledger));
+  }
 
   listProjects(): Project[] {
     const rows = this.db.prepare("SELECT * FROM projects ORDER BY order_index ASC").all() as ProjectRow[];
@@ -366,6 +376,7 @@ export class Repositories {
         PRIMARY KEY(thread_id, client_user_message_id),
         FOREIGN KEY(thread_id) REFERENCES project_sessions(thread_id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS session_cost_usage (thread_id TEXT PRIMARY KEY, ledger_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `);
     const projectSessionColumns = this.db.prepare("PRAGMA table_info(project_sessions)").all() as Array<{ name: string }>;

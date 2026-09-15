@@ -1,3 +1,4 @@
+import { chooseSessionCost, recordTokenUsage } from "./token-cost.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
@@ -452,9 +453,10 @@ export class SessionService extends EventEmitter {
     return this.withLock(threadId, () => this.readSessionUnlocked(threadId));
   }
 
-  readSessionCost(threadId: string) {
+  async readSessionCost(threadId: string) {
     if (!this.runtimes.getSideChat(threadId)) this.requireMapping(threadId);
-    return this.adapter.readSessionCost(threadId);
+    const native = await this.adapter.readSessionCost(threadId).catch(() => null);
+    return chooseSessionCost(native, this.repositories.getCostLedger(threadId), threadId);
   }
 
   private async readSessionUnlocked(threadId: string) {
@@ -1142,6 +1144,15 @@ export class SessionService extends EventEmitter {
       this.uncertainTurnAttachmentIds.delete(event.threadId);
     }
     this.updateSessionSnapshot(event);
+    if (event.type === "tokenUsageUpdated" && event.totalUsage) {
+      const settings = this.settings.get(event.threadId);
+      const mapping = this.repositories.getProjectSession(event.threadId);
+      this.repositories.setCostLedger(event.threadId, recordTokenUsage(
+        this.repositories.getCostLedger(event.threadId), event.totalUsage,
+        settings?.model ?? mapping?.last_model ?? null,
+        settings?.serviceTier ?? mapping?.last_service_tier ?? null,
+      ));
+    }
     if (event.type === "turnCompleted" && event.turn.status === "completed") this.scheduleAutoTitle(event.threadId, event.turn.id);
     return event;
   }

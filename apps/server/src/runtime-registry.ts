@@ -470,7 +470,7 @@ export class ThreadRuntimeRegistry {
         this.events.publish("session.summary.updated", { reason: "goal-cleared" }, { threadId });
         break;
       case "tokenUsageUpdated":
-        this.setRuntime(threadId, { contextUsage: event.contextUsage });
+        if (event.contextUsage) this.setRuntime(threadId, { contextUsage: event.contextUsage });
         break;
       case "settingsUpdated":
         this.updateSubagent(threadId, { model: event.settings.model, reasoning: event.settings.reasoning });

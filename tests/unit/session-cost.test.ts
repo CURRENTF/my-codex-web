@@ -42,7 +42,7 @@ describe("session cost", () => {
     const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-cost-test", version: "test" });
     (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
     await expect(adapter.readSessionCost("session-a")).resolves.toMatchObject({ estimatedUsd: "0.000010" });
-    expect(request).toHaveBeenCalledWith("account/usage/read", { threadId: "session-a" });
+    expect(request).toHaveBeenCalledWith("account/usage/read", { threadId: "session-a" }, 5_000);
     request.mockRejectedValueOnce(new JsonRpcError("Method not found", -32601));
     await expect(adapter.readSessionCost("session-a")).resolves.toMatchObject({ status: "unsupported" });
     request.mockRejectedValueOnce(new JsonRpcError("Invalid request: invalid type: map, expected unit", -32600));

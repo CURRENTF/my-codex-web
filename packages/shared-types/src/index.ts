@@ -83,7 +83,10 @@ export interface SubagentRuntime extends ThreadRuntime, SubagentDescriptor {
 export interface SessionCost {
   threadId: string;
   status: "available" | "unavailable" | "unsupported";
-  /** Decimal USD from App Server's thread estimate, not account-wide usage. */
+  source?: "codex" | "tokens";
+  notes?: string[];
+  pricingDate?: string;
+  /** Decimal USD, before display rounding. */
   estimatedUsd: string | null;
   groups: Array<{
     model: string | null;
@@ -92,6 +95,7 @@ export interface SessionCost {
     inputTokens: string | null;
     cachedInputTokens: string | null;
     outputTokens: string | null;
+    cacheWriteInputTokens?: string | null;
   }>;
 }
 

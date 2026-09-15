@@ -15,10 +15,20 @@ export type AdapterEvent =
   | { type: "itemDelta"; threadId: string; turnId?: string; delta: ItemDeltaUiEventPayload }
   | { type: "goalUpdated"; threadId: string; goal: Goal }
   | { type: "goalCleared"; threadId: string }
-  | { type: "tokenUsageUpdated"; threadId: string; contextUsage: ContextUsage }
+  | { type: "tokenUsageUpdated"; threadId: string; contextUsage?: ContextUsage; totalUsage?: TokenTotals }
   | { type: "settingsUpdated"; threadId: string; settings: SessionSettings }
   | { type: "nameUpdated"; threadId: string; name?: string }
   | { type: "serverRequestResolved"; requestId: string };
+
+export interface TokenTotals { inputTokens: number; cachedInputTokens: number; cacheWriteInputTokens: number; outputTokens: number }
+
+function tokenTotals(value: unknown): TokenTotals | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  const result = { inputTokens: v.inputTokens, cachedInputTokens: v.cachedInputTokens, cacheWriteInputTokens: v.cacheWriteInputTokens ?? 0, outputTokens: v.outputTokens };
+  if (!Object.values(result).every((n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0)) return undefined;
+  return result as TokenTotals;
+}
 
 type Notification = { method: string; params?: unknown };
 type ThreadStatus = Extract<AdapterEvent, { type: "threadStatusChanged" }>["status"];
@@ -149,14 +159,15 @@ export function projectAdapterEvent(notification: Notification): AdapterEvent | 
   if (notification.method === "thread/tokenUsage/updated") {
     const tokenUsage = params.tokenUsage;
     if (!tokenUsage || typeof tokenUsage !== "object") return null;
-    const { last, modelContextWindow } = tokenUsage as { last?: unknown; modelContextWindow?: unknown };
-    if (!last || typeof last !== "object") return null;
-    const usedTokens = (last as { totalTokens?: unknown }).totalTokens;
+    const { last, total, modelContextWindow } = tokenUsage as { last?: unknown; total?: unknown; modelContextWindow?: unknown };
+    const usedTokens = last && typeof last === "object" ? (last as { totalTokens?: unknown }).totalTokens : undefined;
     const validUsedTokens = typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
     const validContextWindow = modelContextWindow === null
       || (typeof modelContextWindow === "number" && Number.isFinite(modelContextWindow) && modelContextWindow >= 0);
-    if (!validUsedTokens || !validContextWindow) return null;
-    return { type: "tokenUsageUpdated", threadId, contextUsage: { usedTokens, maxTokens: modelContextWindow } };
+    const totalUsage = tokenTotals(total);
+    const contextUsage = validUsedTokens && validContextWindow ? { usedTokens, maxTokens: modelContextWindow } : undefined;
+    if (!contextUsage && !totalUsage) return null;
+    return { type: "tokenUsageUpdated", threadId, ...(contextUsage ? { contextUsage } : {}), ...(totalUsage ? { totalUsage } : {}) };
   }
   if (notification.method === "thread/settings/updated") {
     const settings = params.threadSettings;
