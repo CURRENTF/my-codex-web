@@ -314,6 +314,8 @@ export function mergeStreamingText(base: string | null | undefined, update: stri
   const incoming = update ?? "";
   if (!incoming) return current;
   if (!current) return incoming;
+  // A cumulative snapshot or delta buffer may lag behind the current text.
+  if (current.startsWith(incoming)) return current;
   if (current.endsWith(incoming)) return current;
 
   const overlapLimit = Math.min(current.length, incoming.length);

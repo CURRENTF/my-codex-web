@@ -328,6 +328,24 @@ describe("applySessionEvent", () => {
 });
 
 describe("mergeSessionSnapshot", () => {
+  it("keeps the longer answer when an older snapshot arrives during an active turn", () => {
+    const current = applySessionEvent(session, event("turn.started", { turn: {
+      id: "turn-1", status: "inProgress", startedAt: 10, completedAt: null, durationMs: null,
+      items: [{ type: "agentMessage", id: "agent-1", text: "正在检查代码。" }],
+    } }))!;
+    const stale: SessionPayload = {
+      ...current,
+      thread: { ...current.thread, turns: [{
+        ...current.thread.turns[0]!,
+        items: [{ type: "agentMessage", id: "agent-1", text: "正在检查" }],
+      }] },
+    };
+
+    const merged = mergeSessionSnapshot(current, stale);
+    expect(merged.thread.turns[0]?.status).toBe("inProgress");
+    expect(merged.thread.turns[0]?.items).toEqual(current.thread.turns[0]?.items);
+  });
+
   it("does not let a late in-progress snapshot erase a completed streamed answer", () => {
     const completed: SessionPayload = {
       ...session,
