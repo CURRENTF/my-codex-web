@@ -257,17 +257,37 @@ function mergeCommandExecution(
 }
 
 function mergeSnapshotItems(primary: SnapshotItem[], supplemental: SnapshotItem[]): SnapshotItem[] {
+  const uniqueItems = (items: SnapshotItem[]) => {
+    const unique = new Map<string, SnapshotItem>();
+    for (const item of items) {
+      const key = snapshotItemIdentity(item);
+      const previous = unique.get(key);
+      unique.set(key, previous ? richerItem(item, previous) : item);
+    }
+    return [...unique.values()];
+  };
+  primary = uniqueItems(primary);
+  supplemental = uniqueItems(supplemental);
+  const primaryIdentities = new Set(primary.map(snapshotItemIdentity));
+  const supplementalByIdentity = new Map(supplemental.map((item) => [snapshotItemIdentity(item), item]));
+  // LCS anchors only describe order. A shared item can move across those anchors
+  // (for example, a steer message arriving during tools) without becoming new.
+  primary = primary.map((item) => {
+    const live = supplementalByIdentity.get(snapshotItemIdentity(item));
+    return live ? item.type === "plan" && live.type === "plan" ? live : richerItem(item, live) : item;
+  });
+  const supplementalOnly = (items: SnapshotItem[]) => items.filter((item) => !primaryIdentities.has(snapshotItemIdentity(item)));
   const merged: SnapshotItem[] = [];
   let primaryIndex = 0; let supplementalIndex = 0;
   for (const [primaryAnchor, supplementalAnchor] of commonItemPairs(primary, supplemental)) {
-    merged.push(...supplemental.slice(supplementalIndex, supplementalAnchor));
+    merged.push(...supplementalOnly(supplemental.slice(supplementalIndex, supplementalAnchor)));
     merged.push(...primary.slice(primaryIndex, primaryAnchor));
     const primaryItem = primary[primaryAnchor]!;
     const supplementalItem = supplemental[supplementalAnchor]!;
     merged.push(primaryItem.type === "plan" && supplementalItem.type === "plan" ? supplementalItem : richerItem(primaryItem, supplementalItem));
     primaryIndex = primaryAnchor + 1; supplementalIndex = supplementalAnchor + 1;
   }
-  merged.push(...supplemental.slice(supplementalIndex));
+  merged.push(...supplementalOnly(supplemental.slice(supplementalIndex)));
   merged.push(...primary.slice(primaryIndex));
   return merged;
 }

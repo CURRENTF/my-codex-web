@@ -47,7 +47,13 @@ function upsertTurn(turns: CodexTurn[], incoming: CodexTurn): CodexTurn[] {
   if (index < 0) return [...turns, incoming];
   const current = turns[index]!;
   const next = [...turns];
-  const items = [...current.items];
+  // Repair duplicates already cached before a corrected server snapshot arrives.
+  const items: CodexItem[] = [];
+  for (const item of current.items) {
+    const itemIndex = itemSnapshotIndex(items, item);
+    if (itemIndex < 0) items.push(item);
+    else items[itemIndex] = mergeItemSnapshot(items[itemIndex]!, item);
+  }
   const incomingRegressesTerminalTurn = current.status !== "inProgress" && incoming.status === "inProgress";
   for (const item of incoming.items) {
     const itemIndex = itemSnapshotIndex(items, item);

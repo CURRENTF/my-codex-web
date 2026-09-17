@@ -328,6 +328,17 @@ describe("applySessionEvent", () => {
 });
 
 describe("mergeSessionSnapshot", () => {
+  it("repairs cached duplicate user messages by identity while retaining separate submissions", () => {
+    const user = { type: "userMessage" as const, id: "user-1", clientId: "client-1", content: [{ type: "text", text: "继续" }] };
+    const second = { ...user, id: "user-2", clientId: "client-2" };
+    const current = applySessionEvent(session, event("turn.started", { turn: {
+      id: "turn-1", status: "inProgress", startedAt: 10, completedAt: null, durationMs: null,
+      items: [user, { ...user, id: "live-user-1" }, second],
+    } }))!;
+    const incoming: SessionPayload = { ...current, thread: { ...current.thread, turns: [{ ...current.thread.turns[0]!, items: [user, second] }] } };
+    expect(mergeSessionSnapshot(current, incoming).thread.turns[0]?.items).toEqual([user, second]);
+  });
+
   it("keeps the longer answer when an older snapshot arrives during an active turn", () => {
     const current = applySessionEvent(session, event("turn.started", { turn: {
       id: "turn-1", status: "inProgress", startedAt: 10, completedAt: null, durationMs: null,

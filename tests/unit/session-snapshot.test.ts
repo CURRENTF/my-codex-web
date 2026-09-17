@@ -25,6 +25,25 @@ function thread(turns: Thread["turns"]): Thread {
 }
 
 describe("session snapshot merge", () => {
+  it.each([false, true])("does not duplicate a steer message moved across tool anchors (changed item ID: %s)", (changedId) => {
+    const user = { type: "userMessage" as const, id: "user-1", clientId: "client-1", content: [{ type: "text" as const, text: "带上所有更新", text_elements: [] }] };
+    const tools = [1, 2, 3].map((n) => ({ type: "reasoning" as const, id: `tool-${n}`, summary: [`step ${n}`], content: [] }));
+    const stable = thread([{ id: "turn-1", status: "inProgress", itemsView: "full", error: null, startedAt: 1, completedAt: null, durationMs: null, items: [...tools, user] }]);
+    const live = thread([{ ...stable.turns[0]!, items: [{ ...user, id: changedId ? "live-user" : user.id }, ...tools] }]);
+
+    const merged = mergeSessionSnapshot(stable, live);
+    expect(merged.turns[0]?.items.map((item) => item.type === "userMessage" ? item.clientId : item.id)).toEqual([...tools.map((item) => item.id), "client-1"]);
+    expect(mergeSessionSnapshot(stable, merged)).toEqual(merged);
+  });
+
+  it("repairs cached duplicate identities without removing separate identical submissions", () => {
+    const user = { type: "userMessage" as const, id: "user-1", clientId: "client-1", content: [{ type: "text" as const, text: "继续", text_elements: [] }] };
+    const second = { ...user, id: "user-2", clientId: "client-2" };
+    const stable = thread([{ id: "turn-1", status: "inProgress", itemsView: "full", error: null, startedAt: 1, completedAt: null, durationMs: null, items: [user, second] }]);
+    const live = thread([{ ...stable.turns[0]!, items: [user, user, second] }]);
+    expect(mergeSessionSnapshot(stable, live).turns[0]?.items).toEqual([user, second]);
+  });
+
   it("keeps live tool items that stable thread history omits", () => {
     const stable = thread([{
       id: "turn-1",
