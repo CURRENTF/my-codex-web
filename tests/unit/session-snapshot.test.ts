@@ -25,6 +25,14 @@ function thread(turns: Thread["turns"]): Thread {
 }
 
 describe("session snapshot merge", () => {
+  it("drops the retired assistant ID seen in the Web snapshot once later history has persisted", () => {
+    const canonical = { type: "agentMessage" as const, id: "msg_0259e6828645d995016aad212c94d487d08b70c6fdf2a04c11", text: "我先确认仓库位置，查看 README、配置和测试入口，整理出能直接执行的使用与测试步骤。", phase: "commentary" as const };
+    const retired = { ...canonical, id: "msg_08875be5819035fd016aad2126b0d887d0bc779b87c12fc4fc", text: "我先确认仓库位置" };
+    const stable = thread([{ id: "turn-1", status: "inProgress", itemsView: "full", error: null, startedAt: 1, completedAt: null, durationMs: null, items: [canonical] }]);
+    const cached = thread([{ ...stable.turns[0]!, items: [retired, canonical] }]);
+    expect(mergeSessionSnapshot(stable, cached).turns[0]?.items).toEqual([canonical]);
+  });
+
   it.each([false, true])("does not duplicate a steer message moved across tool anchors (changed item ID: %s)", (changedId) => {
     const user = { type: "userMessage" as const, id: "user-1", clientId: "client-1", content: [{ type: "text" as const, text: "带上所有更新", text_elements: [] }] };
     const tools = [1, 2, 3].map((n) => ({ type: "reasoning" as const, id: `tool-${n}`, summary: [`step ${n}`], content: [] }));

@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { reconcileAgentMessageHistory } from "@codex-web/shared-types";
 import { api, ApiError, type SessionPayload } from "./api";
 import { mergeSessionSnapshot } from "./live-session";
 import { readSessionHistory, reconstructSession, removeSessionHistory, writeSessionHistory, type SessionSync } from "./session-history-cache";
@@ -34,7 +35,11 @@ export async function fetchMergedSession(
     const changedTurns = current.thread.turns.filter((turn) => previousTurns.get(turn.id) !== turn
       || (incomingTurns.has(turn.id) && (turn.status === "inProgress" || incomingTurns.get(turn.id)?.status === "inProgress")));
     if (!changedTurns.length) return incoming;
-    return mergeSessionSnapshot(incoming, { ...incoming, thread: { ...incoming.thread, turns: changedTurns } });
+    const reconciledTurns = changedTurns.map((turn) => {
+      const history = incomingTurns.get(turn.id);
+      return history ? { ...turn, items: reconcileAgentMessageHistory(history.items, turn.items) } : turn;
+    });
+    return mergeSessionSnapshot(incoming, { ...incoming, thread: { ...incoming.thread, turns: reconciledTurns } });
   } catch (error) {
     if (error instanceof ApiError && (error.status === 404 || error.status === 403)) void removeSessionHistory(threadId);
     throw error;

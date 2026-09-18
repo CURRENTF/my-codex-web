@@ -14,6 +14,18 @@ function client() { const result = new QueryClient(); clients.push(result); retu
 afterEach(() => { vi.restoreAllMocks(); clients.splice(0).forEach((value) => value.clear()); });
 
 describe("cached session loading", () => {
+  it("does not resurrect a retired assistant ID from an active query cache", async () => {
+    const queries = client();
+    const data = payload("retired");
+    data.thread.turns[0]!.status = "inProgress";
+    const canonical = { type: "agentMessage" as const, id: "canonical", text: "我先确认仓库位置，查看 README。" };
+    data.thread.turns[0]!.items = [canonical];
+    const retired = { ...canonical, id: "retired", text: "我先确认仓库位置" };
+    queries.setQueryData(["session", "retired"], { ...data, thread: { ...data.thread, turns: [{ ...data.thread.turns[0]!, items: [retired, canonical] }] } });
+    vi.spyOn(apiModule, "api").mockResolvedValue(sessionSyncResponse(data));
+    expect((await fetchMergedSession(queries, "retired")).thread.turns[0]?.items).toEqual([canonical]);
+  });
+
   it("shows persistent history before a slow network response and sends its token", async () => {
     const data = payload("hydrate");
     const first = sessionSyncResponse(data);

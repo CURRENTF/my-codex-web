@@ -1,7 +1,7 @@
 import { chooseSessionCost, recordTokenUsage } from "./token-cost.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mergeStreamingText, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
+import { mergeStreamingText, reconcileAgentMessageHistory, type AccessMode, type SessionSummary, type SideChatRuntime } from "@codex-web/shared-types";
 import { CodexAdapter, isThreadMaterializationRace, JsonRpcError, OperationUncertainError, type AdapterEvent, type AdapterPendingRequest, type AttachmentReference, type ReviewTarget, type SessionSettings, type SkillReference } from "@codex-web/codex-adapter";
 import { Repositories, type ProjectSessionRow } from "./database.js";
 import { ProjectIndexer } from "./project-indexer.js";
@@ -299,7 +299,7 @@ export function mergeSessionSnapshot(primary: SessionSnapshot, supplemental: Ses
   const turns = supplemental.turns.map((turn) => {
     seen.add(turn.id);
     const current = primaryTurns.get(turn.id);
-    return current ? { ...current, items: mergeSnapshotItems(current.items, turn.items) } : turn;
+    return current ? { ...current, items: mergeSnapshotItems(current.items, reconcileAgentMessageHistory(current.items, turn.items)) } : turn;
   });
   for (const turn of primary.turns) if (!seen.has(turn.id)) turns.push(turn);
   return terminalizeSessionSnapshot({ ...primary, turns });

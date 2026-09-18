@@ -309,6 +309,21 @@ export interface SelfUpdateStatus {
   message: string;
 }
 
+// Use only with a history read, never a sparse turn/item notification. An item
+// shared with history establishes how far the cached sequence has persisted.
+// Older assistant IDs missing from that prefix can belong to abandoned streams.
+export function reconcileAgentMessageHistory(history: SessionItem[], cached: SessionItem[]): SessionItem[] {
+  const identities = new Set(history.map((item) => `${item.type}\u0000${item.id}`));
+  let covered = false;
+  return [...cached].reverse().filter((item) => {
+    if (identities.has(`${item.type}\u0000${item.id}`)) {
+      covered = true;
+      return true;
+    }
+    return !covered || item.type !== "agentMessage" || item.delivery === "async";
+  }).reverse();
+}
+
 export function mergeStreamingText(base: string | null | undefined, update: string | null | undefined): string {
   const current = base ?? "";
   const incoming = update ?? "";
