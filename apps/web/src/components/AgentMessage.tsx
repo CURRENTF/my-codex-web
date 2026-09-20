@@ -7,7 +7,7 @@ import "katex/dist/katex.min.css";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
 import { codeViewUrl } from "../code-view-url";
 
-function MarkdownMessage({ text, cwd, localImageUrls, localPathUrls, localPathKinds }: { text: string; cwd: string; localImageUrls: Record<string, string>; localPathUrls: Record<string, string>; localPathKinds: Record<string, "file" | "directory"> }) {
+export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls = {}, localPathKinds = {} }: { text: string; cwd: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}

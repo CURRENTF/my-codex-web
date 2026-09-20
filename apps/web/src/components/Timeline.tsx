@@ -8,7 +8,7 @@ import { commandOutputText, commandResultDisplay } from "../command-output";
 import { forkBoundaryForTurn } from "../fork-boundary";
 import { useAppStore, type OptimisticUserMessage } from "../store";
 import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages, type ActivityItem } from "../timeline-presentation";
-import { AgentMessage } from "./AgentMessage";
+import { AgentMessage, MarkdownMessage } from "./AgentMessage";
 import { AsyncQuestionCard, QuestionThreadContext } from "./AsyncQuestionCard";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
@@ -28,7 +28,7 @@ function AttachmentList({ attachments }: { attachments: DisplayAttachment[] }) {
   </>;
 }
 
-function UserMessage({ item }: { item: Extract<CodexItem, { type: "userMessage" }> }) {
+function UserMessage({ item, cwd }: { item: Extract<CodexItem, { type: "userMessage" }>; cwd: string }) {
   const text = textFromUser(item);
   const attachments = item.content.flatMap<DisplayAttachment>((part, index) => {
     if (part.type === "image" || part.type === "localImage") {
@@ -39,7 +39,7 @@ function UserMessage({ item }: { item: Extract<CodexItem, { type: "userMessage" 
     }
     return [];
   });
-  return <div className="user-message"><div className={attachments.length ? "message-with-attachments" : undefined}>{text && <span className="user-message-text">{text}</span>}<AttachmentList attachments={attachments} /></div></div>;
+  return <div className="user-message"><div className={attachments.length ? "message-with-attachments" : undefined}>{text && <div className="user-message-text agent-message-text"><MarkdownMessage text={text} cwd={cwd} /></div>}<AttachmentList attachments={attachments} /></div></div>;
 }
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
@@ -79,7 +79,7 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
 
 function Item({ item, turnStatus, onOpenDiff, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
-  if (item.type === "userMessage") return <UserMessage item={item} />;
+  if (item.type === "userMessage") return <UserMessage item={item} cwd={cwd} />;
   if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) return <AsyncQuestionCard itemId={item.id} questions={item.questions} />;
   if (item.type === "agentMessage") return <AgentMessage text={mergeStreamingText(item.text, delta)} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
   if (item.type === "reasoning") {
@@ -115,12 +115,12 @@ function TurnErrors({ errors, status }: { errors: NonNullable<CodexTurn["errors"
 
 const EMPTY_OPTIMISTIC_MESSAGES: OptimisticUserMessage[] = [];
 
-function OptimisticMessages({ messages }: { messages: OptimisticUserMessage[] }) {
+function OptimisticMessages({ messages, cwd }: { messages: OptimisticUserMessage[]; cwd: string }) {
   if (!messages.length) return null;
   return <section className="turn-block optimistic-message-block" aria-live="polite">{messages.map((message) => {
     const label = message.state === "sending" ? "发送中" : message.state === "uncertain" ? "正在确认" : "排队中";
     return <div className="pending-user-message" data-state={message.state} data-client-user-message-id={message.clientUserMessageId} key={message.clientUserMessageId}>
-      <div className={message.attachments?.length ? "message-with-attachments" : undefined}>{message.text && <span className="pending-user-text">{message.text}</span>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
+      <div className={message.attachments?.length ? "message-with-attachments" : undefined}>{message.text && <div className="pending-user-text agent-message-text"><MarkdownMessage text={message.text} cwd={cwd} /></div>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
     </div>;
   })}</section>;
 }
@@ -156,7 +156,7 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
     return () => { observer.disconnect(); scroller.removeEventListener("scroll", updateStickiness); };
   }, [turns.length]);
   if (!turns.length && !visibleOptimisticMessages.length) return <div className="timeline-empty"><div className="empty-mark"><TerminalWindow size={26} /></div><h2>准备开始</h2><p>描述要在这个 Project 中完成的任务。</p></div>;
-  const optimistic = <OptimisticMessages messages={visibleOptimisticMessages} />;
+  const optimistic = <OptimisticMessages messages={visibleOptimisticMessages} cwd={cwd} />;
   const timeline = turns.length <= 40
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
     : <Virtuoso className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
