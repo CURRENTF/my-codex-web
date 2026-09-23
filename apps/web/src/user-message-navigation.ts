@@ -65,3 +65,15 @@ export function userMessageTargets(turns: SessionTurn[], optimisticMessages: Opt
   });
   return targets;
 }
+
+// Retain the preceding question throughout its answer. Choosing the nearest
+// bubble switches early on long answers and depends on virtual overscan.
+export function userMessageIndexAtReadingLine(anchors: { index: number; top: number }[], readingLine: number): number | null {
+  let preceding: number | null = null;
+  let first: number | null = null;
+  for (const anchor of anchors) {
+    if (first === null || anchor.index < first) first = anchor.index;
+    if (anchor.top <= readingLine + 1 && (preceding === null || anchor.index > preceding)) preceding = anchor.index;
+  }
+  return preceding ?? (first === null ? null : Math.max(0, first - 1));
+}

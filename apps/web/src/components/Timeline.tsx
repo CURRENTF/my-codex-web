@@ -201,16 +201,25 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
       return true;
     };
     if (useStaticTimeline) { locate(); return; }
+    let stableFrames = 0;
     const findRenderedMessage = (remaining: number) => {
       if (request !== navigationRequest.current) return;
-      if (locate() || remaining === 0) { navigationFrame.current = null; return; }
+      // Virtuoso can revise estimated heights after the target first mounts.
+      // Recheck alignment until it survives several measurement frames.
+      const scroller = timelineShell.current?.querySelector<HTMLElement>(".timeline");
+      const before = scroller?.scrollTop;
+      const found = locate();
+      stableFrames = found && Math.abs((scroller?.scrollTop ?? 0) - (before ?? 0)) < 1 ? stableFrames + 1 : 0;
+      if (stableFrames >= 4 || remaining === 0) { navigationFrame.current = null; return; }
+      if (!found && remaining % 4 === 0) {
+        if (target.optimistic) virtualTimeline.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
+        else virtualTimeline.current?.scrollToIndex({ index: target.turnIndex, align: "start", behavior: "auto" });
+      }
       navigationFrame.current = requestAnimationFrame(() => findRenderedMessage(remaining - 1));
     };
-    const findAfterScroll = () => { navigationFrame.current = requestAnimationFrame(() => findRenderedMessage(12)); };
-    if (target.optimistic) {
-      virtualTimeline.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
-      findAfterScroll();
-    } else virtualTimeline.current?.scrollIntoView({ index: target.turnIndex, align: "start", behavior: "auto", done: findAfterScroll });
+    if (target.optimistic) virtualTimeline.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
+    else virtualTimeline.current?.scrollToIndex({ index: target.turnIndex, align: "start", behavior: "auto" });
+    navigationFrame.current = requestAnimationFrame(() => findRenderedMessage(32));
   };
   if (!turns.length && !visibleOptimisticMessages.length) return <div className="timeline-empty"><div className="empty-mark"><TerminalWindow size={26} /></div><h2>准备开始</h2><p>描述要在这个 Project 中完成的任务。</p></div>;
   const optimistic = <OptimisticMessages messages={visibleOptimisticMessages} cwd={cwd} />;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionTurn } from "@codex-web/shared-types";
-import { MAX_USER_MESSAGE_TICKS, userMessageIndexAtProgress, userMessageTargets, userMessageText, visibleUserMessageIndices } from "../../apps/web/src/user-message-navigation";
+import { userMessageIndexAtReadingLine, MAX_USER_MESSAGE_TICKS, userMessageIndexAtProgress, userMessageTargets, userMessageText, visibleUserMessageIndices } from "../../apps/web/src/user-message-navigation";
 
 describe("user message navigation", () => {
   it("limits visible marks while keeping every message addressable", () => {
@@ -46,5 +46,16 @@ describe("user message navigation", () => {
       { key: "image", turnIndex: 1, preview: "图片或附件", optimistic: false },
       { key: "optimistic:pending", turnIndex: 1, preview: "Later", optimistic: true },
     ]);
+  });
+});
+
+describe("reading position", () => {
+  it("keeps a long answer attached to its preceding question", () => {
+    expect(userMessageIndexAtReadingLine([{ index: 3, top: -5000 }, { index: 4, top: 100 }], 16)).toBe(3);
+    expect(userMessageIndexAtReadingLine([{ index: 3, top: -5084 }, { index: 4, top: 16 }], 16)).toBe(4);
+  });
+  it("does not advance when virtual overscan drops the preceding bubble", () => {
+    expect(userMessageIndexAtReadingLine([{ index: 4, top: 100 }], 16)).toBe(3);
+    expect(userMessageIndexAtReadingLine([], 16)).toBeNull();
   });
 });

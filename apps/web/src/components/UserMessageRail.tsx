@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { userMessageIndexAtProgress, visibleUserMessageIndices, type UserMessageTarget } from "../user-message-navigation";
+import { userMessageIndexAtProgress, userMessageIndexAtReadingLine, visibleUserMessageIndices, type UserMessageTarget } from "../user-message-navigation";
 
 export function UserMessageRail({ targets, virtual, onNavigate }: {
   targets: UserMessageTarget[];
@@ -9,7 +9,6 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
   const rail = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const position = useRef<HTMLSpanElement>(null);
-  const scrollProgress = useRef(1);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [focusIndex, setFocusIndex] = useState(Math.max(0, targets.length - 1));
   const previewId = useId();
@@ -28,20 +27,20 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
     let frame = 0;
     const update = () => {
       const scrollable = scroller.scrollHeight - scroller.clientHeight;
-      scrollProgress.current = scrollable > 0 ? Math.max(0, Math.min(1, scroller.scrollTop / scrollable)) : 1;
-      positionElement.style.transform = `translateY(${Math.max(0, trackElement.clientHeight - positionElement.offsetHeight) * scrollProgress.current}px)`;
       const bounds = scroller.getBoundingClientRect();
-      const readingLine = bounds.top + bounds.height * .4;
-      let nearestIndex: number | null = null;
-      let nearestDistance = Infinity;
-      for (const message of scroller.querySelectorAll<HTMLElement>("[data-user-message-id]")) {
+      const readingLine = bounds.top + 16;
+      const anchors = [...scroller.querySelectorAll<HTMLElement>("[data-user-message-id]")].flatMap((message) => {
         const index = targetIndex.get(message.dataset.userMessageId ?? "");
-        if (index === undefined) continue;
-        const rect = message.getBoundingClientRect();
-        const distance = rect.bottom < readingLine ? readingLine - rect.bottom : rect.top > readingLine ? rect.top - readingLine : 0;
-        if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
-      }
-      const focus = scroller.scrollTop <= 2 ? 0 : scrollable - scroller.scrollTop <= 2 ? targets.length - 1 : nearestIndex ?? userMessageIndexAtProgress(targets.length, scrollProgress.current);
+        return index === undefined ? [] : [{ index, top: message.getBoundingClientRect().top }];
+      });
+      // Both the expanded marks and the indicator use message order, not pixel
+      // scroll progress (which also changes as Virtuoso measures long turns).
+      const focus = scroller.scrollTop <= 2 ? 0
+        : scrollable - scroller.scrollTop <= 2 ? targets.length - 1
+        : userMessageIndexAtReadingLine(anchors, readingLine);
+      if (focus === null) return; // Keep the last reading position during virtual remounts.
+      const progress = targets.length > 1 ? focus / (targets.length - 1) : .5;
+      positionElement.style.transform = `translateY(${trackElement.clientHeight * progress}px) translateY(-50%)`;
       setFocusIndex((previous) => previous === focus ? previous : focus);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; update(); }); };
@@ -49,7 +48,11 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
     const resizeObserver = new ResizeObserver(schedule);
     resizeObserver.observe(trackElement);
     resizeObserver.observe(scroller);
-    const mutationObserver = new MutationObserver(schedule);
+    const observeContent = () => {
+      for (const child of scroller.children) resizeObserver.observe(child);
+    };
+    observeContent();
+    const mutationObserver = new MutationObserver(() => { observeContent(); schedule(); });
     mutationObserver.observe(scroller, { childList: true, subtree: true });
     schedule();
     return () => { scroller.removeEventListener("scroll", schedule); resizeObserver.disconnect(); mutationObserver.disconnect(); cancelAnimationFrame(frame); };
