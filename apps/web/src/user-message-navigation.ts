@@ -10,6 +10,41 @@ export interface UserMessageTarget {
   optimistic: boolean;
 }
 
+export const MAX_USER_MESSAGE_TICKS = 20;
+
+export function visibleUserMessageIndices(count: number, focusIndex: number): number[] {
+  if (count <= 0) return [];
+  if (count <= MAX_USER_MESSAGE_TICKS) return Array.from({ length: count }, (_, index) => index);
+
+  const lastIndex = count - 1;
+  const focus = Math.max(0, Math.min(lastIndex, Math.round(focusIndex)));
+  const indices = new Set<number>();
+  const overviewCount = 8;
+  const nearbyCount = MAX_USER_MESSAGE_TICKS - overviewCount;
+  for (let index = 0; index < overviewCount; index += 1) {
+    indices.add(Math.round(index / (overviewCount - 1) * lastIndex));
+  }
+  const nearbyStart = Math.max(0, Math.min(count - nearbyCount, focus - Math.floor(nearbyCount / 2)));
+  for (let index = nearbyStart; index < nearbyStart + nearbyCount; index += 1) indices.add(index);
+
+  // Overview and nearby marks can overlap. Fill the remaining slots across the largest gaps.
+  while (indices.size < MAX_USER_MESSAGE_TICKS) {
+    const ordered = [...indices].sort((a, b) => a - b);
+    let next = -1;
+    let largestGap = -1;
+    for (let index = 1; index < ordered.length; index += 1) {
+      const gap = ordered[index]! - ordered[index - 1]!;
+      if (gap > largestGap) { largestGap = gap; next = Math.floor((ordered[index]! + ordered[index - 1]!) / 2); }
+    }
+    indices.add(next);
+  }
+  return [...indices].sort((a, b) => a - b);
+}
+
+export function userMessageIndexAtProgress(count: number, progress: number): number {
+  return Math.max(0, Math.min(count - 1, Math.round(progress * (count - 1))));
+}
+
 export function userMessageText(item: UserMessage): string {
   return item.content.map((part) => part.type === "skill" && part.name ? `$${part.name}` : part.text ?? "").filter(Boolean).join("\n");
 }
