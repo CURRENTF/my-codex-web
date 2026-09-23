@@ -87,6 +87,10 @@ export function projectTurnError(error: TurnError, willRetry: boolean): SessionT
   };
 }
 
+export function threadActivityAt(thread: Pick<Thread, "createdAt" | "recencyAt">): number {
+  return Math.max(thread.createdAt, thread.recencyAt ?? thread.createdAt);
+}
+
 export function projectThread(thread: Thread): SessionThread {
   return {
     id: thread.id,
@@ -94,7 +98,7 @@ export function projectThread(thread: Thread): SessionThread {
     name: thread.name,
     cwd: thread.cwd,
     createdAt: thread.createdAt,
-    updatedAt: thread.updatedAt,
+    updatedAt: threadActivityAt(thread),
     ephemeral: thread.ephemeral,
     forkedFromId: thread.forkedFromId,
     turns: thread.turns.map(projectTurn),

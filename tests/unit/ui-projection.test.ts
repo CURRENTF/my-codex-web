@@ -314,6 +314,18 @@ describe("Codex UI projection", () => {
     });
   });
 
+  it("keeps conversation activity time when a reopened thread has newer metadata", () => {
+    const thread = {
+      id: "thread-1", sessionId: "session-1", forkedFromId: null, parentThreadId: null, preview: "hello", ephemeral: false,
+      modelProvider: "openai", createdAt: 10, updatedAt: 1_000, recencyAt: 20, status: { type: "idle" as const }, path: null,
+      cwd: "/tmp/project", cliVersion: "test", source: "appServer" as const, threadSource: null,
+      agentNickname: null, agentRole: null, gitInfo: null, name: null, turns: [],
+    };
+    expect(projectThread(thread).updatedAt).toBe(20);
+    expect(projectThread({ ...thread, recencyAt: null }).updatedAt).toBe(10);
+    expect(projectThread({ ...thread, recencyAt: 5 }).updatedAt).toBe(10);
+  });
+
   it("keeps stable intermediate actions visible with a generic fallback", () => {
     expect(projectThreadItem({ type: "sleep", id: "sleep-1", durationMs: 1_500 })).toMatchObject({ type: "genericToolCall", title: "等待 1.5s" });
     expect(projectThreadItem({ type: "contextCompaction", id: "compact-1" })).toMatchObject({ type: "genericToolCall", title: "压缩上下文" });

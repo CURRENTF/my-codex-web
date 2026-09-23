@@ -20,6 +20,24 @@ function protocolThread({ id = "thread-1", historyMode = "paginated", preview = 
 }
 
 describe("Codex Adapter initialization", () => {
+  it("lists conversation recency instead of metadata touched by opening it", async () => {
+    const request = vi.fn(async () => ({
+      data: [
+        { ...protocolThread({ id: "old" }), createdAt: 10, updatedAt: 1_000, recencyAt: 20 },
+        { ...protocolThread({ id: "empty" }), createdAt: 30, updatedAt: 1_000, recencyAt: null },
+      ],
+      nextCursor: null,
+    }));
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    const sessions = await adapter.listSessions();
+    expect(sessions.data.map(({ id, updatedAt }) => ({ id, updatedAt }))).toEqual([
+      { id: "old", updatedAt: 20 },
+      { id: "empty", updatedAt: 30 },
+    ]);
+  });
+
   it("lists Subagents separately with their parent, identity, context, and runtime state", async () => {
     const thread = (id: string, status: { type: "active"; activeFlags: string[] } | { type: "idle" } | { type: "notLoaded" }) => ({
       id, sessionId: "session-1", forkedFromId: "parent", parentThreadId: "parent", preview: "", ephemeral: false,

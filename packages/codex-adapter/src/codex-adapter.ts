@@ -25,7 +25,7 @@ import { projectAdapterEvent, projectSubagentDescriptor } from "./adapter-events
 import { requireSupportedCodexCli } from "./compatibility.js";
 import { pendingRequestResponse, projectPendingRequest } from "./pending-requests.js";
 import { CodexProcessSupervisor } from "./supervisor.js";
-import { projectThread, projectTurn } from "./ui-projection.js";
+import { projectThread, projectTurn, threadActivityAt } from "./ui-projection.js";
 import { projectSessionCost } from "./session-cost.js";
 
 export type { ReviewTarget } from "@codex-web/codex-schema/v2/ReviewTarget";
@@ -468,7 +468,7 @@ export class CodexAdapter extends EventEmitter {
     });
     return { data: response.data.map((thread) => {
       this.rememberThreadHistoryMode(thread);
-      return { id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: thread.updatedAt, forkedFromId: thread.forkedFromId, threadSource: thread.threadSource };
+      return { id: thread.id, preview: thread.preview, name: thread.name, cwd: thread.cwd, sourceKind: protocolSourceKind(thread.source), createdAt: thread.createdAt, updatedAt: threadActivityAt(thread), forkedFromId: thread.forkedFromId, threadSource: thread.threadSource };
     }), nextCursor: response.nextCursor };
   }
 
