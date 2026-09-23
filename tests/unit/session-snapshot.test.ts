@@ -25,6 +25,24 @@ function thread(turns: Thread["turns"]): Thread {
 }
 
 describe("session snapshot merge", () => {
+  it("keeps persisted Turn order when a newer live Turn is first in the cache", () => {
+    const older = { id: "turn-1", status: "completed" as const, itemsView: "full" as const, error: null, startedAt: 1, completedAt: 2, durationMs: 1_000, items: [] };
+    const newer = { ...older, id: "turn-2", startedAt: 3, completedAt: 4 };
+    const persisted = thread([older, newer]);
+    const cached = thread([newer, older]);
+
+    expect(mergeSessionSnapshot(persisted, cached).turns.map((turn) => turn.id)).toEqual(["turn-1", "turn-2"]);
+  });
+
+  it("places a live Turn missing from persisted history by its start time", () => {
+    const older = { id: "turn-1", status: "completed" as const, itemsView: "full" as const, error: null, startedAt: 1, completedAt: 2, durationMs: 1_000, items: [] };
+    const newer = { ...older, id: "turn-3", startedAt: 5, completedAt: 6 };
+    const live = { ...older, id: "turn-2", status: "inProgress" as const, startedAt: 3, completedAt: null, durationMs: null };
+
+    expect(mergeSessionSnapshot(thread([older, newer]), thread([live, older, newer])).turns.map((turn) => turn.id))
+      .toEqual(["turn-1", "turn-2", "turn-3"]);
+  });
+
   it("drops the retired assistant ID seen in the Web snapshot once later history has persisted", () => {
     const canonical = { type: "agentMessage" as const, id: "msg_0259e6828645d995016aad212c94d487d08b70c6fdf2a04c11", text: "我先确认仓库位置，查看 README、配置和测试入口，整理出能直接执行的使用与测试步骤。", phase: "commentary" as const };
     const retired = { ...canonical, id: "msg_08875be5819035fd016aad2126b0d887d0bc779b87c12fc4fc", text: "我先确认仓库位置" };

@@ -294,14 +294,20 @@ function mergeSnapshotItems(primary: SnapshotItem[], supplemental: SnapshotItem[
 
 export function mergeSessionSnapshot(primary: SessionSnapshot, supplemental: SessionSnapshot): SessionSnapshot {
   if (primary.id !== supplemental.id) return terminalizeSessionSnapshot(primary);
-  const primaryTurns = new Map(primary.turns.map((turn) => [turn.id, turn]));
-  const seen = new Set<string>();
-  const turns = supplemental.turns.map((turn) => {
-    seen.add(turn.id);
-    const current = primaryTurns.get(turn.id);
-    return current ? { ...current, items: mergeSnapshotItems(current.items, reconcileAgentMessageHistory(current.items, turn.items)) } : turn;
+  const supplementalTurns = new Map(supplemental.turns.map((turn) => [turn.id, turn]));
+  // Persisted history owns Turn order. A live snapshot can contain a newer Turn
+  // at the front after a resume; using that order hides it above the timeline.
+  const turns = primary.turns.map((current) => {
+    const live = supplementalTurns.get(current.id);
+    return live ? { ...current, items: mergeSnapshotItems(current.items, reconcileAgentMessageHistory(current.items, live.items)) } : current;
   });
-  for (const turn of primary.turns) if (!seen.has(turn.id)) turns.push(turn);
+  const primaryIds = new Set(primary.turns.map((turn) => turn.id));
+  for (const live of supplemental.turns) {
+    if (primaryIds.has(live.id)) continue;
+    const index = turns.findIndex((turn) => live.startedAt != null && turn.startedAt != null
+      && (turn.startedAt > live.startedAt || (turn.startedAt === live.startedAt && turn.id > live.id)));
+    turns.splice(index < 0 ? turns.length : index, 0, live);
+  }
   return terminalizeSessionSnapshot({ ...primary, turns });
 }
 
