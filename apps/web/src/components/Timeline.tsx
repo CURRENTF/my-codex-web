@@ -1,18 +1,19 @@
 import { ErrorTime } from "./ErrorNotice";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, WarningCircle, Wrench, X, XCircle } from "@phosphor-icons/react";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { mergeStreamingText } from "@codex-web/shared-types";
 import type { CodexItem, CodexTurn } from "../api";
 import { commandOutputText, commandResultDisplay } from "../command-output";
 import { forkBoundaryForTurn } from "../fork-boundary";
 import { useAppStore, type OptimisticUserMessage } from "../store";
 import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages, type ActivityItem } from "../timeline-presentation";
+import { userMessageTargets, userMessageText, type UserMessageTarget } from "../user-message-navigation";
 import { AgentMessage, MarkdownMessage } from "./AgentMessage";
 import { AsyncQuestionCard, QuestionThreadContext } from "./AsyncQuestionCard";
+import { UserMessageRail } from "./UserMessageRail";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
-function textFromUser(item: Extract<CodexItem, { type: "userMessage" }>): string { return item.content.map((part) => part.type === "skill" && part.name ? `$${part.name}` : part.text ?? "").filter(Boolean).join("\n"); }
 
 interface DisplayAttachment { key: string; kind: "image" | "file"; name: string; url?: string; detail?: string }
 
@@ -29,7 +30,7 @@ function AttachmentList({ attachments }: { attachments: DisplayAttachment[] }) {
 }
 
 function UserMessage({ item, cwd }: { item: Extract<CodexItem, { type: "userMessage" }>; cwd: string }) {
-  const text = textFromUser(item);
+  const text = userMessageText(item);
   const attachments = item.content.flatMap<DisplayAttachment>((part, index) => {
     if (part.type === "image" || part.type === "localImage") {
       return [{ key: `${part.type}-${index}`, kind: "image", name: part.name ?? part.path?.split("/").at(-1) ?? "图片", url: part.displayUrl ?? part.url }];
@@ -39,7 +40,7 @@ function UserMessage({ item, cwd }: { item: Extract<CodexItem, { type: "userMess
     }
     return [];
   });
-  return <div className="user-message"><div className={attachments.length ? "message-with-attachments" : undefined}>{text && <div className="user-message-text agent-message-text"><MarkdownMessage text={text} cwd={cwd} /></div>}<AttachmentList attachments={attachments} /></div></div>;
+  return <div className="user-message" data-user-message-id={item.id}><div className={attachments.length ? "message-with-attachments" : undefined}>{text && <div className="user-message-text agent-message-text"><MarkdownMessage text={text} cwd={cwd} /></div>}<AttachmentList attachments={attachments} /></div></div>;
 }
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
@@ -119,7 +120,7 @@ function OptimisticMessages({ messages, cwd }: { messages: OptimisticUserMessage
   if (!messages.length) return null;
   return <section className="turn-block optimistic-message-block" aria-live="polite">{messages.map((message) => {
     const label = message.state === "sending" ? "发送中" : message.state === "uncertain" ? "正在确认" : "排队中";
-    return <div className="pending-user-message" data-state={message.state} data-client-user-message-id={message.clientUserMessageId} key={message.clientUserMessageId}>
+    return <div className="pending-user-message" data-state={message.state} data-client-user-message-id={message.clientUserMessageId} data-user-message-id={`optimistic:${message.clientUserMessageId}`} key={message.clientUserMessageId}>
       <div className={message.attachments?.length ? "message-with-attachments" : undefined}>{message.text && <div className="pending-user-text agent-message-text"><MarkdownMessage text={message.text} cwd={cwd} /></div>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
     </div>;
   })}</section>;
@@ -140,25 +141,81 @@ function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDi
 
 export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideChat }: { threadId: string; turns: CodexTurn[]; canFork?: boolean; cwd: string; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void }) {
   const staticTimeline = useRef<HTMLDivElement>(null);
+  const virtualTimeline = useRef<VirtuosoHandle>(null);
+  const timelineShell = useRef<HTMLDivElement>(null);
+  const navigationFrame = useRef<number | null>(null);
+  const navigationRequest = useRef(0);
+  const startedStatic = useRef(false);
+  const turnCount = useRef(turns.length);
+  turnCount.current = turns.length;
+  const [canVirtualize, setCanVirtualize] = useState(false);
   const [selectedDiff, setSelectedDiff] = useState<{ path: string; kind: string; diff?: string } | null>(null);
   const optimisticMessages = useAppStore((state) => state.optimisticUserMessages[threadId] ?? EMPTY_OPTIMISTIC_MESSAGES);
   const visibleOptimisticMessages = unconfirmedOptimisticUserMessages(turns, optimisticMessages);
+  const messageTargets = userMessageTargets(turns, visibleOptimisticMessages);
+  // Defer the static-to-virtual switch until the reader returns to the bottom.
+  const useStaticTimeline = turns.length <= 40 || (startedStatic.current && !canVirtualize);
+  const hasContent = turns.length > 0 || visibleOptimisticMessages.length > 0;
   useEffect(() => {
-    if (turns.length > 40 || !staticTimeline.current) return;
+    if (!useStaticTimeline || !staticTimeline.current) return;
     const scroller = staticTimeline.current;
+    startedStatic.current = true;
     let stickToBottom = true;
-    const updateStickiness = () => { stickToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160; };
-    const follow = () => { if (stickToBottom) scroller.scrollTop = scroller.scrollHeight; };
+    const updateStickiness = () => {
+      const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      if (distanceFromBottom > 24) stickToBottom = false;
+      else if (distanceFromBottom <= 2) {
+        stickToBottom = true;
+        if (turnCount.current > 40) setCanVirtualize(true);
+      }
+    };
+    const stopFollowingOnWheelUp = (event: WheelEvent) => { if (event.deltaY < 0) stickToBottom = false; };
+    const stopFollowingOnTouch = () => { stickToBottom = false; };
+    const follow = () => {
+      if (!stickToBottom) return;
+      scroller.scrollTop = scroller.scrollHeight;
+      if (turnCount.current > 40) setCanVirtualize(true);
+    };
     scroller.scrollTop = scroller.scrollHeight;
     scroller.addEventListener("scroll", updateStickiness, { passive: true });
+    scroller.addEventListener("wheel", stopFollowingOnWheelUp, { passive: true });
+    scroller.addEventListener("touchstart", stopFollowingOnTouch, { passive: true });
     const observer = new MutationObserver(follow);
     observer.observe(scroller, { childList: true, subtree: true, characterData: true });
-    return () => { observer.disconnect(); scroller.removeEventListener("scroll", updateStickiness); };
-  }, [turns.length]);
+    return () => {
+      observer.disconnect();
+      scroller.removeEventListener("scroll", updateStickiness);
+      scroller.removeEventListener("wheel", stopFollowingOnWheelUp);
+      scroller.removeEventListener("touchstart", stopFollowingOnTouch);
+    };
+  }, [useStaticTimeline, hasContent]);
+  useEffect(() => () => { if (navigationFrame.current !== null) cancelAnimationFrame(navigationFrame.current); }, []);
+  const scrollToMessage = (target: UserMessageTarget) => {
+    const request = ++navigationRequest.current;
+    if (navigationFrame.current !== null) cancelAnimationFrame(navigationFrame.current);
+    const locate = () => {
+      const scroller = useStaticTimeline ? staticTimeline.current : timelineShell.current?.querySelector<HTMLElement>(".timeline");
+      const message = [...(scroller?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])].find((element) => element.dataset.userMessageId === target.key);
+      if (!scroller || !message) return false;
+      scroller.scrollTo({ top: scroller.scrollTop + message.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 16, behavior: "auto" });
+      return true;
+    };
+    if (useStaticTimeline) { locate(); return; }
+    const findRenderedMessage = (remaining: number) => {
+      if (request !== navigationRequest.current) return;
+      if (locate() || remaining === 0) { navigationFrame.current = null; return; }
+      navigationFrame.current = requestAnimationFrame(() => findRenderedMessage(remaining - 1));
+    };
+    const findAfterScroll = () => { navigationFrame.current = requestAnimationFrame(() => findRenderedMessage(12)); };
+    if (target.optimistic) {
+      virtualTimeline.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
+      findAfterScroll();
+    } else virtualTimeline.current?.scrollIntoView({ index: target.turnIndex, align: "start", behavior: "auto", done: findAfterScroll });
+  };
   if (!turns.length && !visibleOptimisticMessages.length) return <div className="timeline-empty"><div className="empty-mark"><TerminalWindow size={26} /></div><h2>准备开始</h2><p>描述要在这个 Project 中完成的任务。</p></div>;
   const optimistic = <OptimisticMessages messages={visibleOptimisticMessages} cwd={cwd} />;
-  const timeline = turns.length <= 40
+  const timeline = useStaticTimeline
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
-    : <Virtuoso className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
-  return <QuestionThreadContext.Provider value={threadId}><div className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
+    : <Virtuoso ref={virtualTimeline} className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
+  return <QuestionThreadContext.Provider value={threadId}><div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}<UserMessageRail targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
 }
