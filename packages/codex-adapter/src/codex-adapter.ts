@@ -209,9 +209,18 @@ function reasoningConfig(settings: Pick<SessionSettings, "reasoning">): { model_
 }
 
 function promptInput(text: string, skills: readonly SkillReference[], attachments: readonly AttachmentReference[]) {
+  const files = attachments.filter((attachment) => attachment.kind === "file");
   return [
     ...skills.map((skill) => ({ type: "skill" as const, name: skill.name, path: skill.path })),
     ...(text.trim() ? [{ type: "text" as const, text, text_elements: [] }] : []),
+    // File mentions survive in history but do not reliably become model-visible text.
+    // Include readable paths explicitly; keep mentions for attachment display/downloads.
+    ...(files.length ? [{
+      type: "text" as const,
+      text: "The user uploaded the following files. Read them from these absolute paths as needed for the request:\n"
+        + JSON.stringify(files.map(({ name, path }) => ({ name, path }))),
+      text_elements: [],
+    }] : []),
     ...attachments.map((attachment) => attachment.kind === "image"
       ? ({ type: "localImage" as const, path: attachment.path })
       : ({ type: "mention" as const, name: attachment.name, path: attachment.path })),

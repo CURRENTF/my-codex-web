@@ -362,9 +362,57 @@ describe("Codex Adapter initialization", () => {
     expect(request).toHaveBeenCalledWith("turn/start", expect.objectContaining({
       input: [
         { type: "text", text: "inspect these", text_elements: [] },
+        {
+          type: "text",
+          text: 'The user uploaded the following files. Read them from these absolute paths as needed for the request:\n[{"name":"notes.txt","path":"/tmp/uploads/notes.txt"}]',
+          text_elements: [],
+        },
         { type: "localImage", path: "/tmp/uploads/screen.png" },
         { type: "mention", name: "notes.txt", path: "/tmp/uploads/notes.txt" },
       ],
+    }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
+  });
+
+  it.each(["turn/start", "turn/steer"])("makes file-only uploads visible to the model in %s", async (method) => {
+    const request = vi.fn(async () => method === "turn/start"
+      ? { turn: { id: "turn-1", status: "inProgress", items: [], startedAt: null, completedAt: null, durationMs: null, error: null } }
+      : { turnId: "turn-1" });
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+    const attachments = [
+      { kind: "file" as const, name: "cache protocols.patch", path: "/tmp/uploads/cache protocols.patch" },
+      { kind: "file" as const, name: 'notes "quoted".txt', path: '/tmp/uploads/notes "quoted".txt' },
+    ];
+
+    if (method === "turn/start") {
+      await adapter.startTurn("thread-1", "/tmp/project", "", { model: null, reasoning: null, accessMode: "fullAccess" }, "message-1", [], attachments);
+    } else {
+      await adapter.steerTurn("thread-1", "turn-1", "", "message-1", [], attachments);
+    }
+
+    expect(request).toHaveBeenCalledWith(method, expect.objectContaining({
+      input: [
+        {
+          type: "text",
+          text: expect.stringContaining(JSON.stringify(attachments.map(({ name, path }) => ({ name, path })))),
+          text_elements: [],
+        },
+        ...attachments.map(({ name, path }) => ({ type: "mention", name, path })),
+      ],
+    }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
+  });
+
+  it("keeps image-only uploads as structured image input without a file-reading prompt", async () => {
+    const request = vi.fn(async () => ({ turnId: "turn-1" }));
+    const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
+    (adapter.supervisor as unknown as { transportValue: { request: typeof request } }).transportValue = { request };
+
+    await adapter.steerTurn("thread-1", "turn-1", "", "message-1", [], [
+      { kind: "image", name: "screen.png", path: "/tmp/uploads/screen.png" },
+    ]);
+
+    expect(request).toHaveBeenCalledWith("turn/steer", expect.objectContaining({
+      input: [{ type: "localImage", path: "/tmp/uploads/screen.png" }],
     }), NON_IDEMPOTENT_MUTATION_TIMEOUT);
   });
 
