@@ -3,27 +3,24 @@ import type { SessionTurn } from "@codex-web/shared-types";
 import { userMessageIndexAtReadingLine, MAX_USER_MESSAGE_TICKS, userMessageIndexAtProgress, userMessageTargets, userMessageText, visibleUserMessageIndices } from "../../apps/web/src/user-message-navigation";
 
 describe("user message navigation", () => {
-  it("limits visible marks while keeping every message addressable", () => {
+  it("shows only a contiguous window of up to 20 nearby messages", () => {
     expect(visibleUserMessageIndices(0, 0)).toEqual([]);
+    expect(visibleUserMessageIndices(1, 0)).toEqual([0]);
     expect(visibleUserMessageIndices(20, 10)).toEqual(Array.from({ length: 20 }, (_, index) => index));
-    const nearStart = visibleUserMessageIndices(94, 0);
-    const nearMiddle = visibleUserMessageIndices(94, 47);
-    const nearEnd = visibleUserMessageIndices(94, 93);
-    for (const indices of [nearStart, nearMiddle, nearEnd]) {
-      expect(indices).toHaveLength(MAX_USER_MESSAGE_TICKS);
-      expect(indices[0]).toBe(0);
-      expect(indices.at(-1)).toBe(93);
-      expect(new Set(indices).size).toBe(MAX_USER_MESSAGE_TICKS);
-      expect(indices).toEqual([...indices].sort((a, b) => a - b));
+    expect(visibleUserMessageIndices(94, 0)).toEqual(Array.from({ length: 20 }, (_, index) => index));
+    const middle = visibleUserMessageIndices(94, 47);
+    expect(middle).toEqual(Array.from({ length: 20 }, (_, index) => 37 + index));
+    expect(middle).not.toContain(0);
+    expect(middle).not.toContain(93);
+    expect(visibleUserMessageIndices(94, 93)).toEqual(Array.from({ length: 20 }, (_, index) => 74 + index));
+    for (let slot = 0; slot < MAX_USER_MESSAGE_TICKS; slot += 1) {
+      expect(middle[userMessageIndexAtProgress(middle.length, slot / 19)]).toBe(37 + slot);
     }
-    expect(nearStart).toContain(0);
-    expect(nearMiddle).toContain(47);
-    expect(nearEnd).toContain(93);
-    expect(nearStart).not.toEqual(nearMiddle);
-    expect(nearMiddle).not.toEqual(nearEnd);
-    for (let index = 0; index < 94; index += 1) {
-      expect(userMessageIndexAtProgress(94, index / 93)).toBe(index);
-    }
+  });
+
+  it("keeps a middle window stable as more history loads and moves it only with the reading anchor", () => {
+    expect(visibleUserMessageIndices(150, 47)).toEqual(visibleUserMessageIndices(94, 47));
+    expect(visibleUserMessageIndices(94, 48)).toEqual(visibleUserMessageIndices(94, 47).map((index) => index + 1));
   });
 
   it("includes every user message within a Turn and pending messages in order", () => {

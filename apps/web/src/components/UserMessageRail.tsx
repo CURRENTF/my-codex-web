@@ -8,12 +8,12 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
 }) {
   const rail = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
-  const position = useRef<HTMLSpanElement>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [focusIndex, setFocusIndex] = useState(Math.max(0, targets.length - 1));
+  const [focusKey, setFocusKey] = useState<string | null>(targets.at(-1)?.key ?? null);
   const previewId = useId();
   const targetKeys = targets.map((target) => target.key).join("\u0000");
-  const currentFocus = Math.max(0, Math.min(targets.length - 1, focusIndex));
+  const matchedFocus = targets.findIndex((target) => target.key === focusKey);
+  const currentFocus = matchedFocus < 0 ? Math.max(0, targets.length - 1) : matchedFocus;
   const visibleIndices = useMemo(() => visibleUserMessageIndices(targets.length, currentFocus), [targets.length, currentFocus]);
 
   useEffect(() => { setPreviewIndex(null); }, [targetKeys]);
@@ -21,27 +21,20 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
   useEffect(() => {
     const scroller = rail.current?.parentElement?.querySelector<HTMLElement>(".timeline");
     const trackElement = track.current;
-    const positionElement = position.current;
-    if (!scroller || !trackElement || !positionElement) return;
+    if (!scroller || !trackElement) return;
     const targetIndex = new Map(targets.map((target, index) => [target.key, index]));
     let frame = 0;
     const update = () => {
-      const scrollable = scroller.scrollHeight - scroller.clientHeight;
       const bounds = scroller.getBoundingClientRect();
       const readingLine = bounds.top + 16;
       const anchors = [...scroller.querySelectorAll<HTMLElement>("[data-user-message-id]")].flatMap((message) => {
         const index = targetIndex.get(message.dataset.userMessageId ?? "");
         return index === undefined ? [] : [{ index, top: message.getBoundingClientRect().top }];
       });
-      // Both the expanded marks and the indicator use message order, not pixel
-      // scroll progress (which also changes as Virtuoso measures long turns).
-      const focus = scroller.scrollTop <= 2 ? 0
-        : scrollable - scroller.scrollTop <= 2 ? targets.length - 1
-        : userMessageIndexAtReadingLine(anchors, readingLine);
-      if (focus === null) return; // Keep the last reading position during virtual remounts.
-      const progress = targets.length > 1 ? focus / (targets.length - 1) : .5;
-      positionElement.style.transform = `translateY(${trackElement.clientHeight * progress}px) translateY(-50%)`;
-      setFocusIndex((previous) => previous === focus ? previous : focus);
+      // Keep the same message anchor while virtualization revises total height.
+      const focus = userMessageIndexAtReadingLine(anchors, readingLine);
+      if (focus === null) return;
+      setFocusKey(targets[focus]?.key ?? null);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; update(); }); };
     scroller.addEventListener("scroll", schedule, { passive: true });
@@ -59,22 +52,24 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
   }, [virtual, targetKeys]);
 
   if (!targets.length) return null;
-  const lastIndex = targets.length - 1;
+  const firstVisible = visibleIndices[0]!;
+  const lastVisible = visibleIndices.at(-1)!;
+  const localPosition = (index: number) => visibleIndices.length > 1 ? (index - firstVisible) / (visibleIndices.length - 1) * 100 : 50;
   const indexAt = (clientY: number) => {
     const bounds = track.current?.getBoundingClientRect();
-    if (!bounds || !bounds.height) return 0;
-    return userMessageIndexAtProgress(targets.length, (clientY - bounds.top) / bounds.height);
+    if (!bounds || !bounds.height) return currentFocus;
+    return visibleIndices[userMessageIndexAtProgress(visibleIndices.length, (clientY - bounds.top) / bounds.height)]!;
   };
-  const activePreviewIndex = previewIndex === null ? null : Math.max(0, Math.min(lastIndex, previewIndex));
+  const activePreviewIndex = previewIndex === null ? null : Math.max(firstVisible, Math.min(lastVisible, previewIndex));
   const selected = activePreviewIndex === null ? null : targets[activePreviewIndex];
-  const selectedPosition = lastIndex > 0 && activePreviewIndex !== null ? activePreviewIndex / lastIndex * 100 : 50;
+  const selectedPosition = activePreviewIndex === null ? 50 : localPosition(activePreviewIndex);
 
   return <div className="user-message-rail" ref={rail}>
     <div className="user-message-rail-track" ref={track} aria-hidden="true">
-      {visibleIndices.map((index) => <span key={targets[index]!.key} className={`user-message-rail-tick ${index === activePreviewIndex ? "selected" : ""}`} style={{ top: `${lastIndex > 0 ? index / lastIndex * 100 : 50}%` }} />)}
-      <span className="user-message-rail-position" ref={position} />
+      {visibleIndices.map((index) => <span key={targets[index]!.key} className={`user-message-rail-tick ${index === activePreviewIndex ? "selected" : ""}`} style={{ top: `${localPosition(index)}%` }} />)}
+      <span className="user-message-rail-position" style={{ top: `${localPosition(currentFocus)}%`, transform: "translateY(-50%)" }} />
     </div>
-    <button type="button" className="user-message-rail-hit" aria-label={`我的消息导航，共 ${targets.length} 条${activePreviewIndex !== null ? `，第 ${activePreviewIndex + 1} 条` : ""}`} aria-description="上下方向键选择消息，回车跳转" aria-describedby={selected ? previewId : undefined}
+    <button type="button" className="user-message-rail-hit" aria-label={`我的消息导航，显示第 ${firstVisible + 1} 至 ${lastVisible + 1} 条，共 ${targets.length} 条${activePreviewIndex !== null ? `，第 ${activePreviewIndex + 1} 条` : ""}`} aria-description="上下方向键选择消息，回车跳转" aria-describedby={selected ? previewId : undefined}
       onPointerMove={(event) => setPreviewIndex(indexAt(event.clientY))}
       onPointerLeave={() => setPreviewIndex(null)}
       onFocus={() => setPreviewIndex(currentFocus)}
@@ -82,10 +77,10 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
       onKeyDown={(event) => {
         const current = activePreviewIndex ?? currentFocus;
         let next = current;
-        if (event.key === "ArrowUp") next = Math.max(0, current - 1);
-        else if (event.key === "ArrowDown") next = Math.min(lastIndex, current + 1);
-        else if (event.key === "Home") next = 0;
-        else if (event.key === "End") next = lastIndex;
+        if (event.key === "ArrowUp") next = Math.max(firstVisible, current - 1);
+        else if (event.key === "ArrowDown") next = Math.min(lastVisible, current + 1);
+        else if (event.key === "Home") next = firstVisible;
+        else if (event.key === "End") next = lastVisible;
         else return;
         event.preventDefault();
         setPreviewIndex(next);
