@@ -150,6 +150,7 @@ export async function createServer() {
   adapter.on("event", (event) => {
     const normalized = sessions.handleEvent(event);
     runtimes.handleEvent(normalized);
+    if (normalized.type === "turnCompleted") promptScheduler.handleTurnCompleted(normalized.threadId, normalized.turn);
   });
   adapter.on("pendingRequest", (request) => sessions.handlePendingRequest(request));
   adapter.on("stderr", (line: string) => app.log.debug({ source: "codex-app-server", bytes: Buffer.byteLength(line) }, "Codex App Server wrote to stderr"));
@@ -429,7 +430,7 @@ export async function createServer() {
   app.get("/api/sessions/:threadId/schedule", async (request) => promptScheduler.get(idSchema.parse((request.params as { threadId: string }).threadId)));
   app.put("/api/sessions/:threadId/schedule", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const body = z.object({ intervalMinutes: z.number().int().min(1).max(525600), prompt: z.string().trim().min(1).max(32000), enabled: z.boolean() }).parse(request.body);
+    const body = z.object({ intervalMinutes: z.number().int().min(1).max(525600), prompt: z.string().trim().min(1).max(32000), enabled: z.boolean(), autoStop: z.boolean().default(false) }).parse(request.body);
     const mapping = repositories.getProjectSession(threadId);
     if (!mapping || mapping.hidden || runtimes.getSideChat(threadId)) throw Object.assign(new Error("任务不存在或不支持定时轮询"), { statusCode: 404 });
     return promptScheduler.set(threadId, body);

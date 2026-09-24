@@ -925,6 +925,12 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .schedule-heading h2 { margin: 0; font-size: 15px; }
 .schedule-state { margin-left: auto; font-size: 11px; color: var(--text-soft); }
 .schedule-panel .field-label { margin-top: 14px; }
+.schedule-options { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.schedule-auto-stop { display: inline-flex; align-items: center; gap: 8px; padding: 0 0 6px; border: 0; background: transparent; color: var(--text-soft); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.schedule-switch-track { display: inline-flex; align-items: center; width: 28px; height: 16px; padding: 2px; border-radius: 99px; background: var(--line-strong); transition: background 0.15s; }
+.schedule-switch-track > span { width: 12px; height: 12px; border-radius: 50%; background: var(--surface-strong); box-shadow: 0 1px 2px #0003; transition: transform 0.15s; }
+.schedule-auto-stop[aria-checked="true"] .schedule-switch-track { background: var(--accent); }
+.schedule-auto-stop[aria-checked="true"] .schedule-switch-track > span { transform: translateX(12px); }
 .schedule-panel textarea { width: 100%; resize: vertical; min-height: 100px; max-height: 240px; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; line-height: 1.6; }
 .schedule-interval { display: flex; align-items: center; gap: 10px; }
 .schedule-interval input { width: 100px; }

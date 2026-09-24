@@ -345,6 +345,9 @@ export interface PromptSchedule {
   intervalMinutes: number;
   prompt: string;
   enabled: boolean;
+  autoStop?: boolean;
+  scheduleId?: string;
+  pendingAutoStopTurnId?: string | null;
   nextRunAt: number | null;
   lastRunAt: number | null;
   lastResult: string | null;

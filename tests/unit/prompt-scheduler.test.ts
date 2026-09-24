@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Repositories } from "../../apps/server/src/database";
 import { PromptScheduler } from "../../apps/server/src/prompt-scheduler";
 import { ActiveTurnConflictError, type SessionService } from "../../apps/server/src/session-service";
+import type { SessionTurn } from "@codex-web/shared-types";
 
 describe("server prompt scheduler", () => {
   let root: string;
   let repositories: Repositories;
   let scheduler: PromptScheduler;
   const startTurn = vi.fn<SessionService["startTurn"]>();
+  const readSession = vi.fn<SessionService["readSession"]>();
   let connected = true;
   beforeEach(() => {
     vi.useFakeTimers(); vi.setSystemTime(1000000);
@@ -20,7 +22,8 @@ describe("server prompt scheduler", () => {
     repositories.upsertProjectSession({ thread_id: "t", project_id: "p", cwd_snapshot: root, source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null, added_at: 1, last_seen_at: 1 });
     startTurn.mockReset(); startTurn.mockResolvedValue({} as Awaited<ReturnType<SessionService["startTurn"]>>);
     connected = true;
-    scheduler = new PromptScheduler(repositories, { startTurn }, () => connected);
+    readSession.mockReset();
+    scheduler = new PromptScheduler(repositories, { startTurn, readSession }, () => connected);
   });
   afterEach(async () => { await scheduler.stop(); repositories.close(); rmSync(root, { recursive: true, force: true }); vi.useRealTimers(); });
   const enable = () => scheduler.set("t", { intervalMinutes: 2, prompt: "检查进展", enabled: true });
@@ -35,7 +38,7 @@ describe("server prompt scheduler", () => {
   it("restores persisted schedules after restart and coalesces overdue ticks", async () => {
     enable(); await scheduler.stop(); repositories.close();
     repositories = new Repositories(path.join(root, "app.db"));
-    scheduler = new PromptScheduler(repositories, { startTurn }, () => connected);
+    scheduler = new PromptScheduler(repositories, { startTurn, readSession }, () => connected);
     vi.advanceTimersByTime(900000); scheduler.tick(); await scheduler.stop();
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(scheduler.get("t")?.nextRunAt).toBe(Date.now() + 120000);
@@ -66,5 +69,37 @@ describe("server prompt scheduler", () => {
     scheduler.set("t", { intervalMinutes: 5, prompt: "新提示", enabled: false });
     resolve({} as Awaited<ReturnType<SessionService["startTurn"]>>); await scheduler.stop();
     expect(scheduler.get("t")).toMatchObject({ enabled: false, prompt: "新提示", nextRunAt: null });
+  });
+
+  const completedTurn = (id: string, text: string): SessionTurn => ({
+    id, status: "completed", startedAt: 1, completedAt: 2, durationMs: 1,
+    items: [{ type: "agentMessage", id: "reply", text }],
+  });
+
+  it("appends the instruction only when enabled and stops on a substring in its own completed Turn", async () => {
+    startTurn.mockResolvedValue({ turn: { id: "scheduled-1" } } as Awaited<ReturnType<SessionService["startTurn"]>>);
+    scheduler.set("t", { intervalMinutes: 2, prompt: "检查进展", enabled: true, autoStop: true });
+    scheduler.start(); await vi.advanceTimersByTimeAsync(120000);
+    expect(startTurn.mock.calls[0]?.[1]).toBe(`检查进展\n\n${PromptScheduler.autoStopInstruction}`);
+    expect(scheduler.get("t")?.pendingAutoStopTurnId).toBe("scheduled-1");
+    scheduler.handleTurnCompleted("t", completedTurn("other-turn", PromptScheduler.completionMarker));
+    expect(scheduler.get("t")?.enabled).toBe(true);
+    scheduler.handleTurnCompleted("t", completedTurn("scheduled-1", `完成。${PromptScheduler.completionMarker} 谢谢`));
+    expect(scheduler.get("t")).toMatchObject({ enabled: false, nextRunAt: null });
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks a previous scheduled reply after restart before sending again", async () => {
+    startTurn.mockResolvedValue({ turn: { id: "scheduled-1" } } as Awaited<ReturnType<SessionService["startTurn"]>>);
+    scheduler.set("t", { intervalMinutes: 2, prompt: "检查进展", enabled: true, autoStop: true });
+    scheduler.start(); await vi.advanceTimersByTimeAsync(120000);
+    await scheduler.stop(); repositories.close();
+    repositories = new Repositories(path.join(root, "app.db"));
+    readSession.mockResolvedValue({ thread: { turns: [completedTurn("scheduled-1", `已完成 ${PromptScheduler.completionMarker}`)] } } as Awaited<ReturnType<SessionService["readSession"]>>);
+    scheduler = new PromptScheduler(repositories, { startTurn, readSession }, () => connected);
+    scheduler.start(); await vi.advanceTimersByTimeAsync(120000);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(scheduler.get("t")).toMatchObject({ enabled: false, nextRunAt: null });
   });
 });
