@@ -31,7 +31,7 @@ export function sessionSwipeIsRevealed(scrollLeft: number): boolean {
 
 export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }: { state: RuntimeState; scheduledPollingEnabled?: boolean }) {
   return <span className="session-status-menu-icon" aria-hidden>
-    {scheduledPollingEnabled ? <Alarm className="status-icon scheduled" size={20} weight="regular" /> : <StatusIcon state={state} size={20} />}
+    {scheduledPollingEnabled ? <Alarm className={`status-icon scheduled${state === "running" ? " scheduled-running" : ""}`} size={20} weight="regular" /> : <StatusIcon state={state} size={20} />}
     <DotsThreeCircle className="session-status-more-icon" size={20} weight="regular" />
   </span>;
 }
@@ -109,6 +109,8 @@ export interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
   const setLongTextConfirmation = useComposerPreferences((state) => state.setLongTextConfirmation);
+  const showUserMessageRail = useComposerPreferences((state) => state.showUserMessageRail);
+  const setShowUserMessageRail = useComposerPreferences((state) => state.setShowUserMessageRail);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
@@ -155,6 +157,10 @@ export function Sidebar(props: SidebarProps) {
             <span className="settings-state">{props.notificationState === "enabled" ? "已开启" : "已关闭"}</span>
           </button>
           <div className="menu-separator" />
+          <button className="app-settings-row" role="switch" aria-checked={showUserMessageRail} aria-label="显示消息进度栏" onClick={() => setShowUserMessageRail(!showUserMessageRail)}>
+            <span><strong>显示消息进度栏</strong><small>在对话左侧快速定位我的消息。</small></span>
+            <span className={`settings-toggle ${showUserMessageRail ? "enabled" : ""}`} aria-hidden="true"><span /></span>
+          </button>
           <button className="app-settings-row" role="switch" aria-checked={longTextConfirmation} aria-label="长文本双回车发送" onClick={() => setLongTextConfirmation(!longTextConfirmation)}>
             <span><strong>长文本双回车发送</strong><small>超过 50 字 / 词时，按两次 Enter 或点击发送。中文按字，英文按词。</small></span>
             <span className={`settings-toggle ${longTextConfirmation ? "enabled" : ""}`} aria-hidden="true"><span /></span>

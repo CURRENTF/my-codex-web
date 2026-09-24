@@ -69,6 +69,8 @@ describe("viewport layout CSS", () => {
     expect(rule(".session-status-more-icon")).toContain("opacity: 0");
     expect(rule('.session-status-menu[data-state="open"] .session-status-more-icon')).toContain("opacity: 1");
     expect(rule(".session-status-menu.running")).toContain("color: var(--accent)");
+    expect(rule(".session-status-menu .status-icon.scheduled-running")).toContain("animation: spin 4s linear infinite");
+    expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
     expect(rule(".session-status-menu.justFinished")).toContain("color: var(--success)");
     expect(rule(".session-status-menu.waitingForInput")).toContain("color: var(--warning)");
     expect(styles).not.toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-status-menu \{[^}]*display: none;/);

@@ -8,7 +8,7 @@ vi.hoisted(() => {
 });
 
 describe("composer preferences", () => {
-  beforeEach(() => useComposerPreferences.setState({ longTextConfirmation: false, defaultModel: null, defaultReasoning: null }));
+  beforeEach(() => useComposerPreferences.setState({ longTextConfirmation: false, showUserMessageRail: true, defaultModel: null, defaultReasoning: null }));
   it("counts Chinese characters, English words and mixed text without punctuation", () => {
     expect(composerWordCount("你好 world! Let's test，中文。")).toBe(7);
     expect(composerWordCount("中".repeat(50))).toBe(50);
@@ -38,10 +38,20 @@ describe("composer preferences", () => {
     localStorage.setItem("codex-web:composer-preferences:v1", JSON.stringify({ version: 1, state: { longTextConfirmation: false, defaultModel: "model-a", defaultReasoning: "high" } }));
     await useComposerPreferences.persist.rehydrate();
     expect(sessionCreationDefaults(useComposerPreferences.getState(), models)).toEqual({ model: "model-a", reasoning: "high" });
+    expect(useComposerPreferences.getState().showUserMessageRail).toBe(true);
+  });
+  it("saves the message rail display preference in browser storage", async () => {
+    useComposerPreferences.getState().setShowUserMessageRail(false);
+    const saved = localStorage.getItem("codex-web:composer-preferences:v1")!;
+    expect(JSON.parse(saved).state.showUserMessageRail).toBe(false);
+    useComposerPreferences.setState({ showUserMessageRail: true });
+    localStorage.setItem("codex-web:composer-preferences:v1", saved);
+    await useComposerPreferences.persist.rehydrate();
+    expect(useComposerPreferences.getState().showUserMessageRail).toBe(false);
   });
   it("discards implicit model history during migration but preserves the text preference", () => {
     const migrate = useComposerPreferences.persist.getOptions().migrate!;
-    expect(migrate({ longTextConfirmation: true, lastCreatedThreadId: "old", lastCreatedModel: "model-a" }, 0)).toEqual({ longTextConfirmation: true, defaultModel: null, defaultReasoning: null });
+    expect(migrate({ longTextConfirmation: true, lastCreatedThreadId: "old", lastCreatedModel: "model-a" }, 0)).toEqual({ longTextConfirmation: true, showUserMessageRail: true, defaultModel: null, defaultReasoning: null });
   });
 });
 

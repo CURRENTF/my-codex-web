@@ -4,24 +4,28 @@ import type { ModelOption } from "@codex-web/shared-types";
 
 interface ComposerPreferences {
   longTextConfirmation: boolean;
+  showUserMessageRail: boolean;
   defaultModel: string | null;
   defaultReasoning: string | null;
   setLongTextConfirmation(enabled: boolean): void;
+  setShowUserMessageRail(enabled: boolean): void;
   setSessionDefaults(model: string | null, reasoning: string | null): void;
 }
 
 export const useComposerPreferences = create<ComposerPreferences>()(persist((set) => ({
   longTextConfirmation: false,
+  showUserMessageRail: true,
   defaultModel: null,
   defaultReasoning: null,
   setLongTextConfirmation: (longTextConfirmation) => set({ longTextConfirmation }),
+  setShowUserMessageRail: (showUserMessageRail) => set({ showUserMessageRail }),
   setSessionDefaults: (defaultModel, defaultReasoning) => set({ defaultModel, defaultReasoning: defaultModel ? defaultReasoning : null }),
 }), {
   name: "codex-web:composer-preferences:v1",
   version: 1,
   // The old last-created model was implicit history, not an explicit preference.
-  migrate: (stored) => ({ longTextConfirmation: (stored as Partial<ComposerPreferences> | null)?.longTextConfirmation === true, defaultModel: null, defaultReasoning: null }),
-  partialize: ({ longTextConfirmation, defaultModel, defaultReasoning }) => ({ longTextConfirmation, defaultModel, defaultReasoning }),
+  migrate: (stored) => ({ longTextConfirmation: (stored as Partial<ComposerPreferences> | null)?.longTextConfirmation === true, showUserMessageRail: true, defaultModel: null, defaultReasoning: null }),
+  partialize: ({ longTextConfirmation, showUserMessageRail, defaultModel, defaultReasoning }) => ({ longTextConfirmation, showUserMessageRail, defaultModel, defaultReasoning }),
 }));
 
 export function sessionCreationDefaults(preferences: Pick<ComposerPreferences, "defaultModel" | "defaultReasoning">, models: ModelOption[]): { model?: string; reasoning?: string } {

@@ -5,6 +5,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { mergeStreamingText } from "@codex-web/shared-types";
 import type { CodexItem, CodexTurn } from "../api";
 import { commandOutputText, commandResultDisplay } from "../command-output";
+import { useComposerPreferences } from "../composer-preferences";
 import { forkBoundaryForTurn } from "../fork-boundary";
 import { useAppStore, type OptimisticUserMessage } from "../store";
 import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages, type ActivityItem } from "../timeline-presentation";
@@ -140,6 +141,7 @@ function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDi
 }
 
 export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideChat }: { threadId: string; turns: CodexTurn[]; canFork?: boolean; cwd: string; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void }) {
+  const showUserMessageRail = useComposerPreferences((state) => state.showUserMessageRail);
   const staticTimeline = useRef<HTMLDivElement>(null);
   const virtualTimeline = useRef<VirtuosoHandle>(null);
   const timelineShell = useRef<HTMLDivElement>(null);
@@ -226,5 +228,5 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
   const timeline = useStaticTimeline
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
     : <Virtuoso ref={virtualTimeline} className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
-  return <QuestionThreadContext.Provider value={threadId}><div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}<UserMessageRail targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
+  return <QuestionThreadContext.Provider value={threadId}><div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{showUserMessageRail && <UserMessageRail targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
 }

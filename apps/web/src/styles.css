@@ -120,6 +120,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .session-status-menu-icon { display: grid; width: 20px; height: 20px; place-items: center; }
 .session-status-menu-icon > svg { grid-area: 1 / 1; transition: opacity .12s ease, transform .16s cubic-bezier(.2, .8, .2, 1); }
 .session-status-menu .status-icon.scheduled { color: var(--accent); }
+.session-status-menu .status-icon.scheduled-running { animation: spin 4s linear infinite; }
 .session-status-more-icon { opacity: 0; transform: scale(.7) rotate(-8deg); }
 .session-status-menu:hover .status-icon, .session-status-menu:focus-visible .status-icon, .session-status-menu[data-state="open"] .status-icon { opacity: 0; }
 .session-status-menu:hover .session-status-more-icon, .session-status-menu:focus-visible .session-status-more-icon, .session-status-menu[data-state="open"] .session-status-more-icon { opacity: 1; transform: scale(1) rotate(0); }

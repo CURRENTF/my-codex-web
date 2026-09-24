@@ -22,9 +22,11 @@ describe("Session status menu", () => {
 
   it("centers the alarm in the status control for a scheduled session", () => {
     const markup = renderToStaticMarkup(createElement(SessionStatusMenuIcon, { state: "running", scheduledPollingEnabled: true }));
-    expect(markup).toContain("status-icon scheduled");
+    expect(markup).toContain("status-icon scheduled scheduled-running");
     expect(markup).not.toContain("status-icon spinning");
     expect(markup).toContain("session-status-more-icon");
+    expect(renderToStaticMarkup(createElement(SessionStatusMenuIcon, { state: "idle", scheduledPollingEnabled: true }))).not.toContain("scheduled-running");
+    expect(renderToStaticMarkup(createElement(SessionStatusMenuIcon, { state: "waitingForInput", scheduledPollingEnabled: true }))).not.toContain("scheduled-running");
     expect(renderToStaticMarkup(createElement(SessionStatusMenuIcon, { state: "idle" }))).not.toContain("status-icon scheduled");
   });
 });
