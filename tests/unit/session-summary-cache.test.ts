@@ -95,4 +95,13 @@ describe("Session summary cache", () => {
       title: "After", hasGoal: true, runtimeState: "running", updatedAt: 22,
     });
   });
+
+  it("updates the scheduled polling badge when a schedule changes", () => {
+    const client = new QueryClient();
+    client.setQueryData(["sessions", "", "desc"], [summary("thread-1", "Task", 10)]);
+    applyCachedSessionSummaryEvent(client, "thread-1", { reason: "schedule-updated", scheduledPollingEnabled: true }, "idle", 20);
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.[0]?.scheduledPollingEnabled).toBe(true);
+    applyCachedSessionSummaryEvent(client, "thread-1", { reason: "schedule-updated", scheduledPollingEnabled: false }, "idle", 21);
+    expect(client.getQueryData<SessionSummary[]>(["sessions", "", "desc"])?.[0]?.scheduledPollingEnabled).toBe(false);
+  });
 });

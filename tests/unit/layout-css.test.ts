@@ -63,6 +63,8 @@ describe("viewport layout CSS", () => {
     expect(sidebarSource).not.toContain('<StatusIcon state={runtimeState} />');
     expect(sidebarSource).not.toContain("session-row-more");
     expect(rule(".session-status-menu")).toContain("display: grid");
+    expect(rule(".session-status-menu-icon")).toContain("place-items: center");
+    expect(styles).not.toContain(".session-schedule-icon");
     expect(rule(".session-status-menu")).not.toContain("opacity: 0");
     expect(rule(".session-status-more-icon")).toContain("opacity: 0");
     expect(rule('.session-status-menu[data-state="open"] .session-status-more-icon')).toContain("opacity: 1");
@@ -70,6 +72,12 @@ describe("viewport layout CSS", () => {
     expect(rule(".session-status-menu.justFinished")).toContain("color: var(--success)");
     expect(rule(".session-status-menu.waitingForInput")).toContain("color: var(--warning)");
     expect(styles).not.toMatch(/@media \(max-width: 720px\)[\s\S]*\.session-status-menu \{[^}]*display: none;/);
+  });
+
+  it("centers the polling switch on the interval input row", () => {
+    expect(rule(".schedule-options")).toContain("align-items: center");
+    expect(rule(".schedule-auto-stop")).toContain("min-height: 36px");
+    expect(rule(".schedule-auto-stop")).not.toContain("padding-bottom");
   });
 
   it("lets long prompts grow until half the visible page", () => {

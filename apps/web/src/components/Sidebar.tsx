@@ -2,7 +2,7 @@ import { SessionCostSetting } from "./SessionCost";
 import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
+import { Alarm, Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { ModelOption, Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
 import { codeViewUrl } from "../code-view-url";
@@ -29,9 +29,9 @@ export function sessionSwipeIsRevealed(scrollLeft: number): boolean {
   return scrollLeft >= SESSION_SWIPE_ACTION_WIDTH / 2;
 }
 
-export function SessionStatusMenuIcon({ state }: { state: RuntimeState }) {
+export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }: { state: RuntimeState; scheduledPollingEnabled?: boolean }) {
   return <span className="session-status-menu-icon" aria-hidden>
-    <StatusIcon state={state} size={20} />
+    {scheduledPollingEnabled ? <Alarm className="status-icon scheduled" size={20} weight="regular" /> : <StatusIcon state={state} size={20} />}
     <DotsThreeCircle className="session-status-more-icon" size={20} weight="regular" />
   </span>;
 }
@@ -80,7 +80,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
             <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
-          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}，更多操作`} title={`${statusText(runtimeState)} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
+          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} title={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
             <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
             <DropdownMenu.Separator className="menu-separator" />
             <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>

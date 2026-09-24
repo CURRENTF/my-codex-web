@@ -119,6 +119,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .session-status-menu:active { transform: scale(.96); }
 .session-status-menu-icon { display: grid; width: 20px; height: 20px; place-items: center; }
 .session-status-menu-icon > svg { grid-area: 1 / 1; transition: opacity .12s ease, transform .16s cubic-bezier(.2, .8, .2, 1); }
+.session-status-menu .status-icon.scheduled { color: var(--accent); }
 .session-status-more-icon { opacity: 0; transform: scale(.7) rotate(-8deg); }
 .session-status-menu:hover .status-icon, .session-status-menu:focus-visible .status-icon, .session-status-menu[data-state="open"] .status-icon { opacity: 0; }
 .session-status-menu:hover .session-status-more-icon, .session-status-menu:focus-visible .session-status-more-icon, .session-status-menu[data-state="open"] .session-status-more-icon { opacity: 1; transform: scale(1) rotate(0); }
@@ -676,8 +677,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .goal-popover { width: min(390px, calc(100vw - 24px)); padding: 14px; }
 .popover-heading { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; color: var(--accent); font-weight: 680; }
 .field-label { display: grid; gap: 6px; color: var(--text-soft); font-size: 11px; font-weight: 620; }
-.field-label textarea, .field-label input, .field-label select { width: 100%; resize: vertical; border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: var(--surface); padding: 8px 9px; color: var(--text); font-size: 12px; font-weight: 400; }
-.field-label textarea:focus, .field-label input:focus, .field-label select:focus { border-color: var(--accent); }
+.field-label textarea, .field-label input, .field-label select, .schedule-minute-input { width: 100%; resize: vertical; border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: var(--surface); padding: 8px 9px; color: var(--text); font-size: 12px; font-weight: 400; }
+.field-label textarea:focus, .field-label input:focus, .field-label select:focus, .schedule-minute-input:focus { border-color: var(--accent); }
 .field-hint { margin: 5px 0 0; color: var(--warning); font-size: 10px; }
 .goal-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
 .popover-actions { display: grid; grid-template-columns: auto 1fr auto auto; gap: 7px; margin-top: 14px; }
@@ -925,8 +926,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .schedule-heading h2 { margin: 0; font-size: 15px; }
 .schedule-state { margin-left: auto; font-size: 11px; color: var(--text-soft); }
 .schedule-panel .field-label { margin-top: 14px; }
-.schedule-options { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
-.schedule-auto-stop { display: inline-flex; align-items: center; gap: 8px; padding: 0 0 6px; border: 0; background: transparent; color: var(--text-soft); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.schedule-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.schedule-auto-stop { display: inline-flex; min-height: 36px; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--text-soft); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
 .schedule-switch-track { display: inline-flex; align-items: center; width: 28px; height: 16px; padding: 2px; border-radius: 99px; background: var(--line-strong); transition: background 0.15s; }
 .schedule-switch-track > span { width: 12px; height: 12px; border-radius: 50%; background: var(--surface-strong); box-shadow: 0 1px 2px #0003; transition: transform 0.15s; }
 .schedule-auto-stop[aria-checked="true"] .schedule-switch-track { background: var(--accent); }

@@ -11,7 +11,7 @@ export class PromptScheduler {
   private pending = new Set<Promise<void>>();
   private running = new Set<string>();
 
-  constructor(private repositories: Repositories, private sessions: Pick<SessionService, "startTurn" | "readSession">, private connected: () => boolean) {
+  constructor(private repositories: Repositories, private sessions: Pick<SessionService, "startTurn" | "readSession">, private connected: () => boolean, private onEnabledChange?: (threadId: string, enabled: boolean) => void) {
     repositories.db.exec(`CREATE TABLE IF NOT EXISTS prompt_schedules (
       thread_id TEXT PRIMARY KEY REFERENCES project_sessions(thread_id) ON DELETE CASCADE,
       value TEXT NOT NULL
@@ -23,11 +23,17 @@ export class PromptScheduler {
     return row ? JSON.parse(row.value) as PromptSchedule : null;
   }
 
+  enabledThreadIds(): Set<string> {
+    const rows = this.repositories.db.prepare("SELECT thread_id FROM prompt_schedules WHERE json_extract(value, '$.enabled') = 1").all() as { thread_id: string }[];
+    return new Set(rows.map((row) => row.thread_id));
+  }
+
   set(threadId: string, input: Pick<PromptSchedule, "intervalMinutes" | "prompt" | "enabled"> & { autoStop?: boolean }): PromptSchedule {
     const mapping = this.repositories.getProjectSession(threadId);
     if (!mapping || mapping.hidden) throw new Error("任务不存在或已归档");
     const value: PromptSchedule = { threadId, ...input, autoStop: input.autoStop ?? false, scheduleId: randomUUID(), pendingAutoStopTurnId: null, nextRunAt: input.enabled ? Date.now() + input.intervalMinutes * 60_000 : null, lastRunAt: this.get(threadId)?.lastRunAt ?? null, lastResult: null };
     this.write(value);
+    this.onEnabledChange?.(threadId, value.enabled);
     return value;
   }
 
@@ -40,6 +46,7 @@ export class PromptScheduler {
     if (schedule?.enabled && schedule.autoStop && schedule.pendingAutoStopTurnId === turn.id
       && turn.status === "completed" && this.containsCompletionMarker(turn)) {
       this.write({ ...schedule, enabled: false, nextRunAt: null, pendingAutoStopTurnId: null, lastResult: "模型已确认任务完成，轮询已自动暂停" });
+      this.onEnabledChange?.(threadId, false);
     }
   }
 
@@ -62,6 +69,7 @@ export class PromptScheduler {
       const mapping = this.repositories.getProjectSession(schedule.threadId);
       if (!mapping || mapping.hidden) {
         this.write({ ...schedule, enabled: false, nextRunAt: null, lastResult: "任务已归档，轮询已暂停" });
+        this.onEnabledChange?.(schedule.threadId, false);
         continue;
       }
       if (schedule.nextRunAt === null || schedule.nextRunAt > now || this.running.has(schedule.threadId)) continue;
@@ -91,6 +99,7 @@ export class PromptScheduler {
           const current = this.get(schedule.threadId);
           if (current?.enabled && current.scheduleId === schedule.scheduleId && current.pendingAutoStopTurnId === previous.id) {
             this.write({ ...current, enabled: false, nextRunAt: null, pendingAutoStopTurnId: null, lastResult: "模型已确认任务完成，轮询已自动暂停" });
+            this.onEnabledChange?.(schedule.threadId, false);
           }
           return;
         }

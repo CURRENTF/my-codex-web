@@ -127,7 +127,9 @@ export async function createServer() {
 
   let startupPhase = true;
   let connectionState: AppServerConnectionState = "disconnected";
-  const promptScheduler = new PromptScheduler(repositories, sessions, () => connectionState === "connected");
+  const promptScheduler = new PromptScheduler(repositories, sessions, () => connectionState === "connected", (threadId, scheduledPollingEnabled) => {
+    events.publish("session.summary.updated", { reason: "schedule-updated", scheduledPollingEnabled }, { threadId });
+  });
   const recovery = new ConnectionRecovery({
     reconcile: () => sessions.reconcileAfterReconnect(),
     onState: (state) => {
@@ -425,7 +427,9 @@ export async function createServer() {
 
   app.get("/api/sessions", async (request) => {
     const query = z.object({ projectId: z.string().optional(), search: z.string().optional(), sortDirection: z.enum(["asc", "desc"]).optional() }).parse(request.query);
-    return sessions.listSessions(query);
+    const summaries = await sessions.listSessions(query);
+    const enabledSchedules = promptScheduler.enabledThreadIds();
+    return summaries.map((summary) => ({ ...summary, scheduledPollingEnabled: enabledSchedules.has(summary.threadId) }));
   });
   app.get("/api/sessions/:threadId/schedule", async (request) => promptScheduler.get(idSchema.parse((request.params as { threadId: string }).threadId)));
   app.put("/api/sessions/:threadId/schedule", async (request) => {

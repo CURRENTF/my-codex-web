@@ -159,7 +159,7 @@ export function App() {
       if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
       if (event.type === "session.summary.updated" && event.threadId) {
         const summaryPayload = typeof event.payload === "object" && event.payload !== null
-          ? event.payload as { reason?: string; name?: string | null; pinned?: boolean; prefill?: unknown; summary?: SessionSummary }
+          ? event.payload as { reason?: string; name?: string | null; pinned?: boolean; scheduledPollingEnabled?: boolean; prefill?: unknown; summary?: SessionSummary }
           : {};
         applyCachedSessionSummaryEvent(
           client,

@@ -13,6 +13,7 @@ describe("server prompt scheduler", () => {
   let scheduler: PromptScheduler;
   const startTurn = vi.fn<SessionService["startTurn"]>();
   const readSession = vi.fn<SessionService["readSession"]>();
+  const onEnabledChange = vi.fn<(threadId: string, enabled: boolean) => void>();
   let connected = true;
   beforeEach(() => {
     vi.useFakeTimers(); vi.setSystemTime(1000000);
@@ -23,10 +24,20 @@ describe("server prompt scheduler", () => {
     startTurn.mockReset(); startTurn.mockResolvedValue({} as Awaited<ReturnType<SessionService["startTurn"]>>);
     connected = true;
     readSession.mockReset();
-    scheduler = new PromptScheduler(repositories, { startTurn, readSession }, () => connected);
+    onEnabledChange.mockReset();
+    scheduler = new PromptScheduler(repositories, { startTurn, readSession }, () => connected, onEnabledChange);
   });
   afterEach(async () => { await scheduler.stop(); repositories.close(); rmSync(root, { recursive: true, force: true }); vi.useRealTimers(); });
   const enable = () => scheduler.set("t", { intervalMinutes: 2, prompt: "检查进展", enabled: true });
+
+  it("lists only enabled persisted schedules and reports pauses", () => {
+    enable();
+    expect(scheduler.enabledThreadIds()).toEqual(new Set(["t"]));
+    expect(onEnabledChange).toHaveBeenLastCalledWith("t", true);
+    scheduler.set("t", { intervalMinutes: 2, prompt: "检查进展", enabled: false });
+    expect(scheduler.enabledThreadIds()).toEqual(new Set());
+    expect(onEnabledChange).toHaveBeenLastCalledWith("t", false);
+  });
 
   it("sends from the server timer without any browser and respects minute units", async () => {
     enable(); scheduler.start();
@@ -86,6 +97,7 @@ describe("server prompt scheduler", () => {
     expect(scheduler.get("t")?.enabled).toBe(true);
     scheduler.handleTurnCompleted("t", completedTurn("scheduled-1", `完成。${PromptScheduler.completionMarker} 谢谢`));
     expect(scheduler.get("t")).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(onEnabledChange).toHaveBeenLastCalledWith("t", false);
     await vi.advanceTimersByTimeAsync(120000);
     expect(startTurn).toHaveBeenCalledTimes(1);
   });

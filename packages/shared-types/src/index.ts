@@ -39,6 +39,7 @@ export interface SessionSummary {
   runtimeState: RuntimeState;
   hasGoal: boolean;
   pinned: boolean;
+  scheduledPollingEnabled?: boolean;
 }
 
 export interface ThreadRuntime {

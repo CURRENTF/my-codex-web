@@ -78,6 +78,7 @@ interface SummaryEventPayload {
   name?: string | null;
   pinned?: boolean;
   summary?: SessionSummary;
+  scheduledPollingEnabled?: boolean;
 }
 
 export function applyCachedSessionSummaryEvent(
@@ -100,6 +101,7 @@ export function applyCachedSessionSummaryEvent(
   if (payload.reason === "goal-updated" || payload.reason === "goal-loaded") patch.hasGoal = true;
   if (payload.reason === "goal-cleared") patch.hasGoal = false;
   if (payload.reason === "pin-updated" && typeof payload.pinned === "boolean") patch.pinned = payload.pinned;
+  if (payload.reason === "schedule-updated" && typeof payload.scheduledPollingEnabled === "boolean") patch.scheduledPollingEnabled = payload.scheduledPollingEnabled;
   if (payload.reason === "turn-started" || payload.reason === "turn-completed") {
     patch.updatedAt = emittedAt;
     if (runtimeState) patch.runtimeState = runtimeState;
