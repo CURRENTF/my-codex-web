@@ -14,6 +14,20 @@ function client() { const result = new QueryClient(); clients.push(result); retu
 afterEach(() => { vi.restoreAllMocks(); clients.splice(0).forEach((value) => value.clear()); });
 
 describe("cached session loading", () => {
+  it("refreshes sidebar activity from history without regressing a newer completion", async () => {
+    const queries = client();
+    const listKey = ["sessions", "", "desc"];
+    queries.setQueryData(listKey, [{ threadId: "activity", title: "hello", preview: "", pinned: false, updatedAt: 20_000 }]);
+    const data = payload("activity");
+    data.thread.updatedAt = 1_520;
+    vi.spyOn(apiModule, "api").mockResolvedValue(data);
+    await fetchMergedSession(queries, "activity");
+    expect(queries.getQueryData(listKey)).toMatchObject([{ updatedAt: 1_520_000 }]);
+    data.thread.updatedAt = 20;
+    await fetchMergedSession(queries, "activity");
+    expect(queries.getQueryData(listKey)).toMatchObject([{ updatedAt: 1_520_000 }]);
+  });
+
   it("does not resurrect a retired assistant ID from an active query cache", async () => {
     const queries = client();
     const data = payload("retired");

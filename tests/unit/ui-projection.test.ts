@@ -326,6 +326,21 @@ describe("Codex UI projection", () => {
     expect(projectThread({ ...thread, recencyAt: 5 }).updatedAt).toBe(10);
   });
 
+  it("uses turn completion when recency still points to the start of a long turn", () => {
+    const thread = {
+      id: "thread-1", sessionId: "session-1", forkedFromId: null, parentThreadId: null, preview: "hello", ephemeral: false,
+      modelProvider: "openai", createdAt: 10, updatedAt: 3_000, recencyAt: 20, status: { type: "idle" as const }, path: null,
+      cwd: "/tmp/project", cliVersion: "test", source: "appServer" as const, threadSource: null,
+      agentNickname: null, agentRole: null, gitInfo: null, name: null,
+      turns: [{ id: "turn-1", status: "completed" as const, itemsView: "full" as const, items: [], error: null,
+        startedAt: 20, completedAt: 1_520, durationMs: 1_500_000 }],
+    };
+    expect(projectThread(thread).updatedAt).toBe(1_520);
+    expect(projectThread({ ...thread, recencyAt: null }).updatedAt).toBe(1_520);
+    expect(projectThread({ ...thread, recencyAt: 2_000 }).updatedAt).toBe(2_000);
+    expect(projectThread({ ...thread, recencyAt: 10, turns: [{ ...thread.turns[0]!, status: "inProgress", completedAt: null }] }).updatedAt).toBe(20);
+  });
+
   it("keeps stable intermediate actions visible with a generic fallback", () => {
     expect(projectThreadItem({ type: "sleep", id: "sleep-1", durationMs: 1_500 })).toMatchObject({ type: "genericToolCall", title: "等待 1.5s" });
     expect(projectThreadItem({ type: "contextCompaction", id: "compact-1" })).toMatchObject({ type: "genericToolCall", title: "压缩上下文" });

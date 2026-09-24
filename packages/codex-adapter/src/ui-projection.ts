@@ -87,8 +87,12 @@ export function projectTurnError(error: TurnError, willRetry: boolean): SessionT
   };
 }
 
-export function threadActivityAt(thread: Pick<Thread, "createdAt" | "recencyAt">): number {
-  return Math.max(thread.createdAt, thread.recencyAt ?? thread.createdAt);
+export function threadActivityAt(thread: Pick<Thread, "createdAt" | "recencyAt" | "turns">): number {
+  // Metadata updates can come from opening a thread. Use actual turn activity
+  // as well as recency, which may still point to the start of a long turn.
+  return (thread.turns ?? []).reduce((latest, turn) => Math.max(
+    latest, turn.startedAt ?? 0, turn.completedAt ?? 0,
+  ), Math.max(thread.createdAt, thread.recencyAt ?? thread.createdAt));
 }
 
 export function projectThread(thread: Thread): SessionThread {

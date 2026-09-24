@@ -1,7 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { SessionSummary } from "@codex-web/shared-types";
 import { reconcileAgentMessageHistory } from "@codex-web/shared-types";
 import { api, ApiError, type SessionPayload } from "./api";
 import { mergeSessionSnapshot } from "./live-session";
+import { patchCachedSessionSummary } from "./session-summary-cache";
 import { readSessionHistory, reconstructSession, removeSessionHistory, writeSessionHistory, type SessionSync } from "./session-history-cache";
 
 export async function fetchMergedSession(
@@ -25,6 +27,14 @@ export async function fetchMergedSession(
     const response = await api<SessionPayload & { sync?: SessionSync }>(`/api/sessions/${threadId}?${params}`, { signal, cache: "no-store" });
     signal?.throwIfAborted();
     const incoming = response.sync ? reconstructSession(response as SessionPayload & { sync: SessionSync }, cached) : response;
+    // Reading history can recover a completion missed while disconnected. Keep
+    // sidebar activity in sync without overwriting a newer live notification.
+    const summaries = client.getQueriesData<SessionSummary[]>({ queryKey: ["sessions"] })
+      .flatMap(([, rows]) => rows ?? []).filter((row) => row.threadId === threadId);
+    const activityAt = incoming.thread.updatedAt * 1_000;
+    if (summaries.length && summaries.every((row) => activityAt > row.updatedAt)) {
+      patchCachedSessionSummary(client, threadId, { updatedAt: activityAt });
+    }
     if (response.sync) void writeSessionHistory(threadId, incoming, response.sync);
     const current = client.getQueryData<SessionPayload>(key);
     // Preserve concurrent events and live turns, including terminal notifications
