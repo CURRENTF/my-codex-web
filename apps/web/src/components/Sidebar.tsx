@@ -151,10 +151,10 @@ export function Sidebar(props: SidebarProps) {
           <SessionDefaultsSettings models={props.models ?? []} />
           <MachineMonitorSetting />
           <SessionCostSetting />
-          <button className="app-settings-row" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
+          <button className="app-settings-row" role="switch" aria-checked={props.notificationState === "enabled"} aria-label="完成通知" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
             {props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} />}
             <span><strong>完成通知</strong><small>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? notificationLabel : "Session 完成时发送系统通知"}</small></span>
-            <span className="settings-state">{props.notificationState === "enabled" ? "已开启" : "已关闭"}</span>
+            <span className={`settings-toggle ${props.notificationState === "enabled" ? "enabled" : ""}`} aria-hidden="true"><span /></span>
           </button>
           <div className="menu-separator" />
           <button className="app-settings-row" role="switch" aria-checked={showUserMessageRail} aria-label="显示消息进度栏" onClick={() => setShowUserMessageRail(!showUserMessageRail)}>
