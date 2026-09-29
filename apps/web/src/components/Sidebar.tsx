@@ -148,7 +148,7 @@ export function Sidebar(props: SidebarProps) {
     <div className="sidebar-top">
       <button className="new-session-button" aria-label="新建 Session" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建</button>
       <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label="设置" title="设置"><Gear size={19} /></button></Popover.Trigger>
-        <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" aria-label="设置">
+        <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" collisionPadding={12} aria-label="设置">
           <h2 className="app-settings-title">设置</h2>
           <button className="app-settings-row" role="switch" aria-checked={liquidGlass} aria-label="液态玻璃" onClick={() => setLiquidGlass(!liquidGlass)}>
             <span><strong>液态玻璃</strong><small>通透的面板与柔和高光，随系统切换深浅色。</small></span>
