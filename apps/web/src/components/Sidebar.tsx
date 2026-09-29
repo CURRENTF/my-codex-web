@@ -1,6 +1,7 @@
 import { SessionCostSetting } from "./SessionCost";
 import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
+import { useAppearancePreferences } from "../appearance-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alarm, Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -107,6 +108,8 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const liquidGlass = useAppearancePreferences((state) => state.liquidGlass);
+  const setLiquidGlass = useAppearancePreferences((state) => state.setLiquidGlass);
   const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
   const setLongTextConfirmation = useComposerPreferences((state) => state.setLongTextConfirmation);
   const showUserMessageRail = useComposerPreferences((state) => state.showUserMessageRail);
@@ -147,6 +150,11 @@ export function Sidebar(props: SidebarProps) {
       <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label="设置" title="设置"><Gear size={19} /></button></Popover.Trigger>
         <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" aria-label="设置">
           <h2 className="app-settings-title">设置</h2>
+          <button className="app-settings-row" role="switch" aria-checked={liquidGlass} aria-label="液态玻璃" onClick={() => setLiquidGlass(!liquidGlass)}>
+            <span><strong>液态玻璃</strong><small>通透的面板与柔和高光，随系统切换深浅色。</small></span>
+            <span className={`settings-toggle ${liquidGlass ? "enabled" : ""}`} aria-hidden="true"><span /></span>
+          </button>
+          <div className="menu-separator" />
           <SelfUpdateControl settingsRow />
           <SessionDefaultsSettings models={props.models ?? []} />
           <MachineMonitorSetting />

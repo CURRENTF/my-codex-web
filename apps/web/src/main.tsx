@@ -5,6 +5,11 @@ import { BrowserRouter } from "react-router";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { App } from "./App";
 import "./styles.css";
+import "./liquid-glass.css";
+import { initializeAppearance } from "./appearance-preferences";
+
+const disposeAppearance = initializeAppearance();
+if (import.meta.hot) import.meta.hot.dispose(disposeAppearance);
 
 const CodeView = lazy(() => import("./components/CodeView"));
 

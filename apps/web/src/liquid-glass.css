@@ -1,0 +1,179 @@
+/* Web approximation inspired by Apple's Liquid Glass, not an Apple component.
+   Keep glass on navigation/control layers and opaque tokens for reading/code.
+   Shape scale: 22px panels, 16px nested surfaces, pills for compact controls.
+   Use the existing layer order in styles.css; do not create new overlay layers. */
+:root[data-appearance="glass"] {
+  --bg: #e3eaf2;
+  --sidebar: #edf2f8;
+  --surface: #f6f8fc;
+  --surface-strong: #fcfdff;
+  --surface-hover: #e3eaf4;
+  --text: #202b3d;
+  --text-soft: #536176;
+  --text-faint: #637187;
+  --line: #d4ddea;
+  --line-strong: #b8c7db;
+  --accent: #2863c2;
+  --accent-hover: #2053a5;
+  --accent-soft: #dbe8fc;
+  --radius-panel: 22px;
+  --radius-control: 12px;
+  --glass-fill: rgb(244 248 255 / .74);
+  --glass-floating: rgb(250 252 255 / .90);
+  --glass-edge: rgb(255 255 255 / .86);
+  --glass-highlight: rgb(255 255 255 / .8);
+  --glass-shadow: 0 8px 28px rgb(43 65 96 / .10);
+  --glass-filter: blur(24px) saturate(150%);
+  --glass-sheen: linear-gradient(135deg, rgb(255 255 255 / .36), rgb(255 255 255 / .04) 48%, rgb(255 255 255 / .18));
+  --glass-backdrop: radial-gradient(ellipse at 0% 5%, #bed3ee 0, transparent 55%), radial-gradient(ellipse at 100% 100%, #cadadf 0, transparent 55%), #e3eaf2;
+  --shadow-menu: inset 0 1px 0 var(--glass-highlight), 0 16px 48px rgb(43 65 96 / .16), 0 2px 8px rgb(43 65 96 / .08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-appearance="glass"] {
+    --bg: #172231;
+    --sidebar: #1e2a3b;
+    --surface: #192330;
+    --surface-strong: #253243;
+    --surface-hover: #304157;
+    --text: #edf3fc;
+    --text-soft: #b9c7da;
+    --text-faint: #a0b1c9;
+    --line: #36465c;
+    --line-strong: #51647d;
+    --accent: #91baff;
+    --accent-hover: #b2cfff;
+    --accent-soft: #2a4263;
+    --glass-fill: rgb(28 41 59 / .80);
+    --glass-floating: rgb(34 47 65 / .94);
+    --glass-edge: rgb(191 214 248 / .20);
+    --glass-highlight: rgb(215 233 255 / .20);
+    --glass-shadow: 0 10px 32px rgb(5 14 27 / .26);
+    --glass-sheen: linear-gradient(135deg, rgb(201 224 255 / .10), transparent 48%, rgb(201 224 255 / .03));
+    --glass-backdrop: radial-gradient(ellipse at 0% 5%, #2e4668 0, transparent 55%), radial-gradient(ellipse at 100% 100%, #24464e 0, transparent 55%), #172231;
+    --shadow-menu: inset 0 1px 0 var(--glass-highlight), 0 16px 48px rgb(5 14 27 / .40);
+  }
+}
+
+:root[data-appearance="glass"] body { background: var(--glass-backdrop); }
+:root[data-appearance="glass"] .app-shell { gap: 10px; padding: 10px; }
+:root[data-appearance="glass"] :is(.sidebar, .workspace) {
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-panel);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+}
+:root[data-appearance="glass"] .sidebar {
+  background: var(--glass-sheen), var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+}
+:root[data-appearance="glass"] .sidebar-top { padding: 14px 13px 12px; }
+:root[data-appearance="glass"] :is(.new-session-button, .header-button, .mobile-sidebar-toggle, .send-button) { border-radius: 999px; }
+:root[data-appearance="glass"] .new-session-button {
+  background: var(--glass-floating);
+  color: var(--text);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgb(43 65 96 / .08);
+}
+:root[data-appearance="glass"] .search-field {
+  border-color: var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+}
+:root[data-appearance="glass"] .sidebar-switch { border-radius: 999px; background: color-mix(in srgb, var(--line) 55%, transparent); }
+:root[data-appearance="glass"] .sidebar-switch button { border-radius: 999px; }
+:root[data-appearance="glass"] .session-row-shell { border-radius: 12px; margin-bottom: 3px; }
+:root[data-appearance="glass"] .session-row-content { background: transparent; }
+:root[data-appearance="glass"] .session-row-shell.active .session-row-content {
+  background: var(--glass-floating);
+  box-shadow: inset 0 0 0 1px var(--glass-edge), 0 2px 8px rgb(43 65 96 / .06);
+}
+:root[data-appearance="glass"] .session-row-shell.active .session-title { color: var(--accent); }
+:root[data-appearance="glass"] .session-row-shell:hover .session-row-content { background: var(--surface-hover); }
+:root[data-appearance="glass"] .session-header {
+  margin: 10px 12px 0;
+  padding-inline: 12px;
+  height: 48px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 16px;
+  background: var(--glass-sheen), var(--glass-fill);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 3px 12px rgb(43 65 96 / .05);
+}
+:root[data-appearance="glass"] .composer {
+  border-color: var(--glass-edge);
+  background: var(--glass-sheen), var(--glass-floating);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 0 0 1px var(--line), var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+}
+:root[data-appearance="glass"] .composer:focus-within { border-color: var(--accent); }
+:root[data-appearance="glass"] .composer:is(.steer-mode, .queue-mode, .dragging-files) { border-color: var(--accent); }
+:root[data-appearance="glass"] .composer-wrap { padding-bottom: 18px; }
+:root[data-appearance="glass"] :is(.menu-content, .popover-content, .dialog-content, .composer-suggestion-menu) {
+  border-color: var(--glass-edge);
+  border-radius: 16px;
+  background: var(--glass-sheen), var(--glass-floating);
+  box-shadow: var(--shadow-menu);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+}
+:root[data-appearance="glass"] .dialog-content { border-radius: var(--radius-panel); }
+:root[data-appearance="glass"] .menu-item { border-radius: 10px; }
+:root[data-appearance="glass"] :is(.empty-mark, .empty-illustration, .no-selection-mark) {
+  border-color: var(--glass-edge);
+  background: var(--glass-sheen), var(--glass-floating);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+}
+:root[data-appearance="glass"] .machine-monitor-trigger {
+  border-color: var(--glass-edge);
+  border-radius: 999px;
+  background: var(--glass-floating);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+}
+
+/* Preserve the existing drawer and split-pane breakpoints. Compact screens
+   spend their space on content, with glass retained on the controls/drawer. */
+@media (max-width: 720px) {
+  :root[data-appearance="glass"] .app-shell { padding: 0; }
+  :root[data-appearance="glass"] .workspace { border: 0; border-radius: 0; }
+  :root[data-appearance="glass"] .sidebar { border-radius: 0 22px 22px 0; }
+  :root[data-appearance="glass"] .session-header { margin: 5px 5px 0; padding-left: 44px; height: 52px; }
+  :root[data-appearance="glass"] .composer-wrap { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  :root[data-appearance="glass"] .mobile-sidebar-toggle { background: var(--glass-floating); }
+}
+
+/* No new continuous animation. Existing reduced-motion rules remain in force. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-appearance="glass"] {
+    --glass-fill: var(--sidebar);
+    --glass-floating: var(--surface-strong);
+    --glass-sheen: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :root[data-appearance="glass"] {
+    --glass-fill: var(--sidebar);
+    --glass-floating: var(--surface-strong);
+    --glass-filter: none;
+    --glass-sheen: none;
+    --glass-backdrop: var(--bg);
+    --glass-edge: var(--line-strong);
+    --glass-shadow: none;
+    --shadow-menu: none;
+  }
+  :root[data-appearance="glass"] .dialog-overlay { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (forced-colors: active) {
+  :root[data-appearance="glass"] {
+    --bg: Canvas;
+    --sidebar: Canvas;
+    --surface: Canvas;
+    --surface-strong: Canvas;
+    --text: CanvasText;
+    --text-soft: CanvasText;
+    --text-faint: CanvasText;
+    --line: ButtonBorder;
+    --line-strong: ButtonBorder;
+    --accent: LinkText;
+  }
+}
