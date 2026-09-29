@@ -280,17 +280,21 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .timeline-static { overflow-y: auto; }
 .timeline-shell { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .timeline-shell > .timeline { min-width: 0; flex: 1; }
-.user-message-rail { position: absolute; top: 14px; bottom: 14px; left: 8px; z-index: 4; width: 28px; }
-.user-message-rail-track { position: absolute; top: 9px; bottom: 9px; left: 50%; width: 3px; transform: translateX(-50%); border-radius: 3px; background: var(--line-strong); pointer-events: none; }
-.user-message-rail-tick { position: absolute; left: 50%; width: 10px; height: 2px; transform: translate(-50%, -50%); border-radius: 2px; background: var(--accent); opacity: .7; }
-.user-message-rail-tick.selected { width: 15px; height: 4px; opacity: 1; }
-.user-message-rail-position { position: absolute; top: 0; left: -5px; width: 13px; height: 8px; border: 2px solid var(--surface); border-radius: 5px; background: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* Compact message ticks stay centered; only the hovered neighborhood expands. */
+.user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: 36px; height: min(calc(var(--rail-count) * 12px + 4px), calc(100% - 32px)); transform: translateY(-50%); }
+.user-message-rail-track { position: absolute; inset: 8px 0 8px 4px; pointer-events: none; }
+.user-message-rail-tick { position: absolute; left: 0; width: 32px; height: 2px; transform-origin: left center; background: color-mix(in srgb, var(--text) 20%, var(--surface)); transition: transform .16s cubic-bezier(.2,.8,.2,1); }
+.user-message-rail-tick.current { background: var(--text-soft); }
+.user-message-rail-tick.selected { background: var(--text); }
 .user-message-rail-hit { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; background: transparent; cursor: pointer; }
-.user-message-rail-hit:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .user-message-rail-hit:active { transform: none; }
-.user-message-rail-preview { position: absolute; left: calc(100% + 9px); width: 268px; max-width: calc(100vw - 74px); transform: translateY(-50%); border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface-strong); padding: 10px 12px; color: var(--text); box-shadow: var(--shadow-menu); pointer-events: none; }
-.user-message-rail-preview strong { display: block; color: var(--accent); font-size: 11px; font-weight: 660; }
-.user-message-rail-preview p { display: -webkit-box; overflow: hidden; margin: 5px 0 0; color: var(--text); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.user-message-rail-preview { position: absolute; left: calc(100% + 10px); width: 360px; max-width: calc(100vw - 90px); transform: translateY(-50%); border: 1px solid var(--line); border-radius: 14px; background: var(--surface-strong); padding: 11px 13px; color: var(--text); box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 9%, transparent), 0 2px 5px color-mix(in srgb, var(--text) 4%, transparent); pointer-events: none; }
+.user-message-rail-preview strong { display: -webkit-box; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.user-message-rail-preview p { display: -webkit-box; overflow: hidden; margin: 6px 0 0; color: var(--text-soft); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+@media (forced-colors: active) {
+  .user-message-rail-tick { background: GrayText; }
+  .user-message-rail-tick.current, .user-message-rail-tick.selected { background: Highlight; }
+}
 .turn-block { width: min(92%, 780px); margin: 0 auto; padding: clamp(16px, 3cqw, 24px) 0 12px; }
 .user-message, .pending-user-message { display: flex; justify-content: flex-end; margin-bottom: 22px; }
 .user-message > div, .pending-user-message > div { max-width: min(650px, 86%); padding: 10px 13px; border-radius: 14px 14px 4px 14px; background: var(--surface-hover); color: var(--text); line-height: 1.55; white-space: pre-wrap; }

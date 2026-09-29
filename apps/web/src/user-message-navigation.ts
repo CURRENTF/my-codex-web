@@ -7,6 +7,7 @@ export interface UserMessageTarget {
   key: string;
   turnIndex: number;
   preview: string;
+  responsePreview: string;
   optimistic: boolean;
 }
 
@@ -36,12 +37,18 @@ function preview(text: string): string {
 export function userMessageTargets(turns: SessionTurn[], optimisticMessages: OptimisticUserMessage[]): UserMessageTarget[] {
   const targets: UserMessageTarget[] = [];
   turns.forEach((turn, turnIndex) => {
+    let preceding: UserMessageTarget | null = null;
     turn.items.forEach((item) => {
-      if (item.type === "userMessage") targets.push({ key: item.id, turnIndex, preview: preview(userMessageText(item)), optimistic: false });
+      if (item.type === "userMessage") {
+        preceding = { key: item.id, turnIndex, preview: preview(userMessageText(item)), responsePreview: "", optimistic: false };
+        targets.push(preceding);
+      } else if (item.type === "agentMessage" && preceding && item.text.trim() && preceding.responsePreview.length < 240) {
+        preceding.responsePreview = preview(`${preceding.responsePreview} ${item.text}`);
+      }
     });
   });
   optimisticMessages.forEach((message) => {
-    targets.push({ key: `optimistic:${message.clientUserMessageId}`, turnIndex: Math.max(0, turns.length - 1), preview: preview(message.text), optimistic: true });
+    targets.push({ key: `optimistic:${message.clientUserMessageId}`, turnIndex: Math.max(0, turns.length - 1), preview: preview(message.text), responsePreview: "", optimistic: true });
   });
   return targets;
 }

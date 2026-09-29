@@ -38,10 +38,10 @@ describe("user message navigation", () => {
 
     expect(userMessageText(turns[0]!.items[2]! as Extract<SessionTurn["items"][number], { type: "userMessage" }>)).toBe("$review\ncheck this");
     expect(userMessageTargets(turns, [{ clientUserMessageId: "pending", text: "Later", state: "queued" }])).toEqual([
-      { key: "first", turnIndex: 0, preview: "First question", optimistic: false },
-      { key: "steer", turnIndex: 0, preview: "$review check this", optimistic: false },
-      { key: "image", turnIndex: 1, preview: "图片或附件", optimistic: false },
-      { key: "optimistic:pending", turnIndex: 1, preview: "Later", optimistic: true },
+      { key: "first", turnIndex: 0, preview: "First question", responsePreview: "answer", optimistic: false },
+      { key: "steer", turnIndex: 0, preview: "$review check this", responsePreview: "", optimistic: false },
+      { key: "image", turnIndex: 1, preview: "图片或附件", responsePreview: "", optimistic: false },
+      { key: "optimistic:pending", turnIndex: 1, preview: "Later", responsePreview: "", optimistic: true },
     ]);
   });
 });

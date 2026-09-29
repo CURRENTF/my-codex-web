@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { userMessageIndexAtProgress, userMessageIndexAtReadingLine, visibleUserMessageIndices, type UserMessageTarget } from "../user-message-navigation";
 
 export function UserMessageRail({ targets, virtual, onNavigate }: {
@@ -64,10 +64,13 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
   const selected = activePreviewIndex === null ? null : targets[activePreviewIndex];
   const selectedPosition = activePreviewIndex === null ? 50 : localPosition(activePreviewIndex);
 
-  return <div className="user-message-rail" ref={rail}>
+  return <div className="user-message-rail" ref={rail} style={{ "--rail-count": visibleIndices.length } as CSSProperties}>
     <div className="user-message-rail-track" ref={track} aria-hidden="true">
-      {visibleIndices.map((index) => <span key={targets[index]!.key} className={`user-message-rail-tick ${index === activePreviewIndex ? "selected" : ""}`} style={{ top: `${localPosition(index)}%` }} />)}
-      <span className="user-message-rail-position" style={{ top: `${localPosition(currentFocus)}%`, transform: "translateY(-50%)" }} />
+      {visibleIndices.map((index) => {
+        const distance = activePreviewIndex === null ? Infinity : Math.abs(index - activePreviewIndex);
+        const scale = [1, .76, .54, .36][distance] ?? .22;
+        return <span key={targets[index]!.key} className={`user-message-rail-tick${index === currentFocus ? " current" : ""}${distance === 0 ? " selected" : ""}`} style={{ top: `${localPosition(index)}%`, transform: `translateY(-50%) scaleX(${scale})` }} />;
+      })}
     </div>
     <button type="button" className="user-message-rail-hit" aria-label={`我的消息导航，显示第 ${firstVisible + 1} 至 ${lastVisible + 1} 条，共 ${targets.length} 条${activePreviewIndex !== null ? `，第 ${activePreviewIndex + 1} 条` : ""}`} aria-description="上下方向键选择消息，回车跳转" aria-describedby={selected ? previewId : undefined}
       onPointerMove={(event) => setPreviewIndex(indexAt(event.clientY))}
@@ -75,6 +78,7 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
       onFocus={() => setPreviewIndex(currentFocus)}
       onBlur={() => setPreviewIndex(null)}
       onKeyDown={(event) => {
+        if (event.key === "Escape") { event.preventDefault(); setPreviewIndex(null); return; }
         const current = activePreviewIndex ?? currentFocus;
         let next = current;
         if (event.key === "ArrowUp") next = Math.max(firstVisible, current - 1);
@@ -90,9 +94,9 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
         setPreviewIndex(index);
         onNavigate(targets[index]!);
       }} />
-    {selected && <div className="user-message-rail-preview" id={previewId} role="tooltip" style={{ top: `clamp(54px, ${selectedPosition}%, calc(100% - 54px))` }}>
-      <strong>我的消息 {activePreviewIndex! + 1} / {targets.length}</strong>
-      <p>{selected.preview}</p>
+    {selected && <div className="user-message-rail-preview" id={previewId} role="tooltip" style={{ top: `${selectedPosition}%` }}>
+      <strong>{selected.preview}</strong>
+      {selected.responsePreview && <p>{selected.responsePreview}</p>}
     </div>}
   </div>;
 }
