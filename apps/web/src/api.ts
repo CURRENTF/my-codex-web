@@ -1,4 +1,4 @@
-import type { BootstrapPayload, Goal, Preferences, Project, SelfUpdateStatus, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
+import type { BootstrapPayload, Goal, Preferences, Project, SelfUpdateStatus, ServiceRestartStatus, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
@@ -53,6 +53,8 @@ export async function authenticateWebUi(password: string): Promise<void> {
 }
 
 export const endpoints = {
+  serviceRestartStatus: () => api<ServiceRestartStatus>("/api/system/restart", { cache: "no-store" }),
+  restartService: () => request<ServiceRestartStatus>("/api/system/restart", { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }, false),
   selfUpdateStatus: () => api<SelfUpdateStatus>("/api/system/update", { cache: "no-store" }),
   startSelfUpdate: () => api<SelfUpdateStatus>("/api/system/update", { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }),
   projects: () => api<Project[]>("/api/projects"),

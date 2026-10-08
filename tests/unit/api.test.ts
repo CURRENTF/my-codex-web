@@ -8,6 +8,17 @@ function json(body: unknown, status = 200): Response {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("web API security context", () => {
+  it.each([401, 403])("does not replay a restart request after a %s response", async (status) => {
+    const fetch = vi.fn(async () => json({ error: status === 401 ? "Invalid session" : "Invalid CSRF token" }, status));
+    vi.stubGlobal("fetch", fetch);
+    await expect(endpoints.restartService()).rejects.toBeInstanceOf(ApiError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/system/restart");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body)).clientRequestId).toBeTruthy();
+  });
+
   it("bypasses bootstrap caches and retries a write once with refreshed CSRF state", async () => {
     const calls: Array<{ path: string; init: RequestInit }> = [];
     let bootstrapCount = 0;

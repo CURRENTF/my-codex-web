@@ -104,6 +104,8 @@ systemctl --user show my-codex-web.service \
 
 更新器只接受 `remote/branch` 相对于当前 commit 的快进后继。它先在 `CODEX_WEB_DATA_DIR/updates` 创建隔离 worktree，执行 `npm ci --include=dev`，再运行 TypeScript 检查、完整测试和生产构建；显式包含开发依赖可保证设置了 `NODE_ENV=production` 的 systemd 服务仍能获得 `tsc` 和测试工具。候选版本全部通过后，才快进运行 checkout、重新安装/构建并执行重启命令。存在未提交或未跟踪文件、运行中的 Turn、分支不匹配或非快进历史时都会拒绝更新。进度保存在 `CODEX_WEB_DATA_DIR/self-update.json`，详细日志写入 `CODEX_WEB_DATA_DIR/logs/update-<run-id>.log`。浏览器在重启完成后自动刷新到新版本。
 
+设置中的「重启 my-codex-web」使用同一个 `CODEX_WEB_UPDATE_RESTART_COMMAND_JSON`，确认后只执行配置的 Web 服务重启命令，不拉取代码或构建，也不要求 Git checkout。命令必须仅重启 Web 应用服务，不能包含隧道或代理服务。未配置时按钮不可用；有运行中的任务或更新时拒绝重启。重启期间暂停定时轮询任务并拒绝新的写入请求，浏览器检测到新服务实例后自动刷新；命令启动失败或服务未恢复时显示错误。
+
 ## 开发
 
 ```bash

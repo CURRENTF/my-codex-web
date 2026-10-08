@@ -3,7 +3,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
 import { useAppearancePreferences } from "../appearance-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alarm, Archive, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
+import { Alarm, Archive, ArrowClockwise, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { ModelOption, Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
 import { codeViewUrl } from "../code-view-url";
@@ -13,6 +13,7 @@ import type { BrowserNotificationControlState } from "../browser-notifications";
 import { MachineMonitorSetting } from "./MachineMonitor";
 import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
+import { ServiceRestartDialog } from "./ServiceRestartDialog";
 
 const PROJECT_SESSION_PAGE_SIZE = 12;
 
@@ -108,6 +109,7 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const [restartOpen, setRestartOpen] = useState(false);
   const liquidGlass = useAppearancePreferences((state) => state.liquidGlass);
   const setLiquidGlass = useAppearancePreferences((state) => state.setLiquidGlass);
   const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
@@ -156,6 +158,9 @@ export function Sidebar(props: SidebarProps) {
           </button>
           <div className="menu-separator" />
           <SelfUpdateControl settingsRow />
+          <button className="app-settings-row" onClick={() => setRestartOpen(true)} aria-label="重启 my-codex-web">
+            <ArrowClockwise size={17} /><span><strong>重启 my-codex-web</strong><small>重启 Web 服务</small></span>
+          </button>
           <SessionDefaultsSettings models={props.models ?? []} />
           <MachineMonitorSetting />
           <SessionCostSetting />
@@ -216,5 +221,6 @@ export function Sidebar(props: SidebarProps) {
       </>}
       {!props.sessions.length && <div className="sidebar-empty"><Folder size={24} /><p>{props.projects.length ? "没有找到 Session" : "添加一个本地文件夹开始"}</p></div>}
     </div>
+    <ServiceRestartDialog open={restartOpen} onOpenChange={setRestartOpen} />
   </aside>;
 }

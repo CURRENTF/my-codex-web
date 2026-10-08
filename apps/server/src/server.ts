@@ -1,4 +1,5 @@
 import { sessionSyncResponse } from "./session-sync.js";
+import { ServiceRestartConflictError, ServiceRestartManager } from "./service-restart.js";
 import { PromptScheduler } from "./prompt-scheduler.js";
 import { MachineMetricsSampler } from "./machine-metrics.js";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -111,6 +112,16 @@ export async function createServer() {
     },
   });
   await selfUpdater.initialize();
+  const serviceRestart = new ServiceRestartManager({
+    command: config.updateRestartCommand,
+    cwd: config.projectRoot,
+    assertSafe: () => {
+      const updateState = selfUpdater.getStatus().state;
+      if (updateState === "running" || updateState === "restarting") throw new ServiceRestartConflictError("正在更新，请等待完成后再重启。");
+      const activeExecutions = activeUpdateBlockers();
+      if (activeExecutions > 0) throw new ServiceRestartConflictError(`仍有 ${activeExecutions} 个执行在运行，请等待完成后再重启。`);
+    },
+  });
   const projectLocks = new KeyedOperationLock();
   const indexer = new ProjectIndexer(repositories, adapter, projectLocks);
   const sessions = new SessionService(repositories, adapter, indexer, runtimes, projectLocks, attachments);
@@ -127,7 +138,7 @@ export async function createServer() {
 
   let startupPhase = true;
   let connectionState: AppServerConnectionState = "disconnected";
-  const promptScheduler = new PromptScheduler(repositories, sessions, () => connectionState === "connected", (threadId, scheduledPollingEnabled) => {
+  const promptScheduler = new PromptScheduler(repositories, sessions, () => connectionState === "connected" && serviceRestart.getStatus().state !== "restarting", (threadId, scheduledPollingEnabled) => {
     events.publish("session.summary.updated", { reason: "schedule-updated", scheduledPollingEnabled }, { threadId });
   });
   const recovery = new ConnectionRecovery({
@@ -190,10 +201,13 @@ export async function createServer() {
     if (request.method !== "GET" && request.method !== "HEAD" && !secureEqual(request.headers["x-csrf-token"] as string | undefined, csrfToken)) {
       return reply.code(403).send({ error: "Invalid CSRF token" });
     }
-    if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/code/file" && connectionState !== "connected") {
+    if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/code/file" && pathname !== "/api/system/restart" && connectionState !== "connected") {
       return reply.code(503).send({ error: "Codex App Server is still reconnecting" });
     }
     const updateState = selfUpdater.getStatus().state;
+    if (request.method !== "GET" && request.method !== "HEAD" && serviceRestart.getStatus().state === "restarting") {
+      return reply.code(503).send({ error: "restart_in_progress", message: "my-codex-web 正在重启，请稍候。" });
+    }
     if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/system/update" && (updateState === "running" || updateState === "restarting")) {
       return reply.code(503).send({ error: "update_in_progress", message: "Codex Web 正在更新，完成后页面会自动刷新。" });
     }
@@ -238,6 +252,7 @@ export async function createServer() {
     if (error instanceof UncertainTurnAppliedError) return reply.code(409).send({ error: "uncertain_turn_applied", message: error.message });
     if (error instanceof SideChatCloseTimeoutError) return reply.code(409).send({ error: "side_chat_still_running", message: error.message });
     if (error instanceof UnknownSkillError) return reply.code(400).send({ error: "unknown_skill", message: error.message, skillNames: error.skillNames });
+    if (error instanceof ServiceRestartConflictError) return reply.code(409).send({ error: "restart_unavailable", message: error.message });
     if (error instanceof SelfUpdateUnavailableError) return reply.code(409).send({ error: "update_unavailable", message: error.message });
     if (error instanceof SelfUpdateConflictError) return reply.code(409).send({ error: "update_in_progress", message: error.message });
     if (error instanceof OperationUncertainError) {
@@ -313,11 +328,24 @@ export async function createServer() {
     reply.header("cache-control", "no-store, max-age=0");
     return selfUpdater.getStatus();
   });
+  app.get("/api/system/restart", async (_request, reply) => {
+    reply.header("cache-control", "no-store, max-age=0");
+    return serviceRestart.getStatus();
+  });
+  app.post("/api/system/restart", async (request, reply) => {
+    const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
+    const status = await once(request, clientRequestId, async () => serviceRestart.start());
+    return reply.code(202).send(status);
+  });
   app.post("/api/system/update", async (request, reply) => {
+    if (serviceRestart.getStatus().state === "restarting") throw new ServiceRestartConflictError("服务正在重启，请稍候。");
     const { clientRequestId } = z.object({ clientRequestId: requestIdSchema }).parse(request.body);
     const activeExecutions = activeUpdateBlockers();
     if (activeExecutions > 0) return reply.code(409).send({ error: "active_turns", message: `仍有 ${activeExecutions} 个执行在运行，请等待完成后再更新。` });
-    const status = await once(request, clientRequestId, () => selfUpdater.start());
+    const status = await once(request, clientRequestId, () => {
+      if (serviceRestart.getStatus().state === "restarting") throw new ServiceRestartConflictError("服务正在重启，请稍候。");
+      return selfUpdater.start();
+    });
     return reply.code(202).send(status);
   });
   app.post("/api/attachments", async (request, reply) => {
@@ -584,6 +612,7 @@ export async function createServer() {
   return {
     app, adapter, events, repositories, selfUpdater,
     async close() {
+      serviceRestart.dispose();
       await promptScheduler.stop();
       recovery.stop();
       sessions.dispose();

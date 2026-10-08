@@ -292,6 +292,13 @@ export interface BootstrapPayload {
   pendingRequests: PendingRequestSummary[];
 }
 
+export interface ServiceRestartStatus {
+  enabled: boolean;
+  instanceId: string;
+  state: "idle" | "restarting" | "failed";
+  message: string;
+}
+
 export type SelfUpdateState = "unavailable" | "idle" | "running" | "upToDate" | "restarting" | "succeeded" | "failed";
 export type SelfUpdateStep = "unavailable" | "idle" | "checking" | "installing" | "validating" | "deploying" | "restarting" | "complete";
 
