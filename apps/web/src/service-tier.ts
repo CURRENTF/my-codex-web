@@ -1,7 +1,9 @@
 import type { ModelOption } from "@codex-web/shared-types";
 
 export function serviceTierForModel(model: ModelOption | undefined, requested: string | null | undefined): string | null {
-  if (requested === null) return null;
+  // App Server reports Standard as "default" after clearing Fast with null.
+  // It need not appear in the model's optional serviceTiers catalog.
+  if (requested === null || requested === "default") return null;
   if (requested && model?.serviceTiers.some((tier) => tier.id === requested)) return requested;
   const fallback = model?.defaultServiceTier;
   return fallback && model.serviceTiers.some((tier) => tier.id === fallback) ? fallback : null;
