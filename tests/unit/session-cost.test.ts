@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { CodexAdapter, JsonRpcError } from "@codex-web/codex-adapter";
 import { projectSessionCost } from "../../packages/codex-adapter/src/session-cost";
-import { formatSessionCostUsd } from "../../apps/web/src/session-cost-presentation";
+import { formatSessionCostUsd, sessionCostLabel } from "../../apps/web/src/session-cost-presentation";
+import { estimateTokenCost, recordTokenUsage } from "../../apps/server/src/token-cost";
 
 const response = (estimatedUsageUsdMicros: unknown) => ({ threadUsage: {
   threadId: "session-a", estimatedUsageUsdMicros,
@@ -10,6 +11,16 @@ const response = (estimatedUsageUsdMicros: unknown) => ({ threadUsage: {
 } });
 
 describe("session cost", () => {
+  it("explains unavailable costs and labels partial estimates in the header", () => {
+    const data = recordTokenUsage(null, { inputTokens: 1_000_000, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0 }, "gpt-6.1-sol", null);
+    expect(sessionCostLabel(estimateTokenCost("a", data.groups))).toBe("≈ $2");
+    expect(sessionCostLabel(estimateTokenCost("a", []))).toBe("用量待更新");
+    expect(sessionCostLabel(estimateTokenCost("a", [{ ...data.groups[0]!, model: "custom-model" }]))).toBe("缺少价格");
+    expect(sessionCostLabel(estimateTokenCost("a", [{ ...data.groups[0]!, outputTokens: null }]))).toBe("用量不完整");
+    expect(sessionCostLabel(estimateTokenCost("a", [...data.groups, { ...data.groups[0]!, model: "custom-model" }]))).toBe("≈ $2（部分）");
+    expect(sessionCostLabel({ threadId: "a", status: "available", estimatedUsd: "0.000000", groups: [] })).toBe("≈ $0");
+    expect(sessionCostLabel(undefined)).toBe("费用未知");
+  });
   it.each([
     ["0.000000", "$0"], ["0.000001", "$0"], ["12.345678", "$12"],
     ["12.500000", "$13"], ["999.999999", "$1,000"], ["9007199254740993.500000", "$9,007,199,254,740,994"],

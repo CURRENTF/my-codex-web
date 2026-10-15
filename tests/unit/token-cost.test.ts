@@ -22,6 +22,33 @@ describe("token cost fallback", () => {
     const data = recordTokenUsage(null, { ...totals(), cacheWriteInputTokens: 100_000 }, "gpt-6-astra", "fast");
     expect(chooseSessionCost(null, data, "a").estimatedUsd).toBe("23.300000");
   });
+  it.each([
+    ["gpt-6.1-sol", null, "2.240000"],
+    ["gpt-6-sol", "standard", "2.280000"],
+    ["gpt-6-luna", "default", "0.114000"],
+    ["gpt-6.1-sol", "priority", "4.480000"],
+    ["gpt-6.1-sol", "ultrafast", "13.440000"],
+    ["gpt-6-astra", "ultrafast", "68.400000"],
+    ["gpt-5.5", "fast", "15.500000"],
+  ])("prices %s at tier %s using the current reference rates", (model, tier, amount) => {
+    const data = recordTokenUsage(null, totals(), model, tier);
+    expect(chooseSessionCost(null, data, "a")).toMatchObject({ estimatedUsd: amount, pricingDate: "2026-10-15", partial: false });
+  });
+  it("keeps the sub-dollar Luna cache-write price and discounted tiers precise", () => {
+    const data = recordTokenUsage(null, { ...totals(), cacheWriteInputTokens: 100_000 }, "gpt-6-luna", "flex");
+    expect(chooseSessionCost(null, data, "a").estimatedUsd).toBe("0.058250");
+  });
+  it("reprices an existing GPT-6.1 session ledger without another usage event", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cost-reprice-"));
+    const repository = new Repositories(path.join(dir, "web.db"));
+    try {
+      const data = recordTokenUsage(null, totals(1_921_578, 1_788_416, 12_522), "gpt-6.1-sol", null);
+      repository.setCostLedger("existing-session", data);
+      const service = new SessionService(repository, { readSessionCost: async () => ({ threadId: "existing-session", status: "unavailable", estimatedUsd: null, groups: [] }) } as never, {} as never, { getSideChat: () => ({}) } as never);
+      expect(await service.readSessionCost("existing-session")).toMatchObject({ source: "tokens", estimatedUsd: "0.570386" });
+      expect(repository.getCostLedger("existing-session")).toEqual(data);
+    } finally { repository.close(); rmSync(dir, { recursive: true }); }
+  });
   it("does not accumulate duplicate notifications, and records model changes by delta", () => {
     const first = ledger();
     const duplicate = recordTokenUsage(first, totals(), "gpt-6-astra", null);
@@ -44,6 +71,29 @@ describe("token cost fallback", () => {
     expect(estimateTokenCost("a", [unknown])).toMatchObject({ status: "unavailable", estimatedUsd: null });
     expect(estimateTokenCost("a", [...native.groups, unknown]).notes?.join()).toContain("仅包含可估算部分");
     expect(chooseSessionCost(null, null, "a").notes?.join()).toContain("尚未收到");
+  });
+  it("distinguishes missing prices, absent usage and incomplete counters", () => {
+    expect(chooseSessionCost(null, null, "a")).toMatchObject({ unavailableReason: "noUsage", partial: false });
+    const group = ledger().groups[0]!;
+    for (const model of ["custom-model", "constructor", null]) {
+      const cost = estimateTokenCost("a", [{ ...group, model }]);
+      expect(cost).toMatchObject({ estimatedUsd: null, unavailableReason: "missingPricing", partial: false });
+      expect(cost.notes?.join()).toContain(model ?? "未知模型");
+    }
+    expect(estimateTokenCost("a", [{ ...group, inputTokens: null }])).toMatchObject({ unavailableReason: "incompleteUsage" });
+    expect(estimateTokenCost("a", [{ ...group, cachedInputTokens: "1000001" }])).toMatchObject({ unavailableReason: "incompleteUsage" });
+    const unsupportedTier = estimateTokenCost("a", [{ ...group, model: "gpt-6-luna", speed: "ultrafast" }]);
+    expect(unsupportedTier).toMatchObject({ estimatedUsd: null, unavailableReason: "missingPricing" });
+    expect(unsupportedTier.notes?.join()).toContain("gpt-6-luna / ultrafast");
+    expect(estimateTokenCost("a", [{ ...group, model: "gpt-5.5", cacheWriteInputTokens: "1" }])).toMatchObject({ estimatedUsd: null, unavailableReason: "missingPricing" });
+  });
+  it("marks a mixed-model subtotal as partial and identifies the missing model", () => {
+    const groups = ledger().groups;
+    const cost = estimateTokenCost("a", [...groups, { ...groups[0]!, model: "custom-model" }]);
+    expect(cost).toMatchObject({ status: "available", estimatedUsd: "11.400000", partial: true });
+    expect(cost.unavailableReason).toBeUndefined();
+    expect(cost.notes?.join()).toContain("custom-model");
+    expect(cost.notes?.join()).toContain("仅包含可估算部分");
   });
   it("extracts cumulative counters even when context window information is unavailable", () => {
     expect(projectAdapterEvent({ method: "thread/tokenUsage/updated", params: { threadId: "a", tokenUsage: { total: totals() } } })).toMatchObject({ type: "tokenUsageUpdated", totalUsage: totals() });

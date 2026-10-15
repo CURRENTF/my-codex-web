@@ -5,7 +5,7 @@ import { CurrencyDollar, X } from "@phosphor-icons/react";
 import type { SessionCost as SessionCostData } from "@codex-web/shared-types";
 import { api } from "../api";
 import { useSessionCostPreferences } from "../session-cost-preferences";
-import { formatSessionCostUsd } from "../session-cost-presentation";
+import { formatSessionCostUsd, sessionCostLabel } from "../session-cost-presentation";
 
 export function SessionCostSetting() {
   const { enabled, setEnabled } = useSessionCostPreferences();
@@ -35,14 +35,14 @@ function SessionCostContent({ threadId, revision }: { threadId: string; revision
   const data = query.data;
   const amount = data?.estimatedUsd;
   const label = query.isError ? "费用待更新" : query.isPending ? "费用加载中"
-    : amount != null ? `≈ ${formatSessionCostUsd(amount)}` : "费用未知";
+    : sessionCostLabel(data);
   return <Popover.Root>
     <Popover.Trigger asChild><button className="session-cost-trigger" aria-label={`Session API 费用：${label}，点击查看明细`}>
       {query.isPending ? <span className="session-cost-skeleton" aria-hidden="true" /> : label}
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="session-cost-detail menu-content" sideOffset={8} align="end" collisionPadding={12} aria-label="Session API 费用明细">
-      <div className="session-cost-heading"><h2>累计 API 费用</h2><Popover.Close asChild><button className="icon-button" aria-label="关闭费用明细"><X size={16} /></button></Popover.Close></div>
-      <p className="session-cost-amount">{amount != null ? formatSessionCostUsd(amount) : "暂不可用"}<small>{data?.source === "tokens" ? "USD · 按 token 估算" : "USD · Codex 提供"}{query.isError && amount != null ? "，上次成功读取" : ""}</small></p>
+      <div className="session-cost-heading"><h2>{data?.partial ? "部分 API 费用" : "累计 API 费用"}</h2><Popover.Close asChild><button className="icon-button" aria-label="关闭费用明细"><X size={16} /></button></Popover.Close></div>
+      <p className="session-cost-amount">{amount != null ? formatSessionCostUsd(amount) : sessionCostLabel(data)}<small>{data?.source === "tokens" ? "USD · 按 token 估算" : "USD · Codex 提供"}{query.isError && amount != null ? "，上次成功读取" : ""}</small></p>
       <p className="session-cost-note">{data?.source === "tokens" ? `按 token 用量估算，价格表更新于 ${data.pricingDate}。` : "Codex 提供的会话费用，可能延迟更新。"} 不代表实际账单。</p>
       {data?.notes?.map((note) => <p className="session-cost-note" key={note}>{note}</p>)}
       {query.isPending && <p role="status">正在读取累计用量…</p>}

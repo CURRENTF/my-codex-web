@@ -87,6 +87,9 @@ export interface SessionCost {
   source?: "codex" | "tokens";
   notes?: string[];
   pricingDate?: string;
+  unavailableReason?: "noUsage" | "missingPricing" | "incompleteUsage";
+  /** Some recorded usage groups could not be priced. */
+  partial?: boolean;
   /** Decimal USD, before display rounding. */
   estimatedUsd: string | null;
   groups: Array<{

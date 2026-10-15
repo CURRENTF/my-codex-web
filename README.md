@@ -236,7 +236,9 @@ Codex 有两条不同的提问路径：
 
 Web 按模型和服务档位记录累计用量的增量，并保存到 `CODEX_WEB_DATA_DIR` 的应用数据库。重复通知不会重复计费，刷新浏览器或重启 Web 服务不会清空记录；开关只控制显示和费用查询，不影响已连接会话的用量记录。首次收到的历史累计量按当时模型与档位估算，后续切换模型按增量分组。计数回退时保留已记录消耗，并标记估算限制。
 
-估算采用 [OpenAI API 价格表](https://developers.openai.com/api/docs/pricing) 2026-09-15 的公开短上下文价格，区分普通输入、缓存输入、缓存写入及输出；推理输出不重复相加。当前收录 GPT-6 Astra、GPT-5.6 Sol/Terra/Luna 和 GPT-5.3 Codex，支持 Standard、Fast/Priority 和已知的 Flex/Batch 价格系数。未计长上下文加价、地区附加费及工具费用。未知模型或明细缺失时不猜价格，混合用量只展示可估算部分并提示。金额显示保留 0 位小数，内部保留精度。
+估算采用 [OpenAI API 价格表](https://developers.openai.com/api/docs/pricing) 2026-10-15 的公开短上下文价格，区分普通输入、缓存输入、缓存写入及输出；推理输出不重复相加。当前收录 GPT-6 Astra、GPT-6.1 Sol、GPT-6 Sol/Luna、GPT-5.6 Sol/Terra/Luna、GPT-5.5 和 GPT-5.3 Codex，支持 Standard、Fast/Priority 和已知的 Flex/Batch 价格系数；GPT-5.5 的 Fast 按 2.5 倍估算，GPT-6 Astra 和 GPT-6.1 Sol 的 Ultrafast 按 6 倍估算。未计长上下文加价、地区附加费及工具费用。价格表更新后，已有账本在下次费用查询时直接重新估算，无需新的 token 通知。金额显示保留 0 位小数，内部保留精度。
+
+未知模型或明细缺失时不猜价格。顶部区分「缺少价格」「用量待更新」和「用量不完整」，明细列出缺失价格的模型或服务档位；混合用量只展示可估算部分，并在金额旁标注「部分」。
 
 已有会话若未返回原生费用或 token 分组，打开会话也可能没有历史用量通知，需要产生下一次用量更新后才能估算。UI 区分「Codex 提供」与「按 token 估算」，并说明缺失或历史假设；子会话独立记录，不合并到父会话。此功能不读取 Codex 内部 Session 文件或数据库。
 
