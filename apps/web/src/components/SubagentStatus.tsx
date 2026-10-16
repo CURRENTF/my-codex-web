@@ -45,8 +45,7 @@ export function SubagentStatusView({ parentThreadId, allAgents }: {
     title={`Subagents，${summary}`}
   >
     <UsersThree size={16} />
-    <span>Subagents</span>
-    <strong>{activeCount || entries.length}</strong>
+    {entries.length > 0 && <strong>{activeCount || entries.length}</strong>}
   </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content subagent-popover" sideOffset={8} align="end">
     <header className="subagent-popover-header"><span><UsersThree size={17} /><strong>Subagents</strong></span><small>{summary}</small></header>
     {entries.length

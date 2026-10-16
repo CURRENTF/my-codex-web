@@ -37,7 +37,7 @@ function SessionCostContent({ threadId, revision }: { threadId: string; revision
   const label = query.isError ? "费用待更新" : query.isPending ? "费用加载中"
     : sessionCostLabel(data);
   return <Popover.Root>
-    <Popover.Trigger asChild><button className="session-cost-trigger" aria-label={`Session API 费用：${label}，点击查看明细`}>
+    <Popover.Trigger asChild><button className="session-cost-trigger" aria-label={`Session API 费用估算：${label}，点击查看明细`} title={`Session API 费用估算：${label}，点击查看明细`}>
       {query.isPending ? <span className="session-cost-skeleton" aria-hidden="true" /> : label}
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="session-cost-detail menu-content" sideOffset={8} align="end" collisionPadding={12} aria-label="Session API 费用明细">

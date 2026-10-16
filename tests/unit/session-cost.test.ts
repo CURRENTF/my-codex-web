@@ -13,12 +13,12 @@ const response = (estimatedUsageUsdMicros: unknown) => ({ threadUsage: {
 describe("session cost", () => {
   it("explains unavailable costs and labels partial estimates in the header", () => {
     const data = recordTokenUsage(null, { inputTokens: 1_000_000, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0 }, "gpt-6.1-sol", null);
-    expect(sessionCostLabel(estimateTokenCost("a", data.groups))).toBe("≈ $2");
+    expect(sessionCostLabel(estimateTokenCost("a", data.groups))).toBe("$2");
     expect(sessionCostLabel(estimateTokenCost("a", []))).toBe("用量待更新");
     expect(sessionCostLabel(estimateTokenCost("a", [{ ...data.groups[0]!, model: "custom-model" }]))).toBe("缺少价格");
     expect(sessionCostLabel(estimateTokenCost("a", [{ ...data.groups[0]!, outputTokens: null }]))).toBe("用量不完整");
-    expect(sessionCostLabel(estimateTokenCost("a", [...data.groups, { ...data.groups[0]!, model: "custom-model" }]))).toBe("≈ $2（部分）");
-    expect(sessionCostLabel({ threadId: "a", status: "available", estimatedUsd: "0.000000", groups: [] })).toBe("≈ $0");
+    expect(sessionCostLabel(estimateTokenCost("a", [...data.groups, { ...data.groups[0]!, model: "custom-model" }]))).toBe("$2（部分）");
+    expect(sessionCostLabel({ threadId: "a", status: "available", estimatedUsd: "0.000000", groups: [] })).toBe("$0");
     expect(sessionCostLabel(undefined)).toBe("费用未知");
   });
   it.each([

@@ -7,7 +7,7 @@ export function formatSessionCostUsd(value: string): string {
   return `$${rounded.toLocaleString("en-US")}`;
 }
 export function sessionCostLabel(data: SessionCost | undefined): string {
-  if (data?.estimatedUsd != null) return `≈ ${formatSessionCostUsd(data.estimatedUsd)}${data.partial ? "（部分）" : ""}`;
+  if (data?.estimatedUsd != null) return `${formatSessionCostUsd(data.estimatedUsd)}${data.partial ? "（部分）" : ""}`;
   switch (data?.unavailableReason) {
     case "noUsage": return "用量待更新";
     case "missingPricing": return "缺少价格";

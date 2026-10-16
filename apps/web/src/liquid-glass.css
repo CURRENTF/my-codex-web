@@ -69,6 +69,8 @@
 }
 :root[data-appearance="glass"] .sidebar-top { padding: 14px 13px 12px; }
 :root[data-appearance="glass"] :is(.new-session-button, .header-button, .mobile-sidebar-toggle, .send-button) { border-radius: 999px; }
+:root[data-appearance="glass"] .session-header-actions > .icon-button,
+:root[data-appearance="glass"] .composer-toolbar :is(.settings-select-trigger, .service-tier-toggle, .schedule-trigger, .attachment-picker, .delivery-mode-toggle, .send-button, .stop-button) { border-radius: 999px; }
 :root[data-appearance="glass"] .new-session-button {
   background: var(--glass-floating);
   color: var(--text);

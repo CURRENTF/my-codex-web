@@ -108,10 +108,10 @@ describe("viewport layout CSS", () => {
     expect(rule(".goal-popover")).toContain("width: min(390px, calc(100vw - 24px))");
   });
 
-  it("keeps Goal in the Session header action row and collapses it to an icon in narrow panes", () => {
+  it("keeps Goal in the Session header action row with the shared icon-control size", () => {
     expect(sessionPaneSource).toMatch(/<header className="session-header">[\s\S]*<GoalBar[\s\S]*Side Chat[\s\S]*Code View[\s\S]*<\/header>/);
     expect(rule(".session-pane")).not.toContain('"goal"');
-    expect(rule(".goal-bar")).toContain("max-width: min(310px, 31cqw)");
+    expect(rule(".goal-bar")).toContain("max-width: var(--header-control-height)");
     expect(styles).toMatch(/@container session-pane \(max-width: 760px\)[\s\S]*\.goal-bar \{ width: 32px; max-width: 32px; flex: 0 0 32px; \}/);
   });
 
@@ -161,13 +161,13 @@ describe("viewport layout CSS", () => {
   it("keeps the delivery-mode switch compact and visibly stateful", () => {
     expect(rule(".composer-running-controls")).toContain("flex: 0 0 auto");
     expect(styles).not.toContain(".composer-running-controls.is-reserved");
-    expect(rule(".delivery-mode-toggle")).toContain("height: 27px");
-    expect(rule(".delivery-mode-toggle")).toContain("flex: 0 0 64px");
+    expect(rule(".delivery-mode-toggle")).toContain("height: var(--composer-control-height)");
+    expect(rule(".delivery-mode-toggle")).toContain("flex: 0 0 28px");
     expect(rule(".delivery-mode-track")).toContain("width: 22px");
     expect(rule(".composer-running-controls.is-active .delivery-mode-toggle")).toContain("color: var(--accent)");
     expect(rule(".composer-running-controls.is-idle .delivery-mode-toggle")).toContain("opacity: .68");
     expect(rule(".delivery-mode-toggle.queue")).toContain("color: var(--accent)");
-    expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.delivery-mode-label \{ display: none; \}/);
+    expect(composerSource).not.toContain("delivery-mode-label");
   });
 
   it("keeps a multi-item submission queue bounded above the Composer", () => {
@@ -183,9 +183,9 @@ describe("viewport layout CSS", () => {
     expect(composerSource).toContain('role="switch" aria-checked={fastMode}');
     expect(composerSource).toContain('const next = fastMode ? null : fastServiceTier.id');
     expect(composerSource).toContain('effectiveSettings.current = { ...effectiveSettings.current, serviceTier: next }; setServiceTier(next)');
-    expect(rule(".service-tier-toggle")).toContain("height: 27px");
+    expect(rule(".service-tier-toggle")).toContain("height: var(--composer-control-height)");
     expect(rule(".service-tier-toggle.active")).toContain("color: var(--accent)");
-    expect(styles).toMatch(/@container session-pane \(max-width: 640px\)[\s\S]*\.service-tier-toggle > span \{ display: none; \}/);
+    expect(rule(".service-tier-toggle")).toContain("width: 28px");
   });
 
   it("keeps the running controls visible before a Turn starts so sending cannot reflow the toolbar", () => {
@@ -235,6 +235,6 @@ describe("viewport layout CSS", () => {
     expect(composerSource).toContain('<SettingsSelect className="model-select"');
     expect(composerSource).toContain('<SettingsSelect className="reasoning-select"');
     expect(composerSource).toMatch(/composer-toolbar[\s\S]*access-control[\s\S]*composer-controls[\s\S]*composer-settings[\s\S]*model-select[\s\S]*reasoning-select[\s\S]*composer-actions[\s\S]*composer-running-controls[\s\S]*send-button/);
-    expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 25px");
+    expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 var(--composer-control-height)");
   });
 });

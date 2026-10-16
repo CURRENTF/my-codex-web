@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Flag, Pause, Plus, Trash } from "@phosphor-icons/react";
+import { Check, Flag, Pause, Trash } from "@phosphor-icons/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, newClientRequestId, type Goal } from "../api";
@@ -14,10 +14,11 @@ export function GoalBar({ threadId, goal, disabled = false }: { threadId: string
   const save = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/goal`, { method: "PUT", body: JSON.stringify({ ...goalUpdateInput(goal, objective.trim(), budget ? Number(budget) : null, status), clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); setOpen(false); } });
   const clear = useMutation({ mutationFn: () => api(`/api/sessions/${threadId}/goal`, { method: "DELETE", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["session", threadId] }); setOpen(false); } });
   const triggerLabel = goal ? `Goal：${goal.objective}` : "设置 Goal";
-  return <Popover.Root open={open} onOpenChange={setOpen}><Popover.Trigger asChild><button className={`header-button goal-bar ${goal ? "has-goal" : ""}`} disabled={disabled} aria-label={triggerLabel} title={goal ? `${goal.objective} · ${formatTokens(goal.tokensUsed)} / ${goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens · ${goal.status}` : undefined}>
-    {goal ? <><Flag size={15} weight="fill" /><span className="goal-objective"><strong>Goal</strong><span>{goal.objective}</span></span><span className="goal-stats">{formatTokens(goal.tokensUsed)} / {goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"}</span></> : <><Plus size={15} weight="bold" /><span>设置 Goal</span></>}
+  return <Popover.Root open={open} onOpenChange={setOpen}><Popover.Trigger asChild><button className={`header-button goal-bar ${goal ? "has-goal" : ""}`} disabled={disabled} aria-label={triggerLabel} title={goal ? `${goal.objective} · ${formatTokens(goal.tokensUsed)} / ${goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens · ${goal.status}` : triggerLabel}>
+    <Flag size={16} weight={goal ? "fill" : "regular"} />
   </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content goal-popover" sideOffset={8} align="end">
     <div className="popover-heading"><Flag size={17} weight="fill" /><span>Session Goal</span></div>
+    {goal && <p className="field-hint">已使用 {formatTokens(goal.tokensUsed)} / {goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens</p>}
     <label className="field-label">Objective<textarea rows={3} value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="描述需要持续推进的目标" /></label>
     {goal && objective !== goal.objective && <p className="field-hint">修改 Objective 会重置使用统计。</p>}
     <div className="goal-form-row"><label className="field-label">Token Budget<input type="number" min="1" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="不限" /></label><label className="field-label">Status<select value={status} onChange={(event) => setStatus(event.target.value as Goal["status"])}><option value="active">Active</option><option value="paused">Paused</option><option value="blocked">Blocked</option><option value="usageLimited">Usage Limited</option><option value="budgetLimited">Budget Limited</option><option value="complete">Complete</option></select></label></div>

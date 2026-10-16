@@ -25,7 +25,7 @@ export function PromptSchedule({ threadId }: { threadId: string }) {
     setOpen(next);
     if (next) { setMinutes(String(schedule?.intervalMinutes ?? 5)); setPrompt(schedule?.prompt ?? ""); setAutoStop(schedule?.autoStop ?? false); save.reset(); }
   }}>
-    <Popover.Trigger asChild><button type="button" className={`schedule-trigger ${schedule?.enabled ? "active" : ""}`} disabled={query.isPending} aria-label="定时轮询" title="定时轮询"><Alarm size={18} weight={schedule?.enabled ? "fill" : "regular"} />{schedule?.enabled && <span>每 {schedule.intervalMinutes} 分钟</span>}</button></Popover.Trigger>
+    <Popover.Trigger asChild><button type="button" className={`schedule-trigger ${schedule?.enabled ? "active" : ""}`} disabled={query.isPending} aria-label="定时轮询" title="定时轮询"><Alarm size={16} weight={schedule?.enabled ? "fill" : "regular"} />{schedule?.enabled && <span>每 {schedule.intervalMinutes} 分钟</span>}</button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="schedule-panel" side="top" align="end" sideOffset={12} collisionPadding={14} aria-label="定时轮询设置">
       <div className="schedule-heading"><Alarm size={20} /><h2>定时轮询</h2><span className="schedule-state">{schedule?.enabled ? "已启用" : "未启用"}</span><Popover.Close className="icon-only" aria-label="关闭定时轮询设置"><X size={16} /></Popover.Close></div>
       <p className="dialog-description">服务器定时向当前任务发送 prompt，关闭浏览器后仍会继续。</p>
