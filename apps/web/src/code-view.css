@@ -24,6 +24,11 @@
 .code-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; color: var(--text-soft); }
 .code-empty-state h2 { margin: 8px 0 0; font-size: 17px; color: var(--text); }
 .code-empty-state p { margin: 0; }
+.code-download-state { text-align: center; }
+.code-download-state p { max-width: 52ch; line-height: 1.6; overflow-wrap: anywhere; }
+.code-download-state small { font-variant-numeric: tabular-nums; }
+.code-download-state .button { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; text-decoration: none; white-space: nowrap; }
+.code-document-bar > .header-button { flex: 0 0 auto; }
 .code-empty-state > span { font-size: 12px; margin-top: 14px; }
 .code-error, .code-discard { padding: 12px 16px; display: flex; align-items: center; gap: 12px; background: var(--surface-strong); border-top: 1px solid var(--line); }
 .code-error { color: var(--danger); }

@@ -1,11 +1,11 @@
-import { ArrowSquareOut, CheckCircle, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
+import { ArrowSquareOut, CheckCircle, DownloadSimple, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
-import { codeViewUrl } from "../code-view-url";
+import { codeViewUrl, fileDownloadUrl, isDownloadOnlyFile } from "../code-view-url";
 
 export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls = {}, localPathKinds = {} }: { text: string; cwd: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }) {
   return <ReactMarkdown
@@ -19,6 +19,11 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
         }
         if (href?.startsWith("/")) {
           const isDirectory = localPathKinds[href] === "directory";
+          if (!isDirectory && isDownloadOnlyFile(href)) {
+            let filePath = href;
+            try { filePath = decodeURIComponent(href); } catch { /* Keep literal malformed percent escapes. */ }
+            return <a className="agent-inline-link file" href={fileDownloadUrl(cwd, filePath)} download title={`下载 ${filePath}`}><DownloadSimple size={14} />{children}</a>;
+          }
           const PathIcon = isDirectory ? FolderOpen : FileCode;
           return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(href) : codeViewUrl(cwd, href)} target="_blank" rel="noreferrer" title={href}><PathIcon size={14} />{children}</a>;
         }

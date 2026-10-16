@@ -234,7 +234,7 @@ export async function createServer() {
   });
 
   app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof CodeViewError) return reply.code(error.statusCode).send({ message: error.message });
+    if (error instanceof CodeViewError) return reply.code(error.statusCode).send({ message: error.message, ...(error.file ? { file: error.file } : {}) });
     if (_request.url.startsWith("/api/code/") && error instanceof Error && "code" in error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") return reply.code(404).send({ message: "文件或目录已不存在，请刷新目录。" });
@@ -318,6 +318,14 @@ export async function createServer() {
     reply.header("cache-control", "no-store");
     const input = codePathSchema.parse(request.query);
     return codeFiles.read(input.root, input.path);
+  });
+  app.get("/api/code/download", async (request, reply) => {
+    const input = codePathSchema.parse(request.query);
+    const file = await codeFiles.download(input.root, input.path);
+    reply.header("cache-control", "private, no-store");
+    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file.path))}`);
+    reply.header("content-length", String(file.size));
+    return reply.type("application/octet-stream").send(file.stream);
   });
   app.put("/api/code/file", async (request, reply) => {
     reply.header("cache-control", "no-store");

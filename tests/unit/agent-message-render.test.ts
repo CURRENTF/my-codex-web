@@ -162,6 +162,20 @@ describe("Agent message Markdown rendering", () => {
     expect(html).not.toContain("openFile=");
   });
 
+  it("downloads profiler reports directly while leaving text and external links unchanged", () => {
+    const html = render("[Nsight trace](/data2/trace.nsys-rep)\n\n[报告](/data2/RESULTS.md)\n\n[在线 trace](https://example.com/trace.nsys-rep)");
+    expect(html).toContain('href="/api/code/download?root=%2Fhome%2Fhaojitai%2Fproject&amp;path=%2Fdata2%2Ftrace.nsys-rep"');
+    expect(html).toContain('download=""');
+    expect(html).toContain("下载 /data2/trace.nsys-rep");
+    expect(html).toContain("/code?root=%2Fhome%2Fhaojitai%2Fproject&amp;file=%2Fdata2%2FRESULTS.md");
+    expect(html).toContain('href="https://example.com/trace.nsys-rep"');
+    const directory = render("[目录](/data2/archive.zip)", undefined, undefined, { "/data2/archive.zip": "directory" });
+    expect(directory).not.toContain("/api/code/download");
+    const unicode = render("[trace](</data2/trace 中文 #1.nsys-rep>)");
+    expect(unicode).toContain("path=%2Fdata2%2Ftrace+%E4%B8%AD%E6%96%87+%231.nsys-rep");
+    expect(unicode).not.toContain("%2520");
+  });
+
   it("preserves safe external links, remote file links, and directives", () => {
     const html = render('见 [报告](/data2/report.md) 与 [文档](https://example.com/docs)。\n\n::code-comment{title="[P1] 性能实验失败会被误判" body="失败会写成 FAILED/OOM 并正常退出。" file="/home/test/run_suite.py" start=1355 end=1369 priority=1 confidence=0.99}\n::git-push{cwd="/home/haojitai/project" branch="codex/h2o"}');
     expect(html).toContain("/code?root=%2Fhome%2Fhaojitai%2Fproject&amp;file=");

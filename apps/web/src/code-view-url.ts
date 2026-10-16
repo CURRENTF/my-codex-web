@@ -8,3 +8,11 @@ export function codeViewUrl(root: string, file?: string, line?: number | null): 
   if (line != null) query.set("line", String(Math.max(1, Math.trunc(line))));
   return `/code?${query}`;
 }
+
+export function fileDownloadUrl(root: string, file: string): string {
+  return `/api/code/download?${new URLSearchParams({ root, path: file.replace(/:\d+(?::\d+)?$/, "") })}`;
+}
+
+export function isDownloadOnlyFile(file: string): boolean {
+  return /\.(?:nsys-rep|qdrep|ncu-rep|zip|tar|tgz|gz|bz2|xz|zst|7z)(?::\d+(?::\d+)?)?$/i.test(file);
+}

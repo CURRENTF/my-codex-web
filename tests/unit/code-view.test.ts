@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, symlink, link, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, writeFile, rm, realpath, rename, symlink, link, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CodeViewFiles, MAX_CODE_BYTES } from "../../apps/server/src/code-view";
-import { codeViewUrl } from "../../apps/web/src/code-view-url";
+import { codeViewUrl, fileDownloadUrl, isDownloadOnlyFile } from "../../apps/web/src/code-view-url";
 
 describe("built-in workspace editor", () => {
   let base: string, root: string, target: string, files: CodeViewFiles;
@@ -72,5 +72,60 @@ describe("built-in workspace editor", () => {
     const url = new URL(codeViewUrl("/work a", "/work a/b#?.ts:42"), "http://localhost");
     expect(url.searchParams.get("file")).toBe("/work a/b#?.ts");
     expect(url.searchParams.get("line")).toBe("42");
+  });
+
+  it("streams binary files byte-for-byte from the opened descriptor", async () => {
+    const data = Buffer.from([0, 1, 2, 255, 128]);
+    await writeFile(target, data);
+    const download = await files.download(root, target);
+    // Replacing the pathname after opening must not switch the download's inode.
+    await rename(target, `${target}.old`);
+    await writeFile(target, "different file");
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.stream) chunks.push(chunk);
+    expect(Buffer.concat(chunks)).toEqual(data);
+    expect(download.size).toBe(data.length);
+    expect(download.stream.closed).toBe(true);
+  });
+
+  it("opens a multi-GiB file without buffering it and closes a cancelled stream", async () => {
+    const handle = await open(target, "w");
+    const size = 3 * 1024 ** 3;
+    await handle.truncate(size);
+    await handle.close();
+    await expect(files.read(root, target)).rejects.toMatchObject({ statusCode: 413, file: { path: await realpath(target), size } });
+    const download = await files.download(root, target);
+    expect(download.size).toBe(size);
+    const closed = new Promise<void>((resolve) => download.stream.once("close", resolve));
+    for await (const chunk of download.stream) {
+      expect(chunk.length).toBeLessThanOrEqual(64 * 1024);
+      break;
+    }
+    await closed;
+    expect(download.stream.closed).toBe(true);
+  });
+
+  it("supports external paths and empty files but rejects directories and missing files", async () => {
+    const external = path.join(base, "trace.nsys-rep");
+    await writeFile(external, "");
+    const download = await files.download(root, external);
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.stream) chunks.push(chunk);
+    expect(Buffer.concat(chunks)).toHaveLength(0);
+    expect(download.size).toBe(0);
+    await expect(files.download(root, root)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(files.download(root, "missing")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("encodes download paths and recognizes reports without redirecting text files or web URLs", () => {
+    const file = "/data2/实验/trace #1.nsys-rep";
+    const url = new URL(fileDownloadUrl("/work a", `${file}:42`), "http://localhost");
+    expect(url.pathname).toBe("/api/code/download");
+    expect(url.searchParams.get("root")).toBe("/work a");
+    expect(url.searchParams.get("path")).toBe(file);
+    expect(isDownloadOnlyFile(file)).toBe(true);
+    expect(isDownloadOnlyFile("/data2/TRACE.NCU-REP")).toBe(true);
+    expect(isDownloadOnlyFile("/data2/archive.tar.gz")).toBe(true);
+    expect(isDownloadOnlyFile("/data2/RESULTS.md")).toBe(false);
   });
 });
