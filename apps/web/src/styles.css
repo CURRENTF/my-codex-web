@@ -902,26 +902,58 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .settings-toggle.enabled { background: var(--accent); }
 .settings-toggle.enabled > span { transform: translateX(12px); }
 
-/* Resource trigger sits below sidebar/scrim (30); details use the existing popover layer (50). */
-.machine-monitor-trigger { position: fixed; right: max(10px, env(safe-area-inset-right)); top: 62px; z-index: 20; display: flex; align-items: center; gap: 6px; min-height: 36px; max-width: calc(100vw - 20px); border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-strong); padding: 0 10px; color: var(--text-soft); box-shadow: var(--shadow-menu); cursor: pointer; font: 11px ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.machine-monitor-trigger:hover { background: var(--surface-hover); color: var(--text); }
-.machine-monitor-trigger:active { transform: scale(.98); }
-.machine-monitor-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.machine-monitor-gpu { margin-left: 9px; }
-.machine-monitor-panel { width: min(330px, calc(100vw - 16px)); max-height: min(480px, var(--radix-popover-content-available-height)); overflow: auto; padding: 12px; background: var(--surface-strong); }
-.machine-monitor-panel header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.machine-monitor-panel header small { display: block; margin-top: 3px; color: var(--text-soft); overflow-wrap: anywhere; }
-.machine-monitor-panel section { margin-top: 12px; }
-.machine-monitor-device { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
-.machine-monitor-device > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 11px; }
-.machine-monitor-panel dl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; margin: 7px 0 0; }
-.machine-monitor-panel dt { color: var(--text-soft); font-size: 10px; }
-.machine-monitor-panel dd { margin: 3px 0 0; font: 11px ui-monospace, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.machine-monitor-panel p, .machine-monitor-panel footer { margin: 12px 0 0; color: var(--text-soft); font-size: 11px; line-height: 1.6; }
-@media (max-width: 767px) {
-  .machine-monitor-trigger { top: 62px; min-height: 32px; padding-inline: 8px; gap: 5px; font-size: 10px; }
-  .machine-monitor-gpu { margin-left: 7px; }
+/* Keep resource monitoring below sidebar/scrim (30) and dialogs/popovers (50). */
+.machine-monitor { --monitor-low: #268361; --monitor-medium: #a16913; --monitor-high: #c34c42; position: fixed; right: max(10px, env(safe-area-inset-right)); top: 62px; z-index: 20; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); display: flex; flex-direction: column; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-strong); color: var(--text); box-shadow: var(--shadow-menu); font-size: 12px; font-variant-numeric: tabular-nums; }
+@media (prefers-color-scheme: dark) { .machine-monitor { --monitor-low: #68c69e; --monitor-medium: #e2b35f; --monitor-high: #f38b80; } }
+.machine-monitor.expanded { width: 440px; }
+.machine-monitor-toolbar { display: flex; flex-shrink: 0; min-width: 0; min-height: 36px; }
+.machine-monitor-drag { display: grid; place-items: center; flex: 0 0 28px; padding: 0; border: 0; border-radius: 9px 0 0 9px; background: transparent; color: var(--text-soft); cursor: grab; touch-action: none; user-select: none; }
+.machine-monitor-drag:active { cursor: grabbing; }
+.machine-monitor-drag:hover { background: var(--surface-hover); color: var(--text); }
+.machine-monitor-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 8px 10px 8px 0; border: 0; border-radius: 0 9px 9px 0; background: transparent; color: var(--text-soft); cursor: pointer; font: inherit; text-align: left; }
+.machine-monitor-toggle > svg { flex-shrink: 0; }
+.machine-monitor-toggle > svg:last-child { margin-left: auto; }
+.machine-monitor-toggle:hover { color: var(--text); }
+.machine-monitor button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.machine-monitor-summary { display: flex; gap: 12px; font: 11px ui-monospace, monospace; white-space: nowrap; }
+.machine-monitor-summary b { font-weight: 600; }
+.machine-monitor .low { color: var(--monitor-low); }
+.machine-monitor .medium { color: var(--monitor-medium); }
+.machine-monitor .high { color: var(--monitor-high); }
+.machine-monitor .unknown { color: var(--text-soft); }
+.machine-monitor-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-weight: 600; color: var(--text); }
+.machine-monitor-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 10px; font-weight: 400; }
+.machine-monitor-panel { min-height: 0; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line); padding: 0 10px; }
+.machine-monitor-table { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: right; white-space: nowrap; font: 11px ui-monospace, monospace; }
+.machine-monitor-table th, .machine-monitor-table td { padding: 10px 6px; vertical-align: middle; }
+.machine-monitor-table thead { color: var(--text-soft); font: 10px var(--font-sans, sans-serif); }
+.machine-monitor-table thead th { font-weight: 500; }
+.machine-monitor-table th:first-child { width: 28%; padding-left: 0; text-align: left; }
+.machine-monitor-table th:nth-child(2) { width: 17%; }
+.machine-monitor-table th:nth-child(3) { width: 37%; }
+.machine-monitor-table th:last-child, .machine-monitor-table td:last-child { padding-right: 0; }
+.machine-monitor-table tbody tr { border-top: 1px solid var(--line); }
+.machine-monitor-table tbody th { font-weight: 600; }
+.machine-monitor-table tbody tr:hover { background: var(--surface-hover); }
+.machine-monitor-table small { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; line-height: 1.3; color: var(--text-soft); font-weight: 400; }
+.machine-monitor-table tbody th small { font-family: var(--font-sans, sans-serif); }
+.machine-monitor-table em { font-style: normal; color: var(--text-soft); }
+.machine-monitor-meter { display: grid; gap: 6px; }
+.machine-monitor-track { display: block; height: 3px; overflow: hidden; background: var(--line); border-radius: 2px; }
+.machine-monitor-track i { display: block; height: 100%; background: currentColor; border-radius: inherit; transition: width .25s; }
+.machine-monitor-unavailable { color: var(--text-soft); }
+.machine-monitor-notice { margin: 10px 0; color: var(--text-soft); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.machine-monitor-panel footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); color: var(--text-soft); font-size: 10px; }
+.machine-monitor-legend { display: inline-flex; align-items: center; gap: 5px; }
+.machine-monitor-legend i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.machine-monitor-legend i:not(:first-child) { margin-left: 5px; }
+@media (max-width: 400px) {
+  .machine-monitor-panel { padding-inline: 8px; }
+  .machine-monitor-table { font-size: 10px; }
+  .machine-monitor-table th, .machine-monitor-table td { padding-inline: 4px; }
+  .machine-monitor-table small { font-size: 9px; }
 }
+@media (prefers-reduced-motion: reduce) { .machine-monitor-track i { transition: none; } }
 
 .schedule-trigger { display: inline-flex; align-items: center; gap: 5px; min-width: 28px; height: 28px; padding: 5px; border: 0; background: transparent; color: var(--text-soft); border-radius: 7px; }
 .schedule-trigger:hover, .schedule-trigger.active { color: var(--accent); background: var(--accent-soft); }
