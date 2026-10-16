@@ -289,7 +289,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .timeline-shell { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .timeline-shell > .timeline { min-width: 0; flex: 1; }
 /* Compact message ticks stay centered; only the hovered neighborhood expands. */
-.user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: 36px; height: min(calc(var(--rail-count) * 12px + 4px), calc(100% - 32px)); transform: translateY(-50%); }
+.user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: 36px; height: min(calc(var(--rail-count) * var(--rail-tick-spacing) + 4px), calc(100% - 32px)); transform: translateY(-50%); }
 .user-message-rail-track { position: absolute; inset: 8px 0 8px 4px; pointer-events: none; }
 .user-message-rail-tick { position: absolute; left: 0; width: 32px; height: 2px; transform-origin: left center; background: color-mix(in srgb, var(--text) 20%, var(--surface)); transition: transform .16s cubic-bezier(.2,.8,.2,1); }
 .user-message-rail-tick.current { background: var(--text-soft); }

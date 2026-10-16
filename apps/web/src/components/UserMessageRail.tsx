@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { userMessageIndexAtProgress, userMessageIndexAtReadingLine, visibleUserMessageIndices, type UserMessageTarget } from "../user-message-navigation";
+import { DEFAULT_USER_MESSAGE_TICKS, USER_MESSAGE_TICK_SPACING, userMessageIndexAtProgress, userMessageIndexAtReadingLine, userMessageTickCapacity, visibleUserMessageIndices, type UserMessageTarget } from "../user-message-navigation";
 
 export function UserMessageRail({ targets, virtual, onNavigate }: {
   targets: UserMessageTarget[];
@@ -10,11 +10,12 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
   const track = useRef<HTMLDivElement>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(targets.at(-1)?.key ?? null);
+  const [capacity, setCapacity] = useState(DEFAULT_USER_MESSAGE_TICKS);
   const previewId = useId();
   const targetKeys = targets.map((target) => target.key).join("\u0000");
   const matchedFocus = targets.findIndex((target) => target.key === focusKey);
   const currentFocus = matchedFocus < 0 ? Math.max(0, targets.length - 1) : matchedFocus;
-  const visibleIndices = useMemo(() => visibleUserMessageIndices(targets.length, currentFocus), [targets.length, currentFocus]);
+  const visibleIndices = useMemo(() => visibleUserMessageIndices(targets.length, currentFocus, capacity), [targets.length, currentFocus, capacity]);
 
   useEffect(() => { setPreviewIndex(null); }, [targetKeys]);
 
@@ -26,6 +27,7 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
     let frame = 0;
     const update = () => {
       const bounds = scroller.getBoundingClientRect();
+      setCapacity(userMessageTickCapacity(bounds.height));
       const readingLine = bounds.top + 16;
       const anchors = [...scroller.querySelectorAll<HTMLElement>("[data-user-message-id]")].flatMap((message) => {
         const index = targetIndex.get(message.dataset.userMessageId ?? "");
@@ -64,7 +66,7 @@ export function UserMessageRail({ targets, virtual, onNavigate }: {
   const selected = activePreviewIndex === null ? null : targets[activePreviewIndex];
   const selectedPosition = activePreviewIndex === null ? 50 : localPosition(activePreviewIndex);
 
-  return <div className="user-message-rail" ref={rail} style={{ "--rail-count": visibleIndices.length } as CSSProperties}>
+  return <div className="user-message-rail" ref={rail} style={{ "--rail-count": visibleIndices.length, "--rail-tick-spacing": `${USER_MESSAGE_TICK_SPACING}px` } as CSSProperties}>
     <div className="user-message-rail-track" ref={track} aria-hidden="true">
       {visibleIndices.map((index) => {
         const distance = activePreviewIndex === null ? Infinity : Math.abs(index - activePreviewIndex);

@@ -11,15 +11,24 @@ export interface UserMessageTarget {
   optimistic: boolean;
 }
 
-export const MAX_USER_MESSAGE_TICKS = 20;
+export const DEFAULT_USER_MESSAGE_TICKS = 20;
+export const MAX_USER_MESSAGE_TICKS = 60;
+export const USER_MESSAGE_TICK_SPACING = 12;
 
-export function visibleUserMessageIndices(count: number, focusIndex: number): number[] {
+export function userMessageTickCapacity(height: number): number {
+  if (!Number.isFinite(height) || height <= 0) return DEFAULT_USER_MESSAGE_TICKS;
+  // Leave room for the centered hover preview at both ends of the rail.
+  return Math.max(1, Math.min(MAX_USER_MESSAGE_TICKS, Math.floor((height - 2 * 72 - 4) / USER_MESSAGE_TICK_SPACING)));
+}
+
+export function visibleUserMessageIndices(count: number, focusIndex: number, capacity = DEFAULT_USER_MESSAGE_TICKS): number[] {
   if (count <= 0) return [];
-  if (count <= MAX_USER_MESSAGE_TICKS) return Array.from({ length: count }, (_, index) => index);
+  const limit = Number.isFinite(capacity) ? Math.max(1, Math.floor(capacity)) : DEFAULT_USER_MESSAGE_TICKS;
+  if (count <= limit) return Array.from({ length: count }, (_, index) => index);
 
   const focus = Math.max(0, Math.min(count - 1, Math.round(focusIndex)));
-  const start = Math.max(0, Math.min(count - MAX_USER_MESSAGE_TICKS, focus - Math.floor(MAX_USER_MESSAGE_TICKS / 2)));
-  return Array.from({ length: MAX_USER_MESSAGE_TICKS }, (_, index) => start + index);
+  const start = Math.max(0, Math.min(count - limit, focus - Math.floor(limit / 2)));
+  return Array.from({ length: limit }, (_, index) => start + index);
 }
 
 export function userMessageIndexAtProgress(count: number, progress: number): number {
