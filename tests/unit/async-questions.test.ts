@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { projectAdapterEvent, projectThreadItem, projectTurn } from "@codex-web/codex-adapter";
 import { appendQuestionReply, questionReplyText } from "../../apps/web/src/async-question-reply";
 import { Timeline } from "../../apps/web/src/components/Timeline";
+import { AsyncQuestionDock } from "../../apps/web/src/components/AsyncQuestionDock";
 
 // Public thread/read shape observed on Codex 0.153.4; no pending RPC request.
 const item = {
@@ -21,17 +22,31 @@ describe("persisted asynchronous questions", () => {
     }
   });
 
-  it("renders an answerable card in completed history without a pending request", () => {
+  it("keeps history readable and renders the answer form beside the composer without a pending request", () => {
     const turn = projectTurn({ id: "turn", status: "completed", items: [item], error: null } as never);
     const html = renderToStaticMarkup(createElement(Timeline, {
       threadId: "thread", turns: [turn], cwd: "/tmp", canFork: false,
       onFork: () => {}, onSideChat: () => {},
     }));
-    expect(html).toContain('aria-label="异步问题"');
-    expect(html).toContain('type="radio"');
-    expect(html).toContain('checked=""');
-    expect(html).toContain("填入输入框");
-    expect(html).toContain("Model constraints?");
+    expect(html).toContain("Choose scope");
+    expect(html).not.toContain('aria-label="异步问题"');
+    expect(html).not.toContain("textarea");
+    const dock = renderToStaticMarkup(createElement(AsyncQuestionDock, { threadId: "thread", turns: [turn] }));
+    expect(dock).toContain('aria-label="异步问题"');
+    expect(dock).toContain('type="radio"');
+    expect(dock).toContain('checked=""');
+    expect(dock).toContain("填入输入框");
+    expect(dock).toContain("Model constraints?");
+    expect(dock).toContain('name="async-thread-call_questions-0"');
+  });
+
+  it("keeps multiple questions accessible with the newest first after more agent activity", () => {
+    const turn = projectTurn({ id: "turn", status: "inProgress", items: [item, { ...item, id: "new", questions: [{ title: "Newest question" }] }, { type: "agentMessage", id: "later", text: "Continuing other work" }], error: null } as never);
+    const dock = renderToStaticMarkup(createElement(AsyncQuestionDock, { threadId: "thread", turns: [turn] }));
+    expect(dock.match(/aria-label="异步问题"/g)).toHaveLength(2);
+    expect(dock.indexOf("Newest question")).toBeLessThan(dock.indexOf("Choose scope"));
+    expect(dock).not.toContain("Continuing other work");
+    expect(renderToStaticMarkup(createElement(AsyncQuestionDock, { threadId: "thread", turns: [] }))).toBe("");
   });
 
   it("preserves unrelated drafts and associates each answer with its question", () => {

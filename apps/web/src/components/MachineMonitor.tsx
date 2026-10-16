@@ -10,6 +10,17 @@ const gib = (value: number) => (value / 1024).toFixed(1);
 const ratio = (used: number | null, total: number | null) => used == null || total == null || total <= 0 ? null : used / total * 100;
 const tone = (value: number | null | undefined) => value == null ? "unknown" : value >= 90 ? "high" : value >= 60 ? "medium" : "low";
 
+export function fitMachineMonitorPosition(
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+  viewport: { x: number; y: number; width: number; height: number },
+) {
+  return {
+    x: Math.max(viewport.x + 8, Math.min(position.x, viewport.x + viewport.width - size.width - 8)),
+    y: Math.max(viewport.y + 8, Math.min(position.y, viewport.y + viewport.height - size.height - 8)),
+  };
+}
+
 function Meter({ value, children }: { value: number | null; children: React.ReactNode }) {
   return <div className={`machine-monitor-meter ${tone(value)}`}><span>{children}</span><span className="machine-monitor-track" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, value ?? 0))}%` }} /></span></div>;
 }
@@ -31,6 +42,7 @@ function MachineMonitorContent() {
   const [open, setOpen] = useState(false);
   const { position, setPosition } = useMachineMonitorPreferences();
   const container = useRef<HTMLDivElement>(null);
+  const anchor = useRef(position);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const query = useQuery({ queryKey: ["machine-metrics"], queryFn: ({ signal }) => api<MachineMetrics>("/api/machine-metrics", { signal, cache: "no-store" }), refetchInterval: 3000, refetchIntervalInBackground: false, staleTime: 2000, retry: false });
   const data = query.data;
@@ -40,51 +52,68 @@ function MachineMonitorContent() {
   const moveTo = (x: number, y: number) => {
     const element = container.current;
     if (!element) return;
+    const visualViewport = window.visualViewport;
+    const viewport = { x: visualViewport?.offsetLeft ?? 0, y: visualViewport?.offsetTop ?? 0, width: visualViewport?.width ?? window.innerWidth, height: visualViewport?.height ?? window.innerHeight };
+    // Size first: clamping against the visible viewport also handles zoom and the mobile keyboard.
+    element.style.maxWidth = `${Math.max(0, viewport.width - 16)}px`;
+    element.style.maxHeight = `${Math.max(0, viewport.height - 16)}px`;
     const bounds = element.getBoundingClientRect();
-    const viewport = window.visualViewport;
-    const offsetX = viewport?.offsetLeft ?? 0;
-    const offsetY = viewport?.offsetTop ?? 0;
-    const left = Math.max(offsetX + 8, Math.min(x, offsetX + (viewport?.width ?? window.innerWidth) - bounds.width - 8));
-    const top = Math.max(offsetY + 8, Math.min(y, offsetY + (viewport?.height ?? window.innerHeight) - bounds.height - 8));
+    const { x: left, y: top } = fitMachineMonitorPosition({ x, y }, bounds, viewport);
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
     element.style.right = "auto";
     return { x: left, y: top };
   };
 
+  const finishDrag = (event?: { pointerId: number }) => {
+    if (!drag.current || (event && drag.current.pointerId !== event.pointerId)) return;
+    drag.current = null;
+    const bounds = container.current!.getBoundingClientRect();
+    setPosition({ x: bounds.left, y: bounds.top });
+  };
+
   useLayoutEffect(() => {
     const element = container.current;
     if (!element) return;
-    const fit = () => {
+    // Expansion may move the panel inward, but must not overwrite the user's anchor.
+    if (position && Number.isFinite(position.x) && Number.isFinite(position.y)) anchor.current = position;
+    if (!anchor.current || !Number.isFinite(anchor.current.x) || !Number.isFinite(anchor.current.y)) {
       const bounds = element.getBoundingClientRect();
-      moveTo(bounds.left, bounds.top);
+      anchor.current = { x: bounds.left, y: bounds.top };
+    }
+    const fit = () => {
+      if (!drag.current && anchor.current) moveTo(anchor.current.x, anchor.current.y);
     };
-    if (position && Number.isFinite(position.x) && Number.isFinite(position.y)) moveTo(position.x, position.y);
-    else fit();
+    // Run before paint on both expand and collapse, not only after ResizeObserver fires.
+    fit();
     const observer = new ResizeObserver(fit);
     observer.observe(element);
+    const finishOnBlur = () => finishDrag();
+    // Capture release outside the handle as well; do not leave a stale drag blocking layout.
+    window.addEventListener("pointerup", finishDrag, true);
+    window.addEventListener("pointercancel", finishDrag, true);
+    window.addEventListener("blur", finishOnBlur);
     window.addEventListener("resize", fit);
     window.visualViewport?.addEventListener("resize", fit);
     window.visualViewport?.addEventListener("scroll", fit);
     return () => {
       observer.disconnect();
+      window.removeEventListener("pointerup", finishDrag, true);
+      window.removeEventListener("pointercancel", finishDrag, true);
+      window.removeEventListener("blur", finishOnBlur);
       window.removeEventListener("resize", fit);
       window.visualViewport?.removeEventListener("resize", fit);
       window.visualViewport?.removeEventListener("scroll", fit);
     };
-  }, [position]);
+  }, [position, open]);
 
   const startDrag = (event: PointerEvent<HTMLButtonElement>) => {
     if (!event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
     const bounds = container.current!.getBoundingClientRect();
     drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top };
     event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const finishDrag = (event: PointerEvent<HTMLButtonElement>) => {
-    if (drag.current?.pointerId !== event.pointerId) return;
-    drag.current = null;
-    const bounds = container.current!.getBoundingClientRect();
-    setPosition({ x: bounds.left, y: bounds.top });
   };
   const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
     const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];

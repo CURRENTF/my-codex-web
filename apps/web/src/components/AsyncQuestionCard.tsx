@@ -1,13 +1,10 @@
-import { createContext, useContext, useState } from "react";
+import { useState } from "react";
 import { ChatCircleText } from "@phosphor-icons/react";
 import type { AsyncUserInputQuestion } from "@codex-web/shared-types";
 import { appendQuestionReply, questionReplyText } from "../async-question-reply";
 import { useAppStore } from "../store";
 
-export const QuestionThreadContext = createContext("");
-
-export function AsyncQuestionCard({ itemId, questions }: { itemId: string; questions: AsyncUserInputQuestion[] }) {
-  const threadId = useContext(QuestionThreadContext);
+export function AsyncQuestionCard({ threadId, itemId, questions }: { threadId: string; itemId: string; questions: AsyncUserInputQuestion[] }) {
   const [answers, setAnswers] = useState(() => questions.map((question) => question.options?.[0] ?? ""));
   const [custom, setCustom] = useState<Record<number, boolean>>({});
   const [added, setAdded] = useState(false);

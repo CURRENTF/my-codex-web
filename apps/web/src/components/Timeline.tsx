@@ -11,7 +11,6 @@ import { useAppStore, type OptimisticUserMessage } from "../store";
 import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages, type ActivityItem } from "../timeline-presentation";
 import { userMessageTargets, userMessageText, type UserMessageTarget } from "../user-message-navigation";
 import { AgentMessage, MarkdownMessage } from "./AgentMessage";
-import { AsyncQuestionCard, QuestionThreadContext } from "./AsyncQuestionCard";
 import { UserMessageRail } from "./UserMessageRail";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
@@ -30,6 +29,27 @@ function AttachmentList({ attachments }: { attachments: DisplayAttachment[] }) {
   </>;
 }
 
+function UserMessageCopy({ text }: { text: string }) {
+  const [state, setState] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  useEffect(() => {
+    if (state !== "copied") return;
+    const timer = window.setTimeout(() => setState("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  const label = state === "copied" ? "已复制" : state === "error" ? "复制失败，点击重试" : "复制用户消息";
+  return <button type="button" className="user-message-copy" data-state={state} aria-label="复制用户消息" title={label} aria-busy={state === "copying"} onClick={() => {
+    if (state === "copying") return;
+    setState("copying");
+    void (async () => {
+      try { await navigator.clipboard.writeText(text); setState("copied"); }
+      catch { setState("error"); }
+    })();
+  }}>
+    {state === "copied" ? <Check size={15} /> : state === "error" ? <WarningCircle size={15} /> : <Clipboard size={15} />}
+    <span className="visually-hidden" role="status">{state === "copied" || state === "error" ? label : ""}</span>
+  </button>;
+}
+
 function UserMessage({ item, cwd }: { item: Extract<CodexItem, { type: "userMessage" }>; cwd: string }) {
   const text = userMessageText(item);
   const attachments = item.content.flatMap<DisplayAttachment>((part, index) => {
@@ -41,7 +61,7 @@ function UserMessage({ item, cwd }: { item: Extract<CodexItem, { type: "userMess
     }
     return [];
   });
-  return <div className="user-message" data-user-message-id={item.id}><div className={attachments.length ? "message-with-attachments" : undefined}>{text && <div className="user-message-text agent-message-text"><MarkdownMessage text={text} cwd={cwd} /></div>}<AttachmentList attachments={attachments} /></div></div>;
+  return <div className={`user-message ${text ? "has-copy" : ""}`} data-user-message-id={item.id}>{text && <UserMessageCopy text={text} />}<div className={attachments.length ? "message-with-attachments" : undefined}>{text && <div className="user-message-text agent-message-text"><MarkdownMessage text={text} cwd={cwd} /></div>}<AttachmentList attachments={attachments} /></div></div>;
 }
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
@@ -82,7 +102,7 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
 function Item({ item, turnStatus, onOpenDiff, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string; grouped?: boolean }) {
   const delta = useAppStore((state) => item.id ? state.deltas[item.id] : undefined);
   if (item.type === "userMessage") return <UserMessage item={item} cwd={cwd} />;
-  if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) return <AsyncQuestionCard itemId={item.id} questions={item.questions} />;
+  if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) return <AgentMessage text={item.text || item.questions.map((question) => question.title).join("\n\n")} cwd={cwd} />;
   if (item.type === "agentMessage") return <AgentMessage text={mergeStreamingText(item.text, delta)} cwd={cwd} localImageUrls={item.localImageUrls} localPathUrls={item.localPathUrls} localPathKinds={item.localPathKinds} />;
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
@@ -121,7 +141,8 @@ function OptimisticMessages({ messages, cwd }: { messages: OptimisticUserMessage
   if (!messages.length) return null;
   return <section className="turn-block optimistic-message-block" aria-live="polite">{messages.map((message) => {
     const label = message.state === "sending" ? "发送中" : message.state === "uncertain" ? "正在确认" : "排队中";
-    return <div className="pending-user-message" data-state={message.state} data-client-user-message-id={message.clientUserMessageId} data-user-message-id={`optimistic:${message.clientUserMessageId}`} key={message.clientUserMessageId}>
+    return <div className={`pending-user-message ${message.text ? "has-copy" : ""}`} data-state={message.state} data-client-user-message-id={message.clientUserMessageId} data-user-message-id={`optimistic:${message.clientUserMessageId}`} key={message.clientUserMessageId}>
+      {message.text && <UserMessageCopy text={message.text} />}
       <div className={message.attachments?.length ? "message-with-attachments" : undefined}>{message.text && <div className="pending-user-text agent-message-text"><MarkdownMessage text={message.text} cwd={cwd} /></div>}<AttachmentList attachments={(message.attachments ?? []).map((attachment) => ({ key: attachment.id, kind: attachment.kind, name: attachment.name, url: attachment.kind === "image" ? attachment.url : `${attachment.url}?download=1`, detail: `${Math.ceil(attachment.size / 1_024)} KiB` }))} /><span className="pending-user-status"><SpinnerGap className="spinning" size={12} />{label}</span></div>
     </div>;
   })}</section>;
@@ -228,5 +249,5 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
   const timeline = useStaticTimeline
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
     : <Virtuoso ref={virtualTimeline} className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
-  return <QuestionThreadContext.Provider value={threadId}><div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{showUserMessageRail && <UserMessageRail targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div></QuestionThreadContext.Provider>;
+  return <div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{showUserMessageRail && <UserMessageRail targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div>;
 }
