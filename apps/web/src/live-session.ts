@@ -87,17 +87,24 @@ function mergeTurnErrors(current: SessionTurnError[] = [], incoming: SessionTurn
     const index = merged.findIndex((previous) => turnErrorKey(previous) === turnErrorKey(error)
       && (previous.occurredAt == null || error.occurredAt == null || previous.occurredAt === error.occurredAt));
     if (index < 0) merged.push(error);
-    else if (merged[index]!.occurredAt == null && error.occurredAt != null) merged[index] = error;
+    else {
+      const previous = merged[index]!;
+      merged[index] = { ...previous,
+        ...(previous.occurredAt == null && error.occurredAt != null ? { occurredAt: error.occurredAt } : {}),
+        ...(previous.afterItemId === undefined && error.afterItemId !== undefined ? { afterItemId: error.afterItemId } : {}),
+      };
+    }
   }
   return merged;
 }
 
 function appendTurnError(turns: CodexTurn[], turnId: string, error: SessionTurnError): CodexTurn[] {
   const index = turns.findIndex((turn) => turn.id === turnId);
-  if (index < 0) return [...turns, { id: turnId, status: "inProgress", errors: [error], items: [], startedAt: null, completedAt: null, durationMs: null }];
+  if (index < 0) return [...turns, { id: turnId, status: "inProgress", errors: [{ ...error, afterItemId: error.afterItemId ?? null }], items: [], startedAt: null, completedAt: null, durationMs: null }];
   const next = [...turns];
   const turn = next[index]!;
-  next[index] = { ...turn, errors: mergeTurnErrors(turn.errors, [error]) };
+  const anchored = error.afterItemId === undefined ? { ...error, afterItemId: turn.items.at(-1)?.id ?? null } : error;
+  next[index] = { ...turn, errors: mergeTurnErrors(turn.errors, [anchored]) };
   return next;
 }
 

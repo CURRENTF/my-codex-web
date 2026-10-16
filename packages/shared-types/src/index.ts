@@ -205,6 +205,8 @@ export type SessionItem =
   | { type: "genericToolCall"; id: string; title: string; status: string; details?: string };
 
 export interface SessionTurnError {
+  /** Last observed item when the error arrived; null means before the first item. Absent for legacy history. */
+  afterItemId?: string | null;
   /** Error notification time in milliseconds; absent in untimed historical snapshots. */
   occurredAt?: number;
   message: string;

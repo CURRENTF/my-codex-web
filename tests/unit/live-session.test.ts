@@ -29,6 +29,7 @@ describe("applySessionEvent", () => {
     }))!;
 
     expect((failed.thread.turns[0] as unknown as { errors: unknown[] }).errors).toEqual([{
+      afterItemId: null,
       occurredAt: expect.any(Number),
       message: "Connection reset while streaming",
       code: "responseStreamConnectionFailed",
@@ -55,7 +56,7 @@ describe("applySessionEvent", () => {
     } }))!;
 
     expect(failed.thread.turns[0]?.errors).toEqual([
-      { occurredAt: expect.any(Number), message: "Stream disconnected", code: "responseStreamDisconnected", httpStatusCode: 502, additionalDetails: null, willRetry: true },
+      { afterItemId: null, occurredAt: expect.any(Number), message: "Stream disconnected", code: "responseStreamDisconnected", httpStatusCode: 502, additionalDetails: null, willRetry: true },
       { message: "Retry attempts exhausted", code: "responseTooManyFailedAttempts", httpStatusCode: 502, additionalDetails: null, willRetry: false },
     ]);
   });
@@ -69,6 +70,18 @@ describe("applySessionEvent", () => {
     expect(replayed.thread.turns[0]?.errors?.map((item) => item.occurredAt)).toEqual([1000, 2000]);
     const refreshed = mergeSessionSnapshot(replayed, { ...session, thread: { ...session.thread, turns: [{ ...replayed.thread.turns[0]!, errors: [error] }] } });
     expect(refreshed.thread.turns[0]?.errors?.map((item) => item.occurredAt)).toEqual([1000, 2000]);
+  });
+
+  it("anchors errors at arrival and retains that position after later items, replay, and refresh", () => {
+    const started = applySessionEvent(session, event("turn.started", { turn: { id: "turn-1", status: "inProgress", items: [{ type: "reasoning", id: "before", summary: ["first step"] }], startedAt: 10, completedAt: null, durationMs: null } }))!;
+    const error = { message: "Reconnecting... 1/5", code: "responseStreamDisconnected", httpStatusCode: null, additionalDetails: null, willRetry: true };
+    const failure = { ...event("turn.error", { turnId: "turn-1", error }), emittedAt: 11000 };
+    const failed = applySessionEvent(started, failure)!;
+    const continued = applySessionEvent(failed, event("item.upserted", { turnId: "turn-1", item: { type: "agentMessage", id: "after", text: "recovered" } }))!;
+    const replayed = applySessionEvent(continued, failure)!;
+    const refreshed = mergeSessionSnapshot(replayed, { ...replayed, thread: { ...replayed.thread, turns: [{ ...replayed.thread.turns[0]!, status: "completed", errors: [error] }] } });
+    expect(refreshed.thread.turns[0]?.errors).toEqual([{ ...error, occurredAt: 11000, afterItemId: "before" }]);
+    expect(refreshed.thread.turns[0]?.items.map((item) => item.id)).toEqual(["before", "after"]);
   });
 
   it("builds a live turn from item events and preserves its items when completion omits them", () => {

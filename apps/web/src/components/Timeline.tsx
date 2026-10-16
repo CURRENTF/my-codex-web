@@ -125,14 +125,33 @@ function ActivityGroup({ items, turnStatus, onOpenDiff, cwd }: { items: Activity
   </details>;
 }
 
-function TurnErrors({ errors, status }: { errors: NonNullable<CodexTurn["errors"]>; status: CodexTurn["status"] }) {
-  return <div className="turn-errors" >{errors.map((error, index) => <section className={`turn-error-card ${error.willRetry ? "retrying" : "terminal"}`} aria-label="本轮错误记录" key={`${error.message}-${error.code ?? "unknown"}-${index}`}>
-    <header><WarningCircle size={17} weight="fill" /><strong>Codex App Server 报错</strong><span>{status === "inProgress" ? error.willRetry ? "将自动重试" : "执行失败" : status === "completed" ? "已恢复 · 历史错误" : "本轮错误记录"}</span></header>
-    <ErrorTime timestamp={error.occurredAt} />
-    <p>{error.message}</p>
-    {(error.code || error.httpStatusCode !== null) && <div className="turn-error-meta">{error.code && <code>{error.code}</code>}{error.httpStatusCode !== null && <code>HTTP {error.httpStatusCode}</code>}</div>}
-    {error.additionalDetails && <details><summary>详细信息</summary><pre>{error.additionalDetails}</pre></details>}
-  </section>)}</div>;
+function TurnErrorGroup({ errors, status, positionKnown, hasLaterItems }: { errors: NonNullable<CodexTurn["errors"]>; status: CodexTurn["status"]; positionKnown: boolean; hasLaterItems: boolean }) {
+  const latest = errors.at(-1)!;
+  const firstTime = errors.find((error) => error.occurredAt != null)?.occurredAt;
+  const lastTime = errors.findLast((error) => error.occurredAt != null)?.occurredAt;
+  const state = status === "completed" ? "已恢复"
+    : status === "interrupted" ? "已中断"
+    : status === "failed" ? "本轮失败"
+    : !latest.willRetry ? "执行失败"
+    : hasLaterItems ? "后续有进展"
+    : positionKnown ? "正在重试" : "重试记录";
+  return <details className={`turn-error-card ${latest.willRetry ? "retrying" : "terminal"}`} aria-label="本轮错误记录">
+    <summary className="turn-error-summary">
+      <WarningCircle size={15} weight="fill" aria-label="Codex App Server 报错" />
+      <strong title={latest.message}>{latest.message}</strong>
+      {errors.length > 1 && <span className="turn-error-count">{errors.length} 次</span>}
+      <span className="turn-error-state">{state}</span>
+      <span className="turn-error-time"><ErrorTime timestamp={firstTime} compact />{firstTime != null && lastTime != null && Math.floor(firstTime / 1000) !== Math.floor(lastTime / 1000) && <> – <ErrorTime timestamp={lastTime} compact /></>}</span>
+      {!positionKnown && <small className="turn-error-unlocated" title="旧记录未保存错误发生位置，暂列于本轮末尾">位置未知</small>}
+      <CaretRight className="turn-error-caret" size={13} />
+    </summary>
+    <ol className="turn-error-records">{errors.map((error, index) => <li key={index}>
+      <div className="turn-error-record-heading"><ErrorTime timestamp={error.occurredAt} /><span>{error.willRetry ? "重试记录" : "错误记录"}</span></div>
+      <p>{error.message}</p>
+      {(error.code || error.httpStatusCode != null) && <div className="turn-error-meta">{error.code && <code>{error.code}</code>}{error.httpStatusCode != null && <code>HTTP {error.httpStatusCode}</code>}</div>}
+      {error.additionalDetails && <pre>{error.additionalDetails}</pre>}
+    </li>)}</ol>
+  </details>;
 }
 
 const EMPTY_OPTIMISTIC_MESSAGES: OptimisticUserMessage[] = [];
@@ -152,11 +171,13 @@ function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDi
   const finalMessage = [...turn.items].reverse().find((item) => item.type === "agentMessage") as Extract<CodexItem, { type: "agentMessage" }> | undefined;
   const duration = formatTurnDuration(turn.durationMs);
   const completedAt = formatTurnCompletedAt(turn.completedAt);
-  const entries = groupTimelineItems(turn.items);
-  return <section className="turn-block">{entries.map((entry, index) => entry.kind === "activity"
+  const entries = groupTimelineItems(turn.items, turn.errors);
+  const lastItemIndex = entries.findLastIndex((entry) => entry.kind !== "error");
+  return <section className="turn-block">{entries.map((entry, index) => entry.kind === "error"
+    ? <TurnErrorGroup key={entry.key} errors={entry.errors} status={turn.status} positionKnown={entry.positionKnown} hasLaterItems={index < lastItemIndex} />
+    : entry.kind === "activity"
     ? <ActivityGroup key={`activity-${entry.items[0]?.id ?? index}`} items={entry.items} turnStatus={turn.status} onOpenDiff={onOpenDiff} cwd={cwd} />
     : <Item key={entry.item.id ?? `${turn.id}-${index}`} item={entry.item} turnStatus={turn.status} onOpenDiff={onOpenDiff} cwd={cwd} />)}
-    {!!turn.errors?.length && <TurnErrors errors={turn.errors} status={turn.status} />}
     {turn.status !== "inProgress" && <footer className="turn-footer"><span className="turn-outcome">{turn.status === "completed" ? <Check size={13} /> : <XCircle size={13} />}{duration ? `已处理 ${duration}` : "处理完成"}{completedAt && <span className="turn-completed-at">· 完成于 {completedAt}</span>}</span>{finalMessage && <button onClick={() => copy(finalMessage.text)}><Clipboard size={13} />复制</button>}{canFork && <><button onClick={() => onFork(turn.id, "after", turn.id)}><GitFork size={13} />从此轮之后 Fork</button><button onClick={() => onFork(previousTurnId, "before", turn.id)}><GitFork size={13} />从此问题之前 Fork</button><button onClick={() => onSideChat(turn.id)}>从此处 Side Chat</button></>}</footer>}
   </section>;
 }
