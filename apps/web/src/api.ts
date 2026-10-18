@@ -23,7 +23,7 @@ async function request<T>(path: string, init: RequestInit, allowSecurityRefresh:
   if (init.method && !["GET", "HEAD"].includes(init.method) && csrfToken) headers.set("x-csrf-token", csrfToken);
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   const isJson = response.headers.get("content-type")?.includes("application/json");
-  const body = response.status === 204 ? undefined : (isJson ? await response.json() : await response.text());
+  const body = response.status === 204 || init.method === "HEAD" ? undefined : (isJson ? await response.json() : await response.text());
   const errorCode = typeof body === "object" && body !== null && "error" in body ? (body as { error?: unknown }).error : undefined;
   const securityContextExpired = response.status === 401 || (response.status === 403 && errorCode === "Invalid CSRF token");
   if (!response.ok && allowSecurityRefresh && path !== "/api/bootstrap" && securityContextExpired) {

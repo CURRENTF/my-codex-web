@@ -390,6 +390,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .agent-inline-link { display: inline-flex; align-items: center; gap: 3px; border-radius: 5px; padding: 0 3px; color: var(--accent); text-decoration: none; }
 .agent-inline-link:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); text-decoration: underline; }
 .agent-inline-link.file { color: var(--text-soft); font-family: ui-monospace, SFMono-Regular, monospace; font-size: .88em; }
+.file-download-error { display: block; margin: 6px 0; color: var(--danger); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .agent-inline-link.unavailable { cursor: not-allowed; opacity: .58; text-decoration: none; }
 .code-comment-card { --comment-accent: var(--text-faint); display: grid; min-width: 0; overflow: hidden; grid-template-columns: 82px minmax(0, 1fr); border: 1px solid color-mix(in srgb, var(--comment-accent) 28%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--surface-strong) 84%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-strong) 85%, transparent); }
 .code-comment-card.priority-0, .code-comment-card.priority-1 { --comment-accent: var(--danger); }
