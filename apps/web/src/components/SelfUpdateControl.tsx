@@ -122,7 +122,7 @@ export function SelfUpdateControl({ settingsRow = false }: { settingsRow?: boole
   const triggerState = resultStateExpired ? "idle" : (status?.state ?? "loading");
   const controlLabel = status ? (resultStateExpired ? "检查更新" : stepLabel(status)) : "检查更新";
   return <>
-    <button className={`${settingsRow ? "app-settings-row" : "icon-button"} self-update-trigger ${triggerState}`} onClick={() => setOpen(true)} aria-label={`更新 Codex Web：${controlLabel}`} title={`更新 Codex Web：${controlLabel}`}>
+    <button className={`${settingsRow ? "app-settings-row" : "icon-button"} self-update-trigger ${triggerState}`} onClick={() => setOpen(true)} aria-label={`更新 Codex Web：${controlLabel}`} data-tooltip={`更新 Codex Web：${controlLabel}`}>
       {status ? <StatusIcon status={status} showResult={showRecentResult} /> : <SpinnerGap size={17} className="spinning" />}
       {settingsRow && <span><strong>更新</strong><small>{controlLabel}</small></span>}
     </button>

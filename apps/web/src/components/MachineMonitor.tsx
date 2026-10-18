@@ -127,12 +127,12 @@ function MachineMonitorContent() {
 
   return <div ref={container} className={`machine-monitor ${open ? "expanded" : ""}`} role="region" aria-label="机器资源" onKeyDown={(event) => { if (event.key === "Escape") { setOpen(false); container.current?.querySelector<HTMLButtonElement>(".machine-monitor-toggle")?.focus(); } }}>
     <div className="machine-monitor-toolbar">
-      <button type="button" className="machine-monitor-drag" aria-label="拖动机器资源，或使用方向键移动" title="拖动移动 · 方向键微调" onPointerDown={startDrag} onPointerMove={(event) => {
+      <button type="button" className="machine-monitor-drag" aria-label="拖动机器资源，或使用方向键移动" data-tooltip="拖动移动 · 方向键微调" onPointerDown={startDrag} onPointerMove={(event) => {
         const current = drag.current;
         if (current?.pointerId === event.pointerId) moveTo(current.left + event.clientX - current.x, current.top + event.clientY - current.y);
       }} onPointerUp={finishDrag} onPointerCancel={finishDrag} onLostPointerCapture={finishDrag} onKeyDown={moveWithKeyboard}><DotsSixVertical size={16} weight="bold" /></button>
       <button type="button" className="machine-monitor-toggle" aria-label={open ? "收起机器资源" : "机器资源，点击展开"} aria-expanded={open} aria-controls="machine-monitor-details" onClick={() => setOpen(!open)}>
-        <Cpu size={14} />{open ? <span className="machine-monitor-title">机器资源<small title={data?.hostname}>{data?.hostname ?? "服务端"}</small></span> : <span className="machine-monitor-summary">{query.isError ? "资源离线" : !data ? "采集中…" : <><span>CPU <b className={tone(data.cpu.utilizationPercent)}>{percent(data.cpu.utilizationPercent)}</b></span>{maxGpu != null && <span title="最高 GPU 利用率">GPU <b className={tone(maxGpu)}>{percent(maxGpu)}</b></span>}</>}</span>}
+        <Cpu size={14} />{open ? <span className="machine-monitor-title">机器资源<small data-tooltip={data?.hostname}>{data?.hostname ?? "服务端"}</small></span> : <span className="machine-monitor-summary">{query.isError ? "资源离线" : !data ? "采集中…" : <><span>CPU <b className={tone(data.cpu.utilizationPercent)}>{percent(data.cpu.utilizationPercent)}</b></span>{maxGpu != null && <span data-tooltip="最高 GPU 利用率">GPU <b className={tone(maxGpu)}>{percent(maxGpu)}</b></span>}</>}</span>}
         {open ? <X size={14} /> : <CaretDown size={12} />}
       </button>
     </div>
@@ -143,8 +143,8 @@ function MachineMonitorContent() {
         <table className="machine-monitor-table" aria-label="CPU 和 GPU 资源使用情况">
           <thead><tr><th scope="col">设备</th><th scope="col">利用率</th><th scope="col">内存 / 显存<small>已用 / 总量 · GiB</small></th><th scope="col">功率<small>W</small></th></tr></thead>
           <tbody>
-            <tr><th scope="row">CPU<small>{data.cpu.logicalCores} 逻辑核</small></th><td><Meter value={data.cpu.utilizationPercent}>{percent(data.cpu.utilizationPercent)}</Meter></td><td><Meter value={ratio(data.memory.usedBytes, data.memory.totalBytes)}>{gib(data.memory.usedBytes / 1024 / 1024)}<em> / {gib(data.memory.totalBytes / 1024 / 1024)}</em></Meter></td><td>{data.cpu.powerWatts == null ? <span className="machine-monitor-unavailable" title="功率数据不可用">—</span> : Math.round(data.cpu.powerWatts)}</td></tr>
-            {data.gpus.map((gpu) => <tr key={gpu.id}><th scope="row">GPU {gpu.id}<small title={gpu.name}>{gpu.name}</small></th><td><Meter value={gpu.utilizationPercent}>{percent(gpu.utilizationPercent)}</Meter></td><td><Meter value={ratio(gpu.memoryUsedMiB, gpu.memoryTotalMiB)}>{gpu.memoryUsedMiB == null || gpu.memoryTotalMiB == null ? "—" : <>{gib(gpu.memoryUsedMiB)}<em> / {gib(gpu.memoryTotalMiB)}</em></>}</Meter></td><td>{gpu.powerWatts == null ? <span className="machine-monitor-unavailable" title="功率数据不可用">—</span> : <>{Math.round(gpu.powerWatts)}{gpu.powerLimitWatts != null && <small>/ {Math.round(gpu.powerLimitWatts)}</small>}</>}</td></tr>)}
+            <tr><th scope="row">CPU<small>{data.cpu.logicalCores} 逻辑核</small></th><td><Meter value={data.cpu.utilizationPercent}>{percent(data.cpu.utilizationPercent)}</Meter></td><td><Meter value={ratio(data.memory.usedBytes, data.memory.totalBytes)}>{gib(data.memory.usedBytes / 1024 / 1024)}<em> / {gib(data.memory.totalBytes / 1024 / 1024)}</em></Meter></td><td>{data.cpu.powerWatts == null ? <span className="machine-monitor-unavailable" data-tooltip="功率数据不可用">—</span> : Math.round(data.cpu.powerWatts)}</td></tr>
+            {data.gpus.map((gpu) => <tr key={gpu.id}><th scope="row">GPU {gpu.id}<small data-tooltip={gpu.name}>{gpu.name}</small></th><td><Meter value={gpu.utilizationPercent}>{percent(gpu.utilizationPercent)}</Meter></td><td><Meter value={ratio(gpu.memoryUsedMiB, gpu.memoryTotalMiB)}>{gpu.memoryUsedMiB == null || gpu.memoryTotalMiB == null ? "—" : <>{gib(gpu.memoryUsedMiB)}<em> / {gib(gpu.memoryTotalMiB)}</em></>}</Meter></td><td>{gpu.powerWatts == null ? <span className="machine-monitor-unavailable" data-tooltip="功率数据不可用">—</span> : <>{Math.round(gpu.powerWatts)}{gpu.powerLimitWatts != null && <small>/ {Math.round(gpu.powerLimitWatts)}</small>}</>}</td></tr>)}
           </tbody>
         </table>
         {data.gpus.length === 0 && <p className="machine-monitor-notice">GPU 数据不可用 · 需要 NVIDIA 驱动及 nvidia-smi</p>}

@@ -116,7 +116,7 @@ describe("viewport layout CSS", () => {
   });
 
   it("keeps long Project and Session labels aligned on one header row", () => {
-    expect(sessionPaneSource).toContain('className="breadcrumb-project" title={projectLabel}');
+    expect(sessionPaneSource).toContain('className="breadcrumb-project" data-tooltip={projectLabel}');
     expect(sessionPaneSource).toContain('className="breadcrumb-separator" aria-hidden="true"');
     expect(rule(".breadcrumb")).toContain("flex: 0 1 auto");
     expect(rule(".breadcrumb")).toContain("overflow: hidden");

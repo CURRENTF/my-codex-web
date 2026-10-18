@@ -13,7 +13,7 @@ export function DownloadLink({ href, className, title, "aria-label": ariaLabel, 
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const errorId = useId();
-  return <><a href={href} download className={className} title={checking ? "正在检查下载…" : title} aria-label={ariaLabel} aria-busy={checking || undefined} aria-disabled={checking || undefined} aria-describedby={error ? errorId : undefined} onClick={(event) => {
+  return <><a href={href} download className={className} data-tooltip={checking ? "正在检查下载…" : title} aria-label={ariaLabel} aria-busy={checking || undefined} aria-disabled={checking || undefined} aria-describedby={error ? errorId : undefined} onClick={(event) => {
     event.preventDefault();
     if (inFlight.current) return;
     inFlight.current = true; setChecking(true); setError(""); onError?.("");

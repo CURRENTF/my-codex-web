@@ -109,8 +109,8 @@ export function ProjectDirectoryDialog({
         </Dialog.Description>
 
         <div className="directory-navigation">
-          <button type="button" aria-label="前往主目录" title="主目录" disabled={!homePath} onClick={() => navigate(homePath)}><House size={15} /></button>
-          <button type="button" aria-label="前往上级目录" title="上级目录" disabled={!parentPath} onClick={() => navigate(parentPath ?? "")}><ArrowUp size={15} /></button>
+          <button type="button" aria-label="前往主目录" data-tooltip="主目录" disabled={!homePath} onClick={() => navigate(homePath)}><House size={15} /></button>
+          <button type="button" aria-label="前往上级目录" data-tooltip="上级目录" disabled={!parentPath} onClick={() => navigate(parentPath ?? "")}><ArrowUp size={15} /></button>
           <nav className="directory-breadcrumbs" aria-label="当前路径">
             {breadcrumbs.map((item, index) => <span key={item.path}>
               {index > 0 && <CaretRight size={10} />}

@@ -16,7 +16,7 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
       a({ href, children }) {
         const localPathUrl = href ? localPathUrls[href] : undefined;
         if (localPathUrl) {
-          return <a className="agent-inline-link external" href={localPathUrl} target="_blank" rel="noreferrer" title={href}><ArrowSquareOut size={14} />{children}</a>;
+          return <a className="agent-inline-link external" href={localPathUrl} target="_blank" rel="noreferrer" data-tooltip={href}><ArrowSquareOut size={14} />{children}</a>;
         }
         if (href?.startsWith("/")) {
           const isDirectory = localPathKinds[href] === "directory";
@@ -26,7 +26,7 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
             return <DownloadLink className="agent-inline-link file" href={fileDownloadUrl(cwd, filePath)} title={`下载 ${filePath}`}><DownloadSimple size={14} />{children}</DownloadLink>;
           }
           const PathIcon = isDirectory ? FolderOpen : FileCode;
-          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(href) : codeViewUrl(cwd, href)} target="_blank" rel="noreferrer" title={href}><PathIcon size={14} />{children}</a>;
+          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(href) : codeViewUrl(cwd, href)} target="_blank" rel="noreferrer" data-tooltip={href}><PathIcon size={14} />{children}</a>;
         }
         if (href && /^https?:\/\//.test(href)) {
           return <a className="agent-inline-link external" href={href} target="_blank" rel="noreferrer"><ArrowSquareOut size={14} />{children}</a>;
@@ -68,7 +68,7 @@ function CodeCommentCard({ comment, cwd }: { comment: CodeCommentBlock; cwd: str
       </header>
       <p>{comment.body}</p>
       <footer>
-        <a className="code-comment-location" href={target} target="_blank" rel="noreferrer" title={comment.file}>
+        <a className="code-comment-location" href={target} target="_blank" rel="noreferrer" data-tooltip={comment.file}>
           <FileCode size={14} />
           <code>{comment.file}{line && `:${line}`}</code>
           <span>打开文件 <ArrowSquareOut size={13} /></span>

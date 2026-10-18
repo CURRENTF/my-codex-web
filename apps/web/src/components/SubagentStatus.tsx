@@ -16,13 +16,13 @@ export function SubagentAgentRow({ agent, nestingDepth }: {
   const settings = effectiveSubagentSettings(agent);
   const secondary = [agent.agentRole !== subagentDisplayName(agent) ? agent.agentRole : null, agent.agentPath].filter(Boolean).join(" / ");
   const statusLabel = subagentStateLabel(agent, state);
-  return <div className="subagent-row" role="listitem" style={{ paddingLeft: `${12 + Math.min(nestingDepth, 4) * 18}px` }} data-state={state} title={agent.statusMessage ?? agent.prompt ?? undefined}>
+  return <div className="subagent-row" role="listitem" style={{ paddingLeft: `${12 + Math.min(nestingDepth, 4) * 18}px` }} data-state={state} data-tooltip={agent.statusMessage ?? agent.prompt ?? undefined}>
     <StatusIcon state={state} size={16} label={statusLabel} />
-    <div className="subagent-identity"><strong>{subagentDisplayName(agent)}</strong>{secondary && <small title={secondary}>{secondary}</small>}</div>
+    <div className="subagent-identity"><strong>{subagentDisplayName(agent)}</strong>{secondary && <small data-tooltip={secondary}>{secondary}</small>}</div>
     <div className="subagent-meta">
       <span className="subagent-context"><GitFork size={12} />{subagentContextLabel(agent)}</span>
-      <code title={`模型：${settings.model}${settings.requestedModel ? "（请求值，实际配置待确认）" : ""}`}><span>{settings.model}</span>{settings.requestedModel && <em>请求值</em>}</code>
-      <span className="subagent-effort" title={`Reasoning effort：${settings.reasoning}${settings.requestedReasoning ? "（请求值，实际配置待确认）" : ""}`}><Brain size={12} />{settings.reasoning}{settings.requestedReasoning && <em>请求值</em>}</span>
+      <code data-tooltip={`模型：${settings.model}${settings.requestedModel ? "（请求值，实际配置待确认）" : ""}`}><span>{settings.model}</span>{settings.requestedModel && <em>请求值</em>}</code>
+      <span className="subagent-effort" data-tooltip={`Reasoning effort：${settings.reasoning}${settings.requestedReasoning ? "（请求值，实际配置待确认）" : ""}`}><Brain size={12} />{settings.reasoning}{settings.requestedReasoning && <em>请求值</em>}</span>
     </div>
     <span className="subagent-state">{statusLabel}</span>
   </div>;
@@ -42,7 +42,7 @@ export function SubagentStatusView({ parentThreadId, allAgents }: {
     className={`header-button subagent-trigger ${activeCount ? "has-active" : ""} ${failedCount ? "has-failed" : ""}`}
     type="button"
     aria-label={`Subagents，${summary}`}
-    title={`Subagents，${summary}`}
+    data-tooltip={`Subagents，${summary}`}
   >
     <UsersThree size={16} />
     {entries.length > 0 && <strong>{activeCount || entries.length}</strong>}

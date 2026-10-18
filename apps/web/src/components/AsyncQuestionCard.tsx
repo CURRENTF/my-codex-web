@@ -35,6 +35,6 @@ export function AsyncQuestionCard({ threadId, itemId, questions, onReplyAdded }:
         </div>
       </fieldset>;
     })}</div>
-    <button type="submit" className="async-question-add" disabled={!complete || !threadId} title="填入下方输入框，确认后发送"><ArrowDown size={14} />加入回复</button>
+    <button type="submit" className="async-question-add" disabled={!complete || !threadId} data-tooltip="填入下方输入框，确认后发送"><ArrowDown size={14} />加入回复</button>
   </form>;
 }

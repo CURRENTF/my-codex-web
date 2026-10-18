@@ -22,10 +22,10 @@ function AttachmentList({ attachments }: { attachments: DisplayAttachment[] }) {
   const images = attachments.filter((attachment) => attachment.kind === "image" && attachment.url);
   const files = attachments.filter((attachment) => attachment.kind === "file");
   return <>
-    {images.length > 0 && <div className="message-image-grid">{images.map((attachment) => <a href={attachment.url} target="_blank" rel="noreferrer" key={attachment.key} title={`打开 ${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" referrerPolicy="no-referrer" /></a>)}</div>}
+    {images.length > 0 && <div className="message-image-grid">{images.map((attachment) => <a href={attachment.url} target="_blank" rel="noreferrer" key={attachment.key} data-tooltip={`打开 ${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" referrerPolicy="no-referrer" /></a>)}</div>}
     {files.length > 0 && <div className="message-file-list">{files.map((attachment) => attachment.url
       ? <a href={attachment.url} download key={attachment.key}><FileIcon size={17} /><span><strong>{attachment.name}</strong>{attachment.detail && <small>{attachment.detail}</small>}</span><DownloadSimple size={15} /></a>
-      : <span className="message-file" key={attachment.key} title={attachment.detail}><FileIcon size={17} /><strong>{attachment.name}</strong></span>)}</div>}
+      : <span className="message-file" key={attachment.key} data-tooltip={attachment.detail}><FileIcon size={17} /><strong>{attachment.name}</strong></span>)}</div>}
   </>;
 }
 
@@ -37,7 +37,7 @@ function UserMessageCopy({ text }: { text: string }) {
     return () => window.clearTimeout(timer);
   }, [state]);
   const label = state === "copied" ? "已复制" : state === "error" ? "复制失败，点击重试" : "复制用户消息";
-  return <button type="button" className="user-message-copy" data-state={state} aria-label="复制用户消息" title={label} aria-busy={state === "copying"} onClick={() => {
+  return <button type="button" className="user-message-copy" data-state={state} aria-label="复制用户消息" data-tooltip={label} aria-busy={state === "copying"} onClick={() => {
     if (state === "copying") return;
     setState("copying");
     void (async () => {
@@ -96,7 +96,7 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
   const path = item.type === "imageView" ? item.path : item.savedPath;
   const title = item.type === "imageView" ? "查看图片" : "生成图片";
   if (!item.displayUrl) return <ToolCard title={path ? `${title} / ${path}` : title} status={item.type === "imageView" ? "completed" : item.status} details={item.type === "imageGeneration" ? item.result : undefined} icon={<ImageSquare size={16} />} />;
-  return <figure className="tool-image-card"><a href={item.displayUrl} target="_blank" rel="noreferrer"><img src={item.displayUrl} alt={path?.split("/").at(-1) ?? title} loading="lazy" /></a><figcaption><ImageSquare size={15} /><span><strong>{title}</strong>{path && <code title={path}>{path}</code>}</span><a href={item.displayUrl} target="_blank" rel="noreferrer" aria-label="打开原图"><ArrowSquareOut size={15} /></a></figcaption></figure>;
+  return <figure className="tool-image-card"><a href={item.displayUrl} target="_blank" rel="noreferrer"><img src={item.displayUrl} alt={path?.split("/").at(-1) ?? title} loading="lazy" /></a><figcaption><ImageSquare size={15} /><span><strong>{title}</strong>{path && <code data-tooltip={path}>{path}</code>}</span><a href={item.displayUrl} target="_blank" rel="noreferrer" aria-label="打开原图"><ArrowSquareOut size={15} /></a></figcaption></figure>;
 }
 
 function Item({ item, turnStatus, onOpenDiff, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string; grouped?: boolean }) {
@@ -138,11 +138,11 @@ function TurnErrorGroup({ errors, status, positionKnown, hasLaterItems }: { erro
   return <details className={`turn-error-card ${latest.willRetry ? "retrying" : "terminal"}`} aria-label="本轮错误记录">
     <summary className="turn-error-summary">
       <WarningCircle size={15} weight="fill" aria-label="Codex App Server 报错" />
-      <strong title={latest.message}>{latest.message}</strong>
+      <strong data-tooltip={latest.message}>{latest.message}</strong>
       {errors.length > 1 && <span className="turn-error-count">{errors.length} 次</span>}
       <span className="turn-error-state">{state}</span>
       <span className="turn-error-time"><ErrorTime timestamp={firstTime} compact />{firstTime != null && lastTime != null && Math.floor(firstTime / 1000) !== Math.floor(lastTime / 1000) && <> – <ErrorTime timestamp={lastTime} compact /></>}</span>
-      {!positionKnown && <small className="turn-error-unlocated" title="旧记录未保存错误发生位置，暂列于本轮末尾">位置未知</small>}
+      {!positionKnown && <small className="turn-error-unlocated" data-tooltip="旧记录未保存错误发生位置，暂列于本轮末尾">位置未知</small>}
       <CaretRight className="turn-error-caret" size={13} />
     </summary>
     <ol className="turn-error-records">{errors.map((error, index) => <li key={index}>

@@ -57,7 +57,7 @@ export function ContextUsageIndicator({ usage }: { usage?: ContextUsage }) {
     "aria-valuenow": view.progressPercent,
   };
   const ringStyle = view.progressPercent === null ? undefined : { "--context-progress": `${view.progressPercent}%` } as CSSProperties;
-  return <div className={`context-usage ${view.tone}`} title={view.accessibleLabel} aria-label={view.accessibleLabel} {...progressProps}>
+  return <div className={`context-usage ${view.tone}`} data-tooltip={view.accessibleLabel} aria-label={view.accessibleLabel} {...progressProps}>
     <span className="context-usage-ring" style={ringStyle} aria-hidden="true"><strong>{ringLabel}</strong></span>
   </div>;
 }

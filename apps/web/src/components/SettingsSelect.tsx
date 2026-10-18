@@ -39,7 +39,7 @@ export function SettingsSelect({
         type="button"
         className={`settings-select-trigger ${variant} ${className}`.trim()}
         aria-label={ariaLabel}
-        title={selected?.description}
+        data-tooltip={selected?.description}
         disabled={disabled}
       >
         <span className="settings-select-value">{(selected?.label ?? value) || placeholder}</span>

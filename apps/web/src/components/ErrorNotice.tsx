@@ -4,7 +4,7 @@ import { WarningCircle, X } from "@phosphor-icons/react";
 export function ErrorTime({ timestamp, compact = false }: { timestamp?: number | null; compact?: boolean }) {
   if (timestamp == null) return <small>发生时间未知</small>;
   const date = new Date(timestamp);
-  return <time dateTime={date.toISOString()} title={date.toLocaleString("zh-CN", { hour12: false })}>{compact ? date.toLocaleTimeString("zh-CN", { hour12: false }) : date.toLocaleString("zh-CN", { hour12: false })}</time>;
+  return <time dateTime={date.toISOString()} data-tooltip={date.toLocaleString("zh-CN", { hour12: false })}>{compact ? date.toLocaleTimeString("zh-CN", { hour12: false }) : date.toLocaleString("zh-CN", { hour12: false })}</time>;
 }
 
 /** Key by error occurrence so dismissing one failure never hides the next. */

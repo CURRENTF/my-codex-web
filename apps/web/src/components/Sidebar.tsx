@@ -86,7 +86,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
             <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
-          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} title={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
+          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} data-tooltip={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
             <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
             <DropdownMenu.Item className="menu-item" disabled={busy || runtimeState === "disconnected"} onSelect={() => onRename(session)}><PencilSimple size={14} />重命名</DropdownMenu.Item>
             <DropdownMenu.Separator className="menu-separator" />
@@ -167,7 +167,7 @@ export function Sidebar(props: SidebarProps) {
   return <aside className="sidebar">
     <div className="sidebar-top">
       <button className="new-session-button" aria-label="新建 Session" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建</button>
-      <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label="设置" title="设置"><Gear size={19} /></button></Popover.Trigger>
+      <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label="设置" data-tooltip="设置"><Gear size={19} /></button></Popover.Trigger>
         <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" collisionPadding={12} aria-label="设置">
           <h2 className="app-settings-title">设置</h2>
           <button className="app-settings-row" role="switch" aria-checked={liquidGlass} aria-label="液态玻璃" onClick={() => setLiquidGlass(!liquidGlass)}>
@@ -182,7 +182,7 @@ export function Sidebar(props: SidebarProps) {
           <SessionDefaultsSettings models={props.models ?? []} />
           <MachineMonitorSetting />
           <SessionCostSetting />
-          <button className="app-settings-row" role="switch" aria-checked={props.notificationState === "enabled"} aria-label="完成通知" title={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
+          <button className="app-settings-row" role="switch" aria-checked={props.notificationState === "enabled"} aria-label="完成通知" data-tooltip={notificationLabel} disabled={props.notificationState === "blocked" || props.notificationState === "unsupported"} onClick={props.onToggleNotifications}>
             {props.notificationState === "blocked" || props.notificationState === "unsupported" ? <BellSlash size={18} /> : <Bell size={18} />}
             <span><strong>完成通知</strong><small>{props.notificationState === "blocked" || props.notificationState === "unsupported" ? notificationLabel : "Session 完成时发送系统通知"}</small></span>
             <span className={`settings-toggle ${props.notificationState === "enabled" ? "enabled" : ""}`} aria-hidden="true"><span /></span>
@@ -225,7 +225,7 @@ export function Sidebar(props: SidebarProps) {
               <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="project-more" aria-label={`${project.name} 更多操作`}>•••</button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end">
                 <DropdownMenu.Item className="menu-item" disabled={!project.available} onSelect={() => props.onNew(project.id)}>新建 Session</DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRescan(project.id)}>重新扫描</DropdownMenu.Item>
-                <DropdownMenu.Item asChild disabled={!project.available}><a className="menu-item" href={codeViewUrl(project.canonicalPath)} target="_blank" rel="noreferrer" title="在 Code View 中打开">code</a></DropdownMenu.Item>
+                <DropdownMenu.Item asChild disabled={!project.available}><a className="menu-item" href={codeViewUrl(project.canonicalPath)} target="_blank" rel="noreferrer" data-tooltip="在 Code View 中打开">code</a></DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRenameProject(project)}>修改显示名称</DropdownMenu.Item>
                 <DropdownMenu.Separator className="menu-separator" />
                 <DropdownMenu.Item className="menu-item danger-item" onSelect={() => props.onRemoveProject(project)}>从侧边栏移除</DropdownMenu.Item>
