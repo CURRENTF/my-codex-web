@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>消息导航 · 高度预览</title>
+<style>
+  body.preview {overflow:auto} .preview #root {height:auto;overflow:visible}
+  .preview-toolbar {position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;min-height:72px;padding:12px 24px;background:var(--surface-strong);border-bottom:1px solid var(--line)}
+  .preview-toolbar strong {font-size:14px} .preview-toolbar select {padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+  .preview-toolbar span {color:var(--text-soft);font-size:13px} .preview-toolbar output {margin-left:auto;font-variant-numeric:tabular-nums;color:var(--text-soft)}
+  .preview-session {height:calc(100dvh - 72px)} .preview-content {max-width:780px;margin:0 auto;padding:28px 24px 0}
+  .preview-content section {min-height:400px;padding-bottom:48px} .preview-content p {line-height:1.8;color:var(--text-soft);margin:16px 0}
+</style></head><body class="preview"><div id="root"></div>
+<script type="module">
+import React, {useState, useEffect} from "react";
+import {createRoot} from "react-dom/client";
+import {UserMessageRail} from "/src/components/UserMessageRail.tsx";
+import "/src/styles.css";
+const h=React.createElement;
+const questions=["关闭 CUDA Graph 时，GLM-4.7-Flash 的主要性能瓶颈在哪里？","把 batch 1 和 batch 16 的结果对比一下。","Nsight trace 可以直接下载吗？","shared-expert 融合为什么受 Graph 开关影响？","这项优化验证过 logits 一致性吗？","消息导航能根据屏幕高度多显示一些吗？"];
+const answers=["逐层 Python / Triton kernel 发射间隙占据了较多时间。可以结合时间线查看 CPU 发射和 GPU 执行之间的等待。","相同 H100、BF16、TP1 配置下，需要固定输入长度、输出长度和测量方式，再比较 TPOT。","较大的二进制文件适合直接下载到本地，用 Nsight Systems 打开分析。","查看融合条件与执行模式之间的关联，确认数值一致后再评估性能。"];
+const targets=Array.from({length:150},(_,i)=>({key:`preview-${i}`,turnIndex:i,preview:`${questions[i%questions.length]}（第 ${i+1} 条）`,responsePreview:answers[i%answers.length],optimistic:false}));
+function Preview(){
+  const [height,setHeight]=useState("auto"); const [count,setCount]=useState(0);
+  useEffect(()=>{const element=document.querySelector(".user-message-rail-track");const update=()=>setCount(element?.children.length??0);const observer=new MutationObserver(update);if(element)observer.observe(element,{childList:true});update();return()=>observer.disconnect();},[]);
+  return h(React.Fragment,null,
+    h("header",{className:"preview-toolbar"},h("strong",null,"消息导航预览"),
+      h("select",{"aria-label":"会话区域高度",value:height,onChange:e=>setHeight(e.target.value)},[
+        ["auto","跟随当前窗口"],["600","600px · 37 条"],["900","900px · 60 条"],["1200","1200px · 60 条"]
+      ].map(([value,label])=>h("option",{key:value,value},label))),
+      h("span",null,"悬停左侧刻度预览，点击跳转；可切换高度对比"),h("output",null,`当前 ${count} 条 / 共 150 条`)),
+    h("main",{className:"session-pane preview-session",style:{display:"block",height:height==="auto"?"calc(100dvh - 72px)":`${height}px`}},
+      h("div",{className:"timeline-shell"},
+        h("div",{className:"timeline timeline-static"},h("div",{className:"preview-content"},targets.map((t,i)=>h("section",{key:t.key,"data-user-message-id":t.key},h("div",{className:"user-message"},h("div",null,t.preview)),h("p",null,t.responsePreview),h("p",null,"这是用于预览导航密度的示例对话。窗口越高，可见刻度越多；每条刻度保持 12px 的间距。"))))),
+        h(UserMessageRail,{targets,virtual:false,onNavigate:t=>document.querySelector(`[data-user-message-id="${t.key}"]`)?.scrollIntoView({block:"start"})}))));
+}
+createRoot(document.getElementById("root")).render(h(Preview));
+</script></body></html>
