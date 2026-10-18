@@ -3,10 +3,13 @@ import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
 import { useAppearancePreferences } from "../appearance-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alarm, Archive, ArrowClockwise, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
+import { Alarm, Archive, ArrowClockwise, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, PencilSimple, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ModelOption, Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
+import { api, newClientRequestId, type SessionPayload } from "../api";
 import { codeViewUrl } from "../code-view-url";
+import { optimisticallyRenameSession, patchCachedSessionSummary } from "../session-summary-cache";
 import { useAppStore } from "../store";
 import { StatusIcon, statusText } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
@@ -14,6 +17,7 @@ import { MachineMonitorSetting } from "./MachineMonitor";
 import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
 import { ServiceRestartDialog } from "./ServiceRestartDialog";
+import { TextInputDialog } from "./ActionDialog";
 
 const PROJECT_SESSION_PAGE_SIZE = 12;
 
@@ -38,9 +42,9 @@ export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }
   </span>;
 }
 
-function SessionRow({ session, active, projectName, now, revealed, busy, onReveal, onOpen, onPin, onArchive }: {
+function SessionRow({ session, active, projectName, now, revealed, busy, onReveal, onOpen, onPin, onRename, onArchive }: {
   session: SessionSummary; active: boolean; projectName: string; now: number; revealed: boolean; busy: boolean;
-  onReveal(threadId: string | null): void; onOpen(threadId: string): void; onPin(session: SessionSummary): void; onArchive(session: SessionSummary): void;
+  onReveal(threadId: string | null): void; onOpen(threadId: string): void; onPin(session: SessionSummary): void; onRename(session: SessionSummary): void; onArchive(session: SessionSummary): void;
 }) {
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
   const connectionState = useAppStore((state) => state.connectionState);
@@ -84,6 +88,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
           </button>
           <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} title={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
             <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
+            <DropdownMenu.Item className="menu-item" disabled={busy || runtimeState === "disconnected"} onSelect={() => onRename(session)}><PencilSimple size={14} />重命名</DropdownMenu.Item>
             <DropdownMenu.Separator className="menu-separator" />
             <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>
           </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
@@ -109,6 +114,19 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const queryClient = useQueryClient();
+  const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const rename = useMutation({
+    mutationFn: ({ threadId, name }: { threadId: string; name: string }) => api<{ name: string }>(`/api/sessions/${threadId}/name`, { method: "PATCH", body: JSON.stringify({ name, clientRequestId: newClientRequestId() }) }),
+    onMutate: async ({ threadId, name }) => ({ rollback: await optimisticallyRenameSession(queryClient, threadId, name) }),
+    onError: (_error, _variables, context) => { context?.rollback(); },
+    onSuccess: (result, { threadId }) => {
+      queryClient.setQueryData<SessionPayload>(["session", threadId], (current) => current ? { ...current, thread: { ...current.thread, name: result.name } } : current);
+      patchCachedSessionSummary(queryClient, threadId, { title: result.name, updatedAt: Date.now() });
+      setRenameTarget(null);
+    },
+  });
   const [restartOpen, setRestartOpen] = useState(false);
   const liquidGlass = useAppearancePreferences((state) => state.liquidGlass);
   const setLiquidGlass = useAppearancePreferences((state) => state.setLiquidGlass);
@@ -141,7 +159,7 @@ export function Sidebar(props: SidebarProps) {
       setBusyThreadId(null);
     }
   };
-  const sessionRow = (session: SessionSummary, projectName: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} projectName={projectName} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onArchive={(target) => void runSessionAction(target, "archive")} />;
+  const sessionRow = (session: SessionSummary, projectName: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} projectName={projectName} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId || (rename.isPending && rename.variables?.threadId === session.threadId)} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onRename={(target) => { rename.reset(); setRevealedThreadId(null); setRenameName(target.title); setRenameTarget(target); }} onArchive={(target) => void runSessionAction(target, "archive")} />;
   const projectNames = useMemo(() => Object.fromEntries(props.projects.map((p) => [p.id, p.name])), [props.projects]);
   const notificationLabel = props.notificationState === "enabled" ? "关闭 Session 完成通知"
     : props.notificationState === "blocked" ? "浏览器已禁止此站点发送通知，请在网站设置中允许"
@@ -222,5 +240,6 @@ export function Sidebar(props: SidebarProps) {
       {!props.sessions.length && <div className="sidebar-empty"><Folder size={24} /><p>{props.projects.length ? "没有找到 Session" : "添加一个本地文件夹开始"}</p></div>}
     </div>
     <ServiceRestartDialog open={restartOpen} onOpenChange={setRestartOpen} />
+    <TextInputDialog open={renameTarget !== null} title="重命名 Session" description="设置一个便于在侧边栏识别的名称。" icon={<PencilSimple size={18} weight="fill" />} label="Session 名称" value={renameName} maxLength={200} pending={rename.isPending} error={rename.isError ? rename.error.message : null} submitLabel="保存名称" onValueChange={setRenameName} onOpenChange={(open) => { if (!open) { setRenameTarget(null); rename.reset(); } }} onSubmit={() => { if (renameTarget) rename.mutate({ threadId: renameTarget.threadId, name: renameName.trim() }); }} />
   </aside>;
 }
