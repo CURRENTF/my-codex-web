@@ -268,7 +268,9 @@ export interface MachineMetrics {
   hostname: string;
   cpu: { utilizationPercent: number | null; logicalCores: number; powerWatts: number | null };
   memory: { usedBytes: number; totalBytes: number };
-  gpuStatus: "available" | "unavailable";
+  gpuStatus: "available" | "stale" | "unavailable";
+  gpuSampledAt?: string;
+  gpuUnavailableReason?: "not-found" | "query-failed" | "no-devices";
   gpus: Array<{ id: string; name: string; utilizationPercent: number | null; memoryUsedMiB: number | null; memoryTotalMiB: number | null; powerWatts: number | null; powerLimitWatts: number | null }>;
 }
 

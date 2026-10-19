@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import type { MachineMetrics } from "@codex-web/shared-types";
 
 const exec = promisify(execFile);
+const GPU_STALE_LIMIT_MS = 30_000;
+type GpuSample = Pick<MachineMetrics, "gpus" | "gpuStatus" | "gpuSampledAt" | "gpuUnavailableReason">;
 type CpuTimes = ReturnType<typeof cpus>;
 export function cpuUtilization(before: CpuTimes, after: CpuTimes): number | null {
   if (!before.length || before.length !== after.length) return null;
@@ -37,6 +39,7 @@ export class MachineMetricsSampler {
   private cached: MachineMetrics | undefined;
   private cachedAt = 0;
   private pending: Promise<MachineMetrics> | undefined;
+  private lastGpu: { gpus: MachineMetrics["gpus"]; sampledAt: string; at: number } | undefined;
   read(): Promise<MachineMetrics> {
     if (this.cached && performance.now() - this.cachedAt < 2000) return Promise.resolve(this.cached);
     if (this.pending) return this.pending;
@@ -45,13 +48,35 @@ export class MachineMetricsSampler {
     }).finally(() => { this.pending = undefined; });
     return this.pending;
   }
+  private async sampleGpu(): Promise<GpuSample> {
+    let reason: MachineMetrics["gpuUnavailableReason"] = "query-failed";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { stdout } = await exec("nvidia-smi", ["--query-gpu=index,name,utilization.gpu,memory.used,memory.total,power.draw,power.limit", "--format=csv,noheader,nounits"], { timeout: 2500, maxBuffer: 128 * 1024, windowsHide: true });
+        const gpus = parseNvidiaMetrics(stdout);
+        if (gpus.length) {
+          const sampledAt = new Date().toISOString();
+          this.lastGpu = { gpus, sampledAt, at: performance.now() };
+          return { gpus, gpuStatus: "available", gpuSampledAt: sampledAt };
+        }
+        reason = stdout.trim() ? "query-failed" : "no-devices";
+      } catch (error) {
+        reason = (error as NodeJS.ErrnoException).code === "ENOENT" ? "not-found" : "query-failed";
+        if (reason === "not-found") break;
+      }
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    // Keep short-lived failures from removing every GPU row, without presenting old values as live.
+    if (this.lastGpu && performance.now() - this.lastGpu.at < GPU_STALE_LIMIT_MS) {
+      return { gpus: this.lastGpu.gpus, gpuStatus: "stale", gpuSampledAt: this.lastGpu.sampledAt, gpuUnavailableReason: reason };
+    }
+    return { gpus: [], gpuStatus: "unavailable", gpuUnavailableReason: reason };
+  }
   private async sample(): Promise<MachineMetrics> {
     // A short measurement window stays meaningful even after monitoring was disabled.
     const previous = cpus();
     const [gpu, current] = await Promise.all([
-      exec("nvidia-smi", ["--query-gpu=index,name,utilization.gpu,memory.used,memory.total,power.draw,power.limit", "--format=csv,noheader,nounits"], { timeout: 1500, maxBuffer: 128 * 1024, windowsHide: true })
-        .then(({ stdout }) => ({ gpus: parseNvidiaMetrics(stdout), gpuStatus: "available" as const }))
-        .catch(() => ({ gpus: [], gpuStatus: "unavailable" as const })),
+      this.sampleGpu(),
       new Promise<CpuTimes>((resolve) => setTimeout(() => resolve(cpus()), 200)),
     ]);
     return { sampledAt: new Date().toISOString(), hostname: hostname(), cpu: { utilizationPercent: cpuUtilization(previous, current), logicalCores: current.length, powerWatts: null }, memory: { usedBytes: totalmem() - freemem(), totalBytes: totalmem() }, ...gpu };

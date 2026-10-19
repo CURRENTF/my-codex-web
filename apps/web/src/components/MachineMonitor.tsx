@@ -25,6 +25,12 @@ function Meter({ value, children }: { value: number | null; children: React.Reac
   return <div className={`machine-monitor-meter ${tone(value)}`}><span>{children}</span><span className="machine-monitor-track" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, value ?? 0))}%` }} /></span></div>;
 }
 
+export function MachineGpuNotice({ data }: { data: MachineMetrics }) {
+  if (data.gpuStatus === "stale") return <p className="machine-monitor-notice" role="status">GPU 采集暂时失败，正在重试 · 显示上次成功采样{data.gpuSampledAt ? `（${new Date(data.gpuSampledAt).toLocaleTimeString([], { hour12: false })}）` : ""}</p>;
+  if (data.gpus.length) return null;
+  return <p className="machine-monitor-notice" role="status">{data.gpuUnavailableReason === "not-found" ? "未找到 nvidia-smi · 请检查 NVIDIA 驱动及命令安装" : data.gpuUnavailableReason === "no-devices" ? "未检测到 NVIDIA GPU · 将自动刷新" : "GPU 采集暂时失败，正在重试"}</p>;
+}
+
 export function MachineMonitorSetting() {
   const { enabled, setEnabled } = useMachineMonitorPreferences();
   return <button className="app-settings-row" role="switch" aria-checked={enabled} aria-label="显示机器资源" onClick={() => setEnabled(!enabled)}>
@@ -132,7 +138,7 @@ function MachineMonitorContent() {
         if (current?.pointerId === event.pointerId) moveTo(current.left + event.clientX - current.x, current.top + event.clientY - current.y);
       }} onPointerUp={finishDrag} onPointerCancel={finishDrag} onLostPointerCapture={finishDrag} onKeyDown={moveWithKeyboard}><DotsSixVertical size={16} weight="bold" /></button>
       <button type="button" className="machine-monitor-toggle" aria-label={open ? "收起机器资源" : "机器资源，点击展开"} aria-expanded={open} aria-controls="machine-monitor-details" onClick={() => setOpen(!open)}>
-        <Cpu size={14} />{open ? <span className="machine-monitor-title">机器资源<small data-tooltip={data?.hostname}>{data?.hostname ?? "服务端"}</small></span> : <span className="machine-monitor-summary">{query.isError ? "资源离线" : !data ? "采集中…" : <><span>CPU <b className={tone(data.cpu.utilizationPercent)}>{percent(data.cpu.utilizationPercent)}</b></span>{maxGpu != null && <span data-tooltip="最高 GPU 利用率">GPU <b className={tone(maxGpu)}>{percent(maxGpu)}</b></span>}</>}</span>}
+        <Cpu size={14} />{open ? <span className="machine-monitor-title">机器资源<small data-tooltip={data?.hostname}>{data?.hostname ?? "服务端"}</small></span> : <span className="machine-monitor-summary">{query.isError ? "资源离线" : !data ? "采集中…" : <><span>CPU <b className={tone(data.cpu.utilizationPercent)}>{percent(data.cpu.utilizationPercent)}</b></span>{maxGpu != null && <span data-tooltip={data.gpuStatus === "stale" ? "GPU 采集暂时失败，显示上次成功采样" : "最高 GPU 利用率"}>GPU{data.gpuStatus === "stale" ? "（上次）" : ""} <b className={tone(maxGpu)}>{percent(maxGpu)}</b></span>}</>}</span>}
         {open ? <X size={14} /> : <CaretDown size={12} />}
       </button>
     </div>
@@ -140,6 +146,7 @@ function MachineMonitorContent() {
       {query.isError && <p className="machine-monitor-notice" role="status">连接中断，正在重试{data ? " · 以下为上次采样" : ""}</p>}
       {!data && !query.isError && <p className="machine-monitor-notice" role="status">正在采集资源情况…</p>}
       {data && <>
+        <MachineGpuNotice data={data} />
         <table className="machine-monitor-table" aria-label="CPU 和 GPU 资源使用情况">
           <thead><tr><th scope="col">设备</th><th scope="col">利用率</th><th scope="col">内存 / 显存<small>已用 / 总量 · GiB</small></th><th scope="col">功率<small>W</small></th></tr></thead>
           <tbody>
@@ -147,7 +154,6 @@ function MachineMonitorContent() {
             {data.gpus.map((gpu) => <tr key={gpu.id}><th scope="row">GPU {gpu.id}<small data-tooltip={gpu.name}>{gpu.name}</small></th><td><Meter value={gpu.utilizationPercent}>{percent(gpu.utilizationPercent)}</Meter></td><td><Meter value={ratio(gpu.memoryUsedMiB, gpu.memoryTotalMiB)}>{gpu.memoryUsedMiB == null || gpu.memoryTotalMiB == null ? "—" : <>{gib(gpu.memoryUsedMiB)}<em> / {gib(gpu.memoryTotalMiB)}</em></>}</Meter></td><td>{gpu.powerWatts == null ? <span className="machine-monitor-unavailable" data-tooltip="功率数据不可用">—</span> : <>{Math.round(gpu.powerWatts)}{gpu.powerLimitWatts != null && <small>/ {Math.round(gpu.powerLimitWatts)}</small>}</>}</td></tr>)}
           </tbody>
         </table>
-        {data.gpus.length === 0 && <p className="machine-monitor-notice">GPU 数据不可用 · 需要 NVIDIA 驱动及 nvidia-smi</p>}
         <footer><span className="machine-monitor-legend"><i className="low" />低 <i className="medium" />中 <i className="high" />高占用</span><span>{query.isError ? "上次 " : ""}{new Date(data.sampledAt).toLocaleTimeString([], { hour12: false })} · 3s</span></footer>
       </>}
     </div>}
