@@ -53,6 +53,24 @@ describe("authenticated Code View downloads", () => {
     expect((await server.app.inject({ url: url(), headers: { ...headers(), host: "untrusted.test" } })).statusCode).toBe(403);
   });
 
+  it("isolates the HTML renderer without relaxing application CSP or authentication", async () => {
+    const url = "/api/code/preview";
+    expect((await server.app.inject({ url, headers: { host: "127.0.0.1:7373" } })).statusCode).toBe(401);
+    const preview = await server.app.inject({ url, headers: headers() });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers["content-type"]).toContain("text/html");
+    expect(preview.headers["cache-control"]).toBe("private, no-store");
+    const policy = String(preview.headers["content-security-policy"]);
+    expect(policy).toContain("sandbox allow-scripts");
+    expect(policy).not.toContain("allow-same-origin");
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("frame-ancestors 'self'");
+    expect(preview.headers["x-frame-options"]).toBe("SAMEORIGIN");
+    const app = await server.app.inject({ url: "/api/bootstrap", headers: headers() });
+    expect(app.headers["content-security-policy"]).toContain("script-src 'self'");
+    expect(app.headers["x-frame-options"]).toBe("DENY");
+  });
+
   it("returns exact bytes and attachment headers with an encoded filename", async () => {
     const response = await server.app.inject({ url: url(), headers: headers() });
     expect(response.statusCode).toBe(200);

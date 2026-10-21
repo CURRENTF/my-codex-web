@@ -29,6 +29,7 @@ import { safeErrorForLog } from "./safe-error.js";
 import { LoginAttemptLimiter, verifyPassword } from "./password-auth.js";
 import { AttachmentStore, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, streamLocalFile } from "./attachment-store.js";
 import { acceptsSpaDocument } from "./spa-fallback.js";
+import { htmlPreviewPolicy, htmlPreviewShell } from "./html-preview.js";
 import { CodeViewError, CodeViewFiles } from "./code-view.js";
 import { restoreSubagentSnapshot } from "./subagent-restoration.js";
 import { countUpdateBlockingExecutions, SelfUpdateConflictError, SelfUpdateManager, SelfUpdateUnavailableError } from "./self-update.js";
@@ -213,9 +214,10 @@ export async function createServer() {
     }
   });
 
-  app.addHook("onSend", async (_request, reply, payload) => {
+  app.addHook("onSend", async (request, reply, payload) => {
+    const htmlPreview = request.routeOptions.url === "/api/code/preview" && reply.statusCode === 200;
     const socketOrigins = [...allowedOrigins].map((origin) => origin.replace(/^http:/, "ws:").replace(/^https:/, "wss:"));
-    reply.header("content-security-policy", [
+    reply.header("content-security-policy", htmlPreview ? htmlPreviewPolicy : [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
@@ -227,7 +229,7 @@ export async function createServer() {
       "frame-ancestors 'none'",
       "form-action 'self'",
     ].join("; "));
-    reply.header("x-frame-options", "DENY");
+    reply.header("x-frame-options", htmlPreview ? "SAMEORIGIN" : "DENY");
     reply.header("x-content-type-options", "nosniff");
     reply.header("referrer-policy", "no-referrer");
     return payload;
@@ -313,6 +315,10 @@ export async function createServer() {
     reply.header("cache-control", "no-store");
     const input = codePathSchema.parse(request.query);
     return codeFiles.list(input.root, input.path);
+  });
+  app.get("/api/code/preview", async (_request, reply) => {
+    reply.header("cache-control", "private, no-store");
+    return reply.type("text/html; charset=utf-8").send(htmlPreviewShell);
   });
   app.get("/api/code/file", async (request, reply) => {
     reply.header("cache-control", "no-store");

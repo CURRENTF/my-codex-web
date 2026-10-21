@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowUp, DownloadSimple, FileCode, FloppyDisk, Folder, Arrow
 import { api, ApiError, authenticateWebUi, bootstrap } from "../api";
 import { fileDownloadUrl } from "../code-view-url";
 import { DownloadLink } from "./DownloadLink";
+import { HtmlPreview } from "./HtmlPreview";
 import "../code-view.css";
 const CodeEditor = lazy(() => import("./CodeEditor"));
 type FileData = { path: string; content: string; version: string };
@@ -26,10 +27,13 @@ export default function CodeView() {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("");
   const [generation, setGeneration] = useState(0);
+  const [view, setView] = useState<"source" | "preview">("source");
   const [pending, setPending] = useState<null | (() => void)>(null);
   const inFlight = useRef(false);
   const dirty = file !== null && content !== file.content;
   const selectedPath = downloadOnly?.path ?? file?.path;
+  const isHtml = file !== null && /\.html?$/i.test(file.path);
+  const preview = isHtml && view === "preview";
   const query = (target: string) => new URLSearchParams({ root, path: target });
   const message = (reason: unknown) => reason instanceof Error ? reason.message : "操作失败，请重试。";
   async function directory(target: string) {
@@ -46,6 +50,7 @@ export default function CodeView() {
     try {
       const data = await api<FileData>(`/api/code/file?${query(target)}`, { cache: "no-store" });
       setFile(data); setDownloadOnly(null); setContent(data.content); setGeneration((value) => value + 1);
+      setView(/\.html?$/i.test(data.path) && !(generation === 0 && params.has("line")) ? "preview" : "source");
       return data;
     } catch (reason) {
       if (!(reason instanceof ApiError) || (reason.status !== 413 && reason.status !== 415)) throw reason;
@@ -93,10 +98,10 @@ export default function CodeView() {
       <div className="code-directory-bar"><button className="header-button" disabled={busy || !listing?.parent} aria-label="上级目录" onClick={() => void run(() => directory(listing!.parent!))}><ArrowUp size={16} /></button><span data-tooltip={listing?.path}>{listing?.path.split("/").pop() || "文件"}</span><button className="header-button" disabled={busy || !listing} aria-label="刷新目录" onClick={() => void run(() => directory(listing!.path))}><ArrowClockwise size={16} /></button></div>
       <label className="code-filter">筛选文件<input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="当前目录中的文件名" /></label>
       <div className="code-file-list">{!listing && busy ? <div className="code-loading">正在读取目录…</div> : listing?.entries.filter((entry) => entry.name.toLowerCase().includes(filter.toLowerCase())).map((entry) => <button key={entry.path} className={`code-file-entry ${selectedPath === entry.path ? "selected" : ""}`} disabled={busy} data-tooltip={entry.name} onClick={() => entry.directory ? void run(() => directory(entry.path)) : guard(() => void run(() => load(entry.path)))}>{entry.directory ? <Folder size={16} /> : <FileCode size={16} />}<span>{entry.name}</span></button>)}{listing && !listing.entries.some((entry) => entry.name.toLowerCase().includes(filter.toLowerCase())) && <p className="code-empty">{filter ? "没有匹配的文件" : "此目录为空"}</p>}{listing?.truncated && <p>仅显示前 2000 项</p>}</div>
-    </aside><section className="code-document" aria-label="文件编辑器"><div className="code-document-bar"><span data-tooltip={selectedPath}>{selectedPath ? selectedPath.split("/").pop() : "选择文件"}</span><span className="code-save-state" role="status">{dirty ? "未保存" : status}</span>{selectedPath && <DownloadLink className="header-button" href={fileDownloadUrl(root, selectedPath)} aria-label="下载文件" title={dirty ? "下载磁盘版本，不含未保存的修改" : "下载原始文件"} onError={setError}><DownloadSimple size={16} /></DownloadLink>}<button className="header-button" disabled={!selectedPath || busy} onClick={() => guard(() => void run(() => load(selectedPath!)))} aria-label="重新读取文件"><ArrowClockwise size={16} /></button>{!downloadOnly && <button className="button primary" disabled={!dirty || busy} onClick={save}><FloppyDisk size={16} />{busy && file ? "处理中" : "保存"}</button>}</div>
+    </aside><section className="code-document" aria-label="文件编辑器"><div className="code-document-bar"><span data-tooltip={selectedPath}>{selectedPath ? selectedPath.split("/").pop() : "选择文件"}</span><span className="code-save-state" role="status">{dirty ? "未保存" : status}</span>{isHtml && <div className="code-view-modes" role="group" aria-label="文件视图"><button type="button" aria-pressed={preview} onClick={() => setView("preview")}>预览</button><button type="button" aria-pressed={!preview} onClick={() => setView("source")}>源码</button></div>}{selectedPath && <DownloadLink className="header-button" href={fileDownloadUrl(root, selectedPath)} aria-label="下载文件" title={dirty ? "下载磁盘版本，不含未保存的修改" : "下载原始文件"} onError={setError}><DownloadSimple size={16} /></DownloadLink>}<button className="header-button" disabled={!selectedPath || busy} onClick={() => guard(() => void run(() => load(selectedPath!)))} aria-label="重新读取文件"><ArrowClockwise size={16} /></button>{!downloadOnly && <button className="button primary" disabled={!dirty || busy} onClick={save}><FloppyDisk size={16} />{busy && file ? "处理中" : "保存"}</button>}</div>
       {pending && <div className="code-discard" role="alert"><span>当前文件有未保存的修改。</span><button className="button secondary" onClick={() => setPending(null)}>继续编辑</button><button className="button danger" onClick={() => { const action = pending; setPending(null); action(); }}>放弃修改</button></div>}
-      {downloadOnly ? <div className="code-empty-state code-download-state"><DownloadSimple size={32} /><h2>此文件不支持文本预览</h2><p>{downloadOnly.reason}</p>{downloadOnly.size !== null && <small>{downloadOnly.size.toLocaleString("zh-CN")} 字节</small>}<DownloadLink className="button primary" href={fileDownloadUrl(root, downloadOnly.path)} onError={setError}><DownloadSimple size={16} />下载文件</DownloadLink></div> : file ? <Suspense fallback={<div className="code-loading">正在加载编辑器…</div>}><CodeEditor key={generation} content={file.content} path={file.path} line={generation === 1 ? line : 1} onChange={setContent} onSave={save} /></Suspense> : <div className="code-empty-state"><FileCode size={32} /><h2>打开文件，直接修改</h2><p>从左侧选择文本文件。</p><span>⌘ / Ctrl + S 保存，⌘ / Ctrl + F 查找</span></div>}
-      <footer className="code-document-footer"><span data-tooltip={selectedPath}>{selectedPath ?? "UTF-8 文本文件，最大 1 MiB"}</span>{!downloadOnly && <span>⌘ / Ctrl + S</span>}</footer>
+      {downloadOnly ? <div className="code-empty-state code-download-state"><DownloadSimple size={32} /><h2>此文件不支持文本预览</h2><p>{downloadOnly.reason}</p>{downloadOnly.size !== null && <small>{downloadOnly.size.toLocaleString("zh-CN")} 字节</small>}<DownloadLink className="button primary" href={fileDownloadUrl(root, downloadOnly.path)} onError={setError}><DownloadSimple size={16} />下载文件</DownloadLink></div> : file ? <><div className="code-editor-pane" hidden={preview}><Suspense fallback={<div className="code-loading">正在加载编辑器…</div>}><CodeEditor key={generation} content={file.content} path={file.path} line={generation === 1 ? line : 1} onChange={setContent} onSave={save} /></Suspense></div>{preview && <HtmlPreview content={content} />}</> : <div className="code-empty-state"><FileCode size={32} /><h2>打开文件，直接修改</h2><p>从左侧选择文本文件。</p><span>⌘ / Ctrl + S 保存，⌘ / Ctrl + F 查找</span></div>}
+      <footer className="code-document-footer"><span data-tooltip={selectedPath}>{selectedPath ?? "UTF-8 文本文件，最大 1 MiB"}</span>{!downloadOnly && <span>{preview ? "预览当前内容 · 本地相对资源暂不支持" : "⌘ / Ctrl + S"}</span>}</footer>
     </section></div>}
     {error && <div className="code-error" role="alert">{error}<button className="header-button" onClick={() => setError("")}>关闭提示</button></div>}
   </main>;

@@ -20,7 +20,7 @@ function language(path: string) {
     case "json": return json();
     case "md": case "mdx": return markdown();
     case "css": return css();
-    case "html": return html();
+    case "html": case "htm": return html();
     default: return [];
   }
 }
