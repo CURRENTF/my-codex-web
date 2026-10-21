@@ -14,7 +14,6 @@ import { optimisticallyRenameSession, patchCachedSessionSummary, removeCachedSes
 import { fetchMergedSession } from "../session-query";
 import { useAppStore } from "../store";
 import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
-import { ErrorNotice } from "./ErrorNotice";
 import { Composer } from "./Composer";
 import { AsyncQuestionDock } from "./AsyncQuestionDock";
 import { TextInputDialog } from "./ActionDialog";
@@ -130,7 +129,6 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   }, [canReconcileOptimistic, reconcileOptimisticUserMessages, threadId, turns]);
   const latestCompletedTurnId = useMemo(() => [...turns].reverse().find((turn) => turn.status === "completed")?.id ?? null, [turns]);
   const latestTurn = turns.at(-1);
-  const latestError = latestTurn?.errors?.at(-1);
   const hasActiveTurn = state === "running" || state === "waitingForInput";
   const activeStartedAt = useMemo(() => turns.find((turn) => turn.status === "inProgress")?.startedAt ?? null, [turns]);
   const [now, setNow] = useState(Date.now());
@@ -159,8 +157,8 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
     </header>
     <PendingBanner threadId={threadId} />
     <div className="session-notices">
+      {/* Turn errors live in Timeline; reserve top notices for operation failures. */}
       <div ref={setErrorTarget} className="session-operation-errors" />
-      {latestError && (latestTurn?.status === "inProgress" || latestTurn?.status === "failed") && <ErrorNotice key={`${latestTurn.id}-${latestError.occurredAt ?? latestTurn.errors?.length}-${latestError.message}`} timestamp={latestError.occurredAt ?? null} message={`${latestTurn.status === "inProgress" ? latestError.willRetry ? "执行出错，正在自动重试" : "执行出错" : "本轮执行失败"}：${latestError.message}`} />}
       {!pendingFork && fork.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Fork 创建失败：{fork.error.message}</span><button onClick={() => fork.reset()} aria-label="关闭 Fork 创建错误"><X size={14} /></button></div>}
       {!sideChat && side.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Side Chat 创建失败：{side.error.message}</span><button onClick={() => side.reset()} aria-label="关闭 Side Chat 创建错误"><X size={14} /></button></div>}
       {shouldShowFullAccessNotice(payload.settings.accessMode, composerAccessMode, fullAccessNoticeSeen) && <div className="full-access-notice"><ShieldWarning size={16} weight="fill" /><span><strong>此 Project 已启用 Full Access</strong>Codex 可以修改工作区外的文件并执行不经逐次审批的命令。</span><button onClick={onAcknowledgeFullAccess}>知道了</button></div>}
