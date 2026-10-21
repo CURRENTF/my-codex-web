@@ -162,6 +162,37 @@ describe("Agent message Markdown rendering", () => {
     expect(html).not.toContain("openFile=");
   });
 
+  it.each([
+    "/home/haojitai/.answer-me-with-html/pages/我们现在怎样评测-SWE-bench-Pro-V2-20261021-172331.html",
+    "/data2/中文目录/报告 #1 (最终版).html",
+    "/data2/literal%25E6.html",
+    "/data2/invalid%ZZ.html",
+  ])("opens Markdown file paths without double encoding: %s", (path) => {
+    const html = render(`[查看完整流程说明](<${path}>)`);
+    const href = html.match(/href="([^"]+)"/)![1]!.replaceAll("&amp;", "&");
+    const url = new URL(href, "https://codex.test");
+    expect(url.pathname).toBe("/code");
+    expect(url.searchParams.get("root")).toBe("/home/haojitai/project");
+    // A URL-encoded percent sign denotes a literal percent, decoded only once.
+    expect(url.searchParams.get("file")).toBe(path.replace("%25", "%"));
+  });
+
+  it("preserves line jumps and server path metadata for Chinese links", () => {
+    const path = "/data2/中文目录/报告.html";
+    const html = render(`[源码](<${path}:42>)`);
+    const href = html.match(/href="([^"]+)"/)![1]!.replaceAll("&amp;", "&");
+    const url = new URL(href, "https://codex.test");
+    expect(url.searchParams.get("file")).toBe(path);
+    expect(url.searchParams.get("line")).toBe("42");
+    const directory = "/data2/中文目录";
+    const directoryHtml = render(`[目录](<${directory}>)`, undefined, undefined, { [directory]: "directory" });
+    const directoryUrl = new URL(directoryHtml.match(/href="([^"]+)"/)![1]!.replaceAll("&amp;", "&"), "https://codex.test");
+    expect(directoryUrl.searchParams.get("root")).toBe(directory);
+    expect(directoryUrl.searchParams.has("file")).toBe(false);
+    const resourceUrl = "/api/local-paths/test/content";
+    expect(render(`[图片](<${directory}/图片.png>)`, undefined, { [`${directory}/图片.png`]: resourceUrl })).toContain(`href="${resourceUrl}"`);
+  });
+
   it("downloads profiler reports directly while leaving text and external links unchanged", () => {
     const html = render("[Nsight trace](/data2/trace.nsys-rep)\n\n[报告](/data2/RESULTS.md)\n\n[在线 trace](https://example.com/trace.nsys-rep)");
     expect(html).toContain('href="/api/code/download?root=%2Fhome%2Fhaojitai%2Fproject&amp;path=%2Fdata2%2Ftrace.nsys-rep"');

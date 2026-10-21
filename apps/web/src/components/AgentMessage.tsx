@@ -14,19 +14,23 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
     rehypePlugins={[rehypeKatex]}
     components={{
       a({ href, children }) {
-        const localPathUrl = href ? localPathUrls[href] : undefined;
+        // ReactMarkdown URI-encodes destinations. Code View expects a filesystem
+        // path and will encode it as a query parameter, so decode exactly once here.
+        let filePath = href?.startsWith("/") ? href : undefined;
+        if (filePath) {
+          try { filePath = decodeURIComponent(filePath); } catch { /* Keep malformed percent escapes literal. */ }
+        }
+        const localPathUrl = href ? localPathUrls[href] ?? (filePath ? localPathUrls[filePath] : undefined) : undefined;
         if (localPathUrl) {
           return <a className="agent-inline-link external" href={localPathUrl} target="_blank" rel="noreferrer" data-tooltip={href}><ArrowSquareOut size={14} />{children}</a>;
         }
-        if (href?.startsWith("/")) {
-          const isDirectory = localPathKinds[href] === "directory";
-          if (!isDirectory && isDownloadOnlyFile(href)) {
-            let filePath = href;
-            try { filePath = decodeURIComponent(href); } catch { /* Keep literal malformed percent escapes. */ }
+        if (filePath) {
+          const isDirectory = (localPathKinds[href!] ?? localPathKinds[filePath]) === "directory";
+          if (!isDirectory && isDownloadOnlyFile(filePath)) {
             return <DownloadLink className="agent-inline-link file" href={fileDownloadUrl(cwd, filePath)} title={`下载 ${filePath}`}><DownloadSimple size={14} />{children}</DownloadLink>;
           }
           const PathIcon = isDirectory ? FolderOpen : FileCode;
-          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(href) : codeViewUrl(cwd, href)} target="_blank" rel="noreferrer" data-tooltip={href}><PathIcon size={14} />{children}</a>;
+          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(filePath) : codeViewUrl(cwd, filePath)} target="_blank" rel="noreferrer" data-tooltip={filePath}><PathIcon size={14} />{children}</a>;
         }
         if (href && /^https?:\/\//.test(href)) {
           return <a className="agent-inline-link external" href={href} target="_blank" rel="noreferrer"><ArrowSquareOut size={14} />{children}</a>;
