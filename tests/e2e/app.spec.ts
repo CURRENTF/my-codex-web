@@ -424,7 +424,8 @@ test("adapts the workspace controls and navigation to the available width", asyn
   await page.getByRole("button", { name: "设置 Goal" }).click();
   await page.getByLabel("Objective").fill("E2E persisted Goal");
   await page.getByLabel("Token Budget").fill("12000");
-  await page.getByLabel("Status").selectOption("paused");
+  await page.getByRole("button", { name: "Status", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Paused", exact: true }).click();
   await page.getByRole("button", { name: "保存" }).click();
   await expect(page.getByText("E2E persisted Goal", { exact: true })).toBeVisible();
 
@@ -509,7 +510,7 @@ test("adapts the workspace controls and navigation to the available width", asyn
     await page.setViewportSize(size);
     if (size.width <= 720) await expect(sidebar).not.toBeInViewport();
     await expect(page.locator(".composer")).toBeVisible();
-    await expect(page.locator(".access-control select")).toBeVisible();
+    await expect(page.getByRole("button", { name: "权限", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "模型", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -523,6 +524,17 @@ test("adapts the workspace controls and navigation to the available width", asyn
       expect(Math.abs((accessBox?.y ?? 0) - (controlsBox?.y ?? 0))).toBeLessThan(2);
     }
     if (size.width === 1440) {
+      const [iconBox, labelBox] = await Promise.all([
+        page.locator(".access-control .settings-select-icon").boundingBox(),
+        page.locator(".access-control .settings-select-value").boundingBox(),
+      ]);
+      expect(iconBox).not.toBeNull();
+      expect(labelBox).not.toBeNull();
+      expect(labelBox!.x - (iconBox!.x + iconBox!.width)).toBeGreaterThanOrEqual(5);
+      await page.getByRole("button", { name: "权限", exact: true }).click();
+      await expect(page.locator(".settings-select-menu.access")).toBeVisible();
+      await expect(page.locator(".settings-select-menu.access .settings-select-option[data-state=checked]")).toHaveCount(1);
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "模型", exact: true }).click();
       await expect(page.locator(".settings-select-menu.model")).toBeVisible();
       await expect(page.locator(".settings-select-menu.model .settings-select-option[data-state=checked]")).toHaveCount(1);
@@ -815,12 +827,12 @@ test("discovers an existing App Server Session, applies Project defaults, and re
 
     await page.goto(`/sessions/${existingThreadId}`);
     await expect(page.locator(".composer")).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".access-control select")).toHaveValue("workspaceWrite");
+    await expect(page.getByRole("button", { name: "权限", exact: true })).toHaveText("Workspace Write");
 
     await page.goto(`/sessions/${setup.threadId}`);
     await page.reload();
     await expect(page.locator(".composer")).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".access-control select")).toHaveValue("workspaceWrite");
+    await expect(page.getByRole("button", { name: "权限", exact: true })).toHaveText("Workspace Write");
     await expect(page.getByRole("button", { name: "模型", exact: true })).toContainText(setup.modelName);
     await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toContainText(new RegExp(setup.reasoning, "i"));
 
@@ -831,12 +843,13 @@ test("discovers an existing App Server Session, applies Project defaults, and re
     }, setup.threadId);
     expect(persisted.settings).toEqual({ model: setup.model, reasoning: setup.reasoning, serviceTier: null, accessMode: "workspaceWrite" });
 
+    await page.getByRole("button", { name: "权限", exact: true }).click();
     await Promise.all([
       page.waitForResponse((response) => response.url().endsWith(`/api/sessions/${setup.threadId}/settings`) && response.request().method() === "PATCH" && response.ok()),
-      page.locator(".access-control select").selectOption("readOnly"),
+      page.getByRole("menuitemradio", { name: "Read Only", exact: true }).click(),
     ]);
     await page.reload();
-    await expect(page.locator(".access-control select")).toHaveValue("readOnly");
+    await expect(page.getByRole("button", { name: "权限", exact: true })).toHaveText("Read Only");
 
     await page.getByRole("button", { name: "项目", exact: true }).click();
     await page.getByRole("button", { name: "E2E Defaults Project 更多操作" }).click();

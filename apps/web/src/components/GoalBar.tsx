@@ -4,6 +4,13 @@ import * as Popover from "@radix-ui/react-popover";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, newClientRequestId, type Goal } from "../api";
 import { goalUpdateInput } from "../goal-update";
+import { SettingsSelect } from "./SettingsSelect";
+
+const statusOptions = [
+  { value: "active", label: "Active" }, { value: "paused", label: "Paused" },
+  { value: "blocked", label: "Blocked" }, { value: "usageLimited", label: "Usage Limited" },
+  { value: "budgetLimited", label: "Budget Limited" }, { value: "complete", label: "Complete" },
+] satisfies Array<{ value: Goal["status"]; label: string }>;
 
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2)}k` : String(value); }
 
@@ -21,7 +28,7 @@ export function GoalBar({ threadId, goal, disabled = false }: { threadId: string
     {goal && <p className="field-hint">已使用 {formatTokens(goal.tokensUsed)} / {goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens</p>}
     <label className="field-label">Objective<textarea rows={3} value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="描述需要持续推进的目标" /></label>
     {goal && objective !== goal.objective && <p className="field-hint">修改 Objective 会重置使用统计。</p>}
-    <div className="goal-form-row"><label className="field-label">Token Budget<input type="number" min="1" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="不限" /></label><label className="field-label">Status<select value={status} onChange={(event) => setStatus(event.target.value as Goal["status"])}><option value="active">Active</option><option value="paused">Paused</option><option value="blocked">Blocked</option><option value="usageLimited">Usage Limited</option><option value="budgetLimited">Budget Limited</option><option value="complete">Complete</option></select></label></div>
+    <div className="goal-form-row"><label className="field-label">Token Budget<input type="number" min="1" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="不限" /></label><label className="field-label">Status<SettingsSelect className="settings-dialog-select" variant="status" ariaLabel="Status" menuLabel="Goal Status" value={status} options={statusOptions} placeholder="Status" onValueChange={(next) => setStatus(next as Goal["status"])} /></label></div>
     {(save.isError || clear.isError) && <p className="dialog-error">Goal 更新失败：{(save.error ?? clear.error)?.message}</p>}
     <div className="popover-actions">{goal && <button className="button danger-ghost" onClick={() => clear.mutate()} disabled={clear.isPending}><Trash size={14} />清除</button>}<span /><button className="button secondary" onClick={() => setOpen(false)}>取消</button><button className="button primary" disabled={!objective.trim() || save.isPending} onClick={() => save.mutate()}>{status === "complete" ? <Check size={14} /> : status === "paused" ? <Pause size={14} /> : null}保存</button></div>
   </Popover.Content></Popover.Portal></Popover.Root>;

@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import type { PendingRequestSummary } from "@codex-web/shared-types";
 import { api, newClientRequestId } from "../api";
 import { useAppStore } from "../store";
+import { SettingsSelect } from "./SettingsSelect";
 
 export function PendingBanner({ threadId }: { threadId: string }) {
   const runtime = useAppStore((state) => state.runtimes[threadId]); const requests = useAppStore((state) => state.pendingRequests);
@@ -80,7 +81,7 @@ function PendingRequestCard({ requestId, pending }: { requestId: string; pending
         const value = answers[field.id] ?? field.defaultValue;
         return <fieldset key={field.id}><legend><strong>{field.title}{field.required ? " *" : ""}</strong>{field.description && <span>{field.description}</span>}</legend>
           {field.valueType === "boolean" ? <label className="pending-checkbox"><input type="checkbox" checked={Boolean(value)} onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.checked }))} />启用</label>
-            : field.valueType === "singleSelect" ? <select value={typeof value === "string" ? value : ""} onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))}><option value="">请选择</option>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+            : field.valueType === "singleSelect" ? <SettingsSelect className="settings-dialog-select" variant="standard" ariaLabel={field.title} menuLabel={field.title} value={typeof value === "string" ? value : ""} placeholder="请选择" options={[{ value: "", label: "请选择" }, ...(field.options ?? [])]} onValueChange={(next) => setAnswers((current) => ({ ...current, [field.id]: next }))} />
               : field.valueType === "multiSelect" ? <div className="pending-options">{field.options?.map((option) => { const selected = Array.isArray(value) && value.includes(option.value); return <button type="button" key={option.value} className={selected ? "selected" : ""} onClick={() => setAnswers((current) => ({ ...current, [field.id]: selected ? (value as string[]).filter((item) => item !== option.value) : [...(Array.isArray(value) ? value : []), option.value] }))}>{option.label}</button>; })}</div>
                 : <input type={field.valueType === "number" || field.valueType === "integer" ? "number" : "text"} step={field.valueType === "integer" ? 1 : undefined} value={typeof value === "string" || typeof value === "number" ? value : ""} onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))} />}
         </fieldset>;

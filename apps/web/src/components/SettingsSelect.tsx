@@ -1,5 +1,6 @@
 import { Check } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import type { ReactNode } from "react";
 
 const EMPTY_VALUE = "__codex_web_empty_setting__";
 
@@ -19,6 +20,7 @@ export function SettingsSelect({
   disabled = false,
   placeholder,
   variant,
+  icon,
   className = "",
 }: {
   ariaLabel: string;
@@ -28,7 +30,8 @@ export function SettingsSelect({
   onValueChange(value: string): void;
   disabled?: boolean;
   placeholder: string;
-  variant: "model" | "reasoning";
+  variant: "model" | "reasoning" | "access" | "status" | "standard";
+  icon?: ReactNode;
   className?: string;
 }) {
   const selected = options.find((option) => option.value === value);
@@ -39,9 +42,10 @@ export function SettingsSelect({
         type="button"
         className={`settings-select-trigger ${variant} ${className}`.trim()}
         aria-label={ariaLabel}
-        data-tooltip={selected?.description}
+        data-tooltip={selected?.description || selected?.label}
         disabled={disabled}
       >
+        {icon && <span className="settings-select-icon" aria-hidden="true">{icon}</span>}
         <span className="settings-select-value">{(selected?.label ?? value) || placeholder}</span>
       </button>
     </DropdownMenu.Trigger>

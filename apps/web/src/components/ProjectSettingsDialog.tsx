@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { GearSix, ShieldCheck } from "@phosphor-icons/react";
+import { GearSix } from "@phosphor-icons/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ModelOption, Project } from "@codex-web/shared-types";
 import { api, newClientRequestId } from "../api";
 import { SettingsSelect } from "./SettingsSelect";
+import { AccessModeSelect } from "./AccessModeSelect";
 
 export function ProjectSettingsDialog({ project, models, onClose }: { project: Project | null; models: ModelOption[]; onClose(): void }) {
   const queryClient = useQueryClient();
@@ -63,7 +64,7 @@ export function ProjectSettingsDialog({ project, models, onClose }: { project: P
           <label className="field-label">默认模型<SettingsSelect className="settings-dialog-select" variant="model" ariaLabel="默认模型" menuLabel="默认模型" value={model} options={modelOptions} placeholder="App Server 默认" onValueChange={(next) => { setModel(next); const option = models.find((item) => item.model === next || item.id === next); setReasoning(option?.supportedReasoning.find((item) => item.effort === "high")?.effort ?? option?.defaultReasoning ?? ""); }} /></label>
           <label className="field-label">默认 Reasoning<SettingsSelect className="settings-dialog-select" variant="reasoning" ariaLabel="默认 Reasoning" menuLabel="默认 Reasoning" value={reasoning} options={reasoningOptions} placeholder="系统默认" onValueChange={setReasoning} /></label>
         </div>
-        <label className="field-label">默认权限<div className="access-settings-field"><ShieldCheck size={16} weight={accessMode === "fullAccess" ? "fill" : "regular"} /><select value={accessMode} onChange={(event) => setAccessMode(event.target.value as AccessMode)}><option value="fullAccess">Full Access</option><option value="workspaceWrite">Workspace Write</option><option value="readOnly">Read Only</option></select></div></label>
+        <label className="field-label">默认权限<AccessModeSelect className="settings-dialog-select" ariaLabel="默认权限" value={accessMode} onValueChange={setAccessMode} /></label>
         {save.isError && <p className="dialog-error">{save.error.message}</p>}
         <div className="dialog-actions"><Dialog.Close asChild><button className="button secondary">取消</button></Dialog.Close><button className="button primary" disabled={!name.trim() || save.isPending} onClick={() => save.mutate()}>保存设置</button></div>
       </Dialog.Content>

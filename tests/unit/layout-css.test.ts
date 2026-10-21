@@ -220,13 +220,12 @@ describe("viewport layout CSS", () => {
     expect(rule(".composer-settings")).toContain("justify-content: flex-end");
     expect(rule(".composer-settings")).toContain("overflow: hidden");
     expect(rule(".composer-actions")).toContain("flex: 0 0 auto");
-    expect(rule(".access-control, .settings-select-trigger")).toContain("min-width: 0");
-    expect(rule(".access-control > span, .settings-select-value")).toContain("min-width: 0");
-    expect(rule(".access-control > span, .settings-select-value")).toContain("text-overflow: ellipsis");
-    expect(rule(".access-control select")).toContain("position: absolute");
-    expect(rule(".access-control select")).toContain("inset: 0");
-    expect(rule(".access-control select")).toContain("width: 100%");
-    expect(rule(".access-control select")).toContain("opacity: 0");
+    expect(rule(".settings-select-trigger")).toContain("min-width: 0");
+    expect(rule(".settings-select-value")).toContain("min-width: 0");
+    expect(rule(".settings-select-value")).toContain("text-overflow: ellipsis");
+    expect(rule(".settings-select-trigger")).toContain("gap: 6px");
+    expect(rule(".settings-select-icon")).toContain("flex: 0 0 16px");
+    expect(rule(".settings-select-icon")).not.toContain("position: absolute");
     expect(settingsSelectSource).not.toContain("CaretDown");
     expect(settingsSelectSource).toContain("DropdownMenu.RadioItem");
     expect(settingsSelectSource).toContain("settings-select-option-copy");
@@ -234,6 +233,7 @@ describe("viewport layout CSS", () => {
     expect(rule(".settings-select-menu")).toContain("max-width: calc(100vw - 16px)");
     expect(composerSource).toContain('<SettingsSelect className="model-select"');
     expect(composerSource).toContain('<SettingsSelect className="reasoning-select"');
+    expect(composerSource).toContain('<AccessModeSelect className="access-control"');
     expect(composerSource).toMatch(/composer-toolbar[\s\S]*access-control[\s\S]*composer-controls[\s\S]*composer-settings[\s\S]*model-select[\s\S]*reasoning-select[\s\S]*composer-actions[\s\S]*composer-running-controls[\s\S]*send-button/);
     expect(rule(".send-button, .stop-button")).toContain("flex: 0 0 var(--composer-control-height)");
   });
