@@ -10,6 +10,7 @@ import type { ModelOption, Preferences, Project, RuntimeState, SessionSummary } 
 import { api, newClientRequestId, type SessionPayload } from "../api";
 import { codeViewUrl } from "../code-view-url";
 import { optimisticallyRenameSession, patchCachedSessionSummary } from "../session-summary-cache";
+import { sortSidebarSessions } from "../sidebar-session-order";
 import { useAppStore } from "../store";
 import { StatusIcon, statusText } from "./StatusIcon";
 import type { BrowserNotificationControlState } from "../browser-notifications";
@@ -37,13 +38,13 @@ export function sessionSwipeIsRevealed(scrollLeft: number): boolean {
 
 export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }: { state: RuntimeState; scheduledPollingEnabled?: boolean }) {
   return <span className="session-status-menu-icon" aria-hidden>
-    {scheduledPollingEnabled ? <Alarm className={`status-icon scheduled${state === "running" ? " scheduled-running" : ""}`} size={20} weight="regular" /> : <StatusIcon state={state} size={20} />}
+    {scheduledPollingEnabled ? <Alarm className={`status-icon scheduled${state === "running" ? " scheduled-running" : ""}`} size={16} weight="regular" /> : <StatusIcon state={state} size={20} />}
     <DotsThreeCircle className="session-status-more-icon" size={20} weight="regular" />
   </span>;
 }
 
 function SessionRow({ session, active, projectName, now, revealed, busy, onReveal, onOpen, onPin, onRename, onArchive }: {
-  session: SessionSummary; active: boolean; projectName: string; now: number; revealed: boolean; busy: boolean;
+  session: SessionSummary; active: boolean; projectName?: string; now: number; revealed: boolean; busy: boolean;
   onReveal(threadId: string | null): void; onOpen(threadId: string): void; onPin(session: SessionSummary): void; onRename(session: SessionSummary): void; onArchive(session: SessionSummary): void;
 }) {
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
@@ -83,7 +84,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
       <div className="session-row-content">
         <div className="session-row-line">
           <button className="session-row" aria-current={active ? "page" : undefined} onClick={open}>
-            <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName}<span aria-hidden>·</span>{relativeTime(session.updatedAt, now)}</span></span>
+            <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{projectName && <>{projectName}<span aria-hidden>·</span></>}{relativeTime(session.updatedAt, now)}</span></span>
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
           <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} data-tooltip={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
@@ -115,6 +116,8 @@ export interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const queryClient = useQueryClient();
+  const runtimes = useAppStore((state) => state.runtimes);
+  const sessions = useMemo(() => sortSidebarSessions(props.sessions, runtimes, props.preferences.sortDirection), [props.sessions, runtimes, props.preferences.sortDirection]);
   const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const [renameName, setRenameName] = useState("");
   const rename = useMutation({
@@ -159,7 +162,7 @@ export function Sidebar(props: SidebarProps) {
       setBusyThreadId(null);
     }
   };
-  const sessionRow = (session: SessionSummary, projectName: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} projectName={projectName} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId || (rename.isPending && rename.variables?.threadId === session.threadId)} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onRename={(target) => { rename.reset(); setRevealedThreadId(null); setRenameName(target.title); setRenameTarget(target); }} onArchive={(target) => void runSessionAction(target, "archive")} />;
+  const sessionRow = (session: SessionSummary, projectName?: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} projectName={projectName} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId || (rename.isPending && rename.variables?.threadId === session.threadId)} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onRename={(target) => { rename.reset(); setRevealedThreadId(null); setRenameName(target.title); setRenameTarget(target); }} onArchive={(target) => void runSessionAction(target, "archive")} />;
   const projectNames = useMemo(() => Object.fromEntries(props.projects.map((p) => [p.id, p.name])), [props.projects]);
   const notificationLabel = props.notificationState === "enabled" ? "关闭 Session 完成通知"
     : props.notificationState === "blocked" ? "浏览器已禁止此站点发送通知，请在网站设置中允许"
@@ -209,12 +212,12 @@ export function Sidebar(props: SidebarProps) {
     <div className="sidebar-list">
       {props.preferences.sidebarMode === "recent" ? <>
         <div className="list-caption"><span>最近</span><button className="sort-button" onClick={() => props.onSort(props.preferences.sortDirection === "desc" ? "asc" : "desc")}>更新时间 {props.preferences.sortDirection === "desc" ? "↓" : "↑"}</button></div>
-        {props.sessions.map((session) => sessionRow(session, projectNames[session.projectId] ?? "Other"))}
+        {sessions.map((session) => sessionRow(session, projectNames[session.projectId] ?? "Other"))}
       </> : <>
         <div className="list-caption"><span>项目</span><button className="caption-action" onClick={props.onAddProject}><Plus size={14} /></button></div>
         {props.projects.map((project) => {
           const isExpanded = expanded[project.id] ?? true;
-          const projectSessions = props.sessions.filter((session) => session.projectId === project.id);
+          const projectSessions = sessions.filter((session) => session.projectId === project.id);
           const visibleCount = visibleCounts[project.id] ?? PROJECT_SESSION_PAGE_SIZE;
           const visible = projectSessions.slice(0, visibleCount);
           const nextPageSize = Math.min(PROJECT_SESSION_PAGE_SIZE, projectSessions.length - visible.length);
@@ -231,7 +234,7 @@ export function Sidebar(props: SidebarProps) {
                 <DropdownMenu.Item className="menu-item danger-item" onSelect={() => props.onRemoveProject(project)}>从侧边栏移除</DropdownMenu.Item>
               </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
             </div>
-            {isExpanded && <div className="project-sessions">{visible.map((session) => sessionRow(session, project.name))}
+            {isExpanded && <div className="project-sessions">{visible.map((session) => sessionRow(session))}
               {nextPageSize > 0 && <button className="show-more" onClick={() => setVisibleCounts((state) => ({ ...state, [project.id]: (state[project.id] ?? PROJECT_SESSION_PAGE_SIZE) + PROJECT_SESSION_PAGE_SIZE }))}>再展开 {nextPageSize} 个</button>}
             </div>}
           </section>;

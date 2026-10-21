@@ -27,6 +27,7 @@ import { ConfirmationDialog } from "./components/ActionDialog";
 import { SessionPane } from "./components/SessionPane";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { Sidebar } from "./components/Sidebar";
+import { SidebarResizer } from "./components/SidebarResizer";
 
 function threadIdFromPath(pathname: string): string | null { return /^\/sessions\/([^/]+)$/.exec(pathname)?.[1] ?? null; }
 
@@ -475,6 +476,7 @@ export function App() {
   if (gate === "authRequired") return <AuthGate />;
   if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
   return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar models={bootstrapData.models} projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={requestRemoveProject} onPin={pinSession} onArchive={archiveFromSidebar} />
+    <SidebarResizer />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
         {sessionCreateError && <div className="workspace-error"><WarningCircle size={15} weight="fill" /><span>{sessionCreateError}</span><button onClick={() => setSessionCreateError(null)} aria-label="关闭新建 Session 错误"><X size={14} /></button></div>}

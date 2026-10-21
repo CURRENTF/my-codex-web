@@ -56,7 +56,7 @@
 }
 
 :root[data-appearance="glass"] body { background: var(--glass-backdrop); }
-:root[data-appearance="glass"] .app-shell { gap: 10px; padding: 10px; }
+:root[data-appearance="glass"] .app-shell { --sidebar-gap: 10px; gap: var(--sidebar-gap); padding: 10px; }
 :root[data-appearance="glass"] :is(.sidebar, .workspace) {
   border: 1px solid var(--glass-edge);
   border-radius: var(--radius-panel);
