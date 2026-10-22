@@ -1,6 +1,6 @@
 # Codex Web
 
-本地、单用户、面向 Project 的 Web 客户端，支持按对话选择 Codex 或 pi 后端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并通过当前 Codex Home 访问 Session。
+本地、单用户、面向 Project 的 Web 客户端，支持按对话选择 Codex、pi 或 agy 后端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并通过当前 Codex Home 访问 Session。
 
 ## 环境要求
 
@@ -69,15 +69,27 @@ HTML 文件（`.html` / `.htm`，大小写均可）默认渲染预览，可在�
 
 所有普通文件均可通过 Code View 顶部的下载图标下载，包括超过预览大小限制的文件和二进制文件。无法预览时页面会显示下载入口；下载以流式传输提供，不受 1 MiB 文本预览限制，不将整个文件加载到编辑器。下载的是磁盘上的原始文件，不含尚未保存的编辑。对话中的 `.nsys-rep`、`.qdrep`、`.ncu-rep` 和压缩包链接会直接下载，文本链接继续打开 Code View。下载沿用 Web 登录及服务用户的文件读取权限。下载前会检查文件是否可读，失败时在页面显示原因。路径属于 Web 服务所在机器；SSH 远端文件须先复制到该机器，下载接口不会自动连接 SSH。
 
-## 按对话选择 Codex / pi
+## 按对话选择 Codex / pi / agy
 
-点击「新建」直接使用默认后端（初始为 Codex）。在左上角「设置 → 新 Session 默认设置」中可切换默认后端，也可开启「每次新建时询问后端」以逐次选择；这些偏好保存在当前浏览器，立即生效。同一 Project 中可以同时运行 Codex 和 pi 对话，不需要切换全局配置或重启 Web。后端绑定到创建的对话，历史 Codex 对话仍由 Codex 管理。侧边栏的 pi 标识和会话标题旁的后端名称用于区分。
+点击「新建」直接使用默认后端（初始为 Codex）。在左上角「设置 → 新 Session 默认设置」中可切换默认后端，也可开启「每次新建时询问后端」以逐次选择；这些偏好保存在当前浏览器，立即生效。同一 Project 中可以同时运行 Codex、pi 和 agy 对话，不需要切换全局配置或重启 Web。后端绑定到创建的对话，历史 Codex 对话仍由 Codex 管理。侧边栏的后端标识和会话标题旁的后端名称用于区分。
 
 pi 随 `npm run setup` 安装（固定版本 `@earendil-works/pi-coding-agent@1.4.0`）。在服务所在机器、以服务运行用户执行 `npx --no-install pi`，通过 `/login` 配置所需提供商，或配置该提供商支持的 API Key 环境变量及 pi 的 `models.json`。pi 默认使用 `~/.pi/agent`；可通过 `PI_CODING_AGENT_DIR` 指定独立配置目录。Web 不共享 Codex 凭证，也不在浏览器里接收提供商密钥。配置完成后，在新建弹窗点击「刷新状态」即可重新检测模型；已启动进程的环境变量变化仍需要由服务管理器重新加载。
 
 每个活动 pi 对话运行独立 RPC 子进程。原生历史与 Web 展示元数据位于 `CODEX_WEB_DATA_DIR/pi`，重启后继续使用同一原生历史；不会把压缩后的 UI 文本重新拼成模型上下文。现有 pi CLI 历史不会自动导入。可用 `CODEX_WEB_PI_BIN=/absolute/path/to/pi` 覆盖执行文件，但必须提供与内置 1.4.0 一致的 RPC 接口（包括 `agent_settled`）。
 
 pi 支持流式文本、思考与工具结果、模型选择、Steer、中断、上下文压缩、重命名、归档、附件、定时轮询和标准扩展输入弹窗。目前仅提供 Full Access，不宣称具备 Codex 的只读／工作区沙箱；Goal、原生 Review、Fork、Side Chat、子代理面板和 Web Skill 选择暂不开放。pi 自身的技能命令与扩展仍由 pi 加载。Codex 重连不会中断 pi 对话；单个 pi 进程退出会将对应对话标为失败，后续可重新发送。
+
+### agy CLI
+
+agy 需要在服务所在机器单独安装，并以服务运行用户完成登录；先确认 `agy models` 可用。Web 从服务进程的 `PATH` 查找 `agy`，也可通过 `CODEX_WEB_AGY_BIN=/absolute/path/to/agy` 指定执行文件。安装 CLI 和设置启动环境后需首次重新启动 Web；之后在设置里切换默认后端无需重启。模型列表来自 agy，默认模型沿用其配置，effort 暂时使用模型默认值。成功的模型探测缓存 30 秒；未安装或未登录不影响 Codex / pi 使用。
+
+agy 每轮运行独立 CLI 进程，通过 `--input-format stream-json` / `--output-format stream-json` 传递消息与事件，用明确的 `--conversation` ID 恢复原生上下文，不使用会续接最近对话的 `--continue`。Web 显示历史和原生 ID 映射保存在 `CODEX_WEB_DATA_DIR/agy`；原生上下文仍由 agy 管理，备份或迁移时需同时保留 agy 自身的会话数据。只展示从 Web 创建的会话，不导入已有 CLI 历史。
+
+目前支持流式回复、工具步骤、模型选择、续聊、停止、排队发送、重命名、归档、文件路径附件和定时轮询。停止先发送 SIGINT，等待 CLI 结束后才允许下一轮；无响应时终止该进程组并明确报告停止未确认。单个进程异常不会中断其他后端；无最终结果、异常退出或超时不会当作成功。
+
+权限采用 agy 的 `accept-edits` 模式：自动接受文件编辑，命令保留原生权限检查，**不传递 `--dangerously-skip-permissions`**。非交互模式中需要交互审批的操作可能被拒绝，Web 暂不桥接这些审批；界面显示「agy 权限」，不代表 Codex 的只读／工作区沙箱。内部通用设置中的 `fullAccess` 仅表示没有 Codex 沙箱，不能据此推断 agy 会跳过审批。暂不开放图片附件、Steer、Web 上下文压缩、Goal、Review、Fork、Side Chat、子代理面板、Web Skill 选择和美元费用估算。
+
+可选真实 CLI 冒烟测试（会使用已登录 agy 的模型额度，仅操作临时测试目录）：`RUN_AGY_INTEGRATION=1 npx vitest run tests/integration/agy-native.test.ts`。普通 `npm test` 使用隔离的 CLI 协议 fixture，不依赖 agy 安装、凭据或网络。
 
 ## 启用更新按钮
 

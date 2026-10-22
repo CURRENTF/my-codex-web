@@ -14,7 +14,7 @@ vi.mock("@codex-web/codex-adapter", async (original) => {
 });
 vi.mock("../../apps/server/src/config.js", () => ({ config: {
   host: "127.0.0.1", port: 7373, dataDir: state.directory, databasePath: `${state.directory}/app.db`, projectRoot: state.directory,
-  codexHome: `${state.directory}/codex`, codexCommand: "unused", piCommand: path.resolve("tests/fixtures/pi-rpc.mjs"), version: "test",
+  codexHome: `${state.directory}/codex`, codexCommand: "unused", piCommand: path.resolve("tests/fixtures/pi-rpc.mjs"), agyCommand: path.resolve("tests/fixtures/agy-cli.mjs"), version: "test",
   sessionCookieName: "backend_test", passwordHash: null, cookieSecure: false, allowViteOrigin: false, publicOrigins: [], trustProxy: false,
   updateRepository: state.directory, updateRemote: "origin", updateBranch: "main", updateRestartCommand: null,
 } }));
@@ -31,7 +31,7 @@ beforeAll(async () => {
 afterAll(async () => { await server?.close(); vi.unstubAllEnvs(); await rm(state.directory, { recursive: true, force: true }); });
 it("creates and continues Pi through HTTP with Codex unavailable, without inheriting Codex project defaults", async () => {
   const catalog = await server.app.inject({ url: "/api/backends", headers: headers() });
-  expect(catalog.json().map((item: any) => [item.id, item.available])).toEqual([["codex", false], ["pi", true]]);
+  expect(catalog.json().map((item: any) => [item.id, item.available])).toEqual([["codex", false], ["pi", true], ["agy", true]]);
   const projectResponse = await server.app.inject({ method: "POST", url: "/api/projects", headers: headers(), payload: { path: state.directory, clientRequestId: randomUUID() } });
   expect(projectResponse.statusCode, projectResponse.body).toBe(200);
   const project = projectResponse.json();
@@ -50,4 +50,21 @@ it("creates and continues Pi through HTTP with Codex unavailable, without inheri
   expect(permissions.statusCode).toBe(400);
   const invalidBackend = await server.app.inject({ method: "POST", url: `/api/projects/${project.id}/sessions`, headers: headers(), payload: { backend: "other", clientRequestId: randomUUID() } });
   expect(invalidBackend.statusCode).toBe(400);
+});
+
+it("creates agy with isolated defaults and supports HTTP streaming lifecycle while Codex is offline", async () => {
+  const project = (await server.app.inject({ method: "POST", url: "/api/projects", headers: headers(), payload: { path: state.directory, clientRequestId: randomUUID() } })).json();
+  const response = await server.app.inject({ method: "POST", url: `/api/projects/${project.id}/sessions`, headers: headers(), payload: { backend: "agy", clientRequestId: randomUUID() } });
+  expect(response.statusCode, response.body).toBe(200);
+  const id = response.json().thread.id;
+  expect(id).toMatch(/^agy:/); expect(response.json().settings).toMatchObject({ model: "fixture-model", reasoning: "default", accessMode: "fullAccess" });
+  const prompt = await server.app.inject({ method: "POST", url: `/api/sessions/${id}/turns`, headers: headers(), payload: { text: "hello", clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
+  expect(prompt.statusCode, prompt.body).toBe(200);
+  await vi.waitFor(async () => {
+    const after = await server.app.inject({ url: `/api/sessions/${id}`, headers: headers() });
+    expect(after.json().thread.turns[0].status).toBe("completed");
+    expect(after.json().runtime.state).not.toBe("running");
+  });
+  const permissions = await server.app.inject({ method: "PATCH", url: `/api/sessions/${id}/settings`, headers: headers(), payload: { accessMode: "readOnly", clientRequestId: randomUUID() } });
+  expect(permissions.statusCode).toBe(400);
 });

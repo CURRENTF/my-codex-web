@@ -219,7 +219,7 @@ export class PiAdapter extends EventEmitter {
       estimatedUsd: typeof stats.cost === "number" ? stats.cost.toFixed(6) : null, groups: [],
       notes: ["按 pi 配置的模型价格估算；本地模型或未配置价格的模型可能显示 0。"] };
   }
-  async generateSessionTitle(_cwd: string, userRequest: string) { return userRequest.trim().slice(0, 48) || null; }
+  async generateSessionTitle(_cwd: string, userRequest: string, _outcome?: string) { return userRequest.trim().slice(0, 48) || null; }
   stop() { this.disposed = true; for (const [id, live] of this.live) { this.finish(id, live, "interrupted"); live.rpc.stop(); } this.live.clear(); }
   private upsert(id: string, live: LiveSession, item: SessionItem, completed: boolean) {
     if (!live.turn) return;

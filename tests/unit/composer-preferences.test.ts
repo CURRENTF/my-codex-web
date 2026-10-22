@@ -27,6 +27,14 @@ describe("composer preferences", () => {
     useComposerPreferences.getState().setAskBackendOnNewSession(false);
     expect(useComposerPreferences.getState().defaultBackend).toBe("pi");
   });
+  it("persists agy as the direct creation default", async () => {
+    useComposerPreferences.getState().setDefaultBackend("agy");
+    const saved = localStorage.getItem("codex-web:composer-preferences:v1")!;
+    useComposerPreferences.setState({ defaultBackend: "codex" });
+    localStorage.setItem("codex-web:composer-preferences:v1", saved);
+    await useComposerPreferences.persist.rehydrate();
+    expect(useComposerPreferences.getState()).toMatchObject({ defaultBackend: "agy", askBackendOnNewSession: false });
+  });
   it("counts Chinese characters, English words and mixed text without punctuation", () => {
     expect(composerWordCount("你好 world! Let's test，中文。")).toBe(7);
     expect(composerWordCount("中".repeat(50))).toBe(50);

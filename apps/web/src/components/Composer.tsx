@@ -1,4 +1,4 @@
-import { sessionBackend } from "@codex-web/shared-types";
+import { sessionBackend, backendCapabilities } from "@codex-web/shared-types";
 import { PromptSchedule } from "./PromptSchedule";
 import { composerWordCount, useComposerPreferences } from "../composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -69,8 +69,10 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   compact?: boolean; disabled?: boolean; onTextareaReady?(element: HTMLTextAreaElement | null): void;
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
 }) {
-  const isPi = sessionBackend(threadId) === "pi";
-  const supportsCommand = (name: string) => !isPi || !["goal", "review", "fork", "side", "permissions", "skills"].includes(name);
+  const backend = sessionBackend(threadId);
+  const capabilities = backendCapabilities(backend);
+  const { codexFeatures, steer: supportsSteer } = capabilities;
+  const supportsCommand = (name: string) => (capabilities.compact || name !== "compact") && (codexFeatures || !["goal", "review", "fork", "side", "permissions", "skills"].includes(name));
   const queryClient = useQueryClient(); const textarea = useRef<HTMLTextAreaElement>(null); const fileInput = useRef<HTMLInputElement>(null);
   const bindTextarea = useCallback((element: HTMLTextAreaElement | null) => { textarea.current = element; onTextareaReady?.(element); }, [onTextareaReady]);
   const steerDraftTurnId = useRef<string | null>(null);
@@ -105,7 +107,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const [confirmedDraft, setConfirmedDraft] = useState<string | null>(null);
   useEffect(() => { setConfirmedDraft(null); }, [draft, longTextConfirmation, threadId]);
   const [feedback, setFeedback] = useState<Feedback | null>(null); const [cursor, setCursor] = useState(0);
-  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("steer");
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(supportsSteer ? "steer" : "queue");
   const [menuIndex, setMenuIndex] = useState(0); const [dismissedMenuDraft, setDismissedMenuDraft] = useState<string | null>(null);
   const [completedSkillMention, setCompletedSkillMention] = useState<CompletedSkillMention | null>(null);
   const attachmentDraft = useAttachmentDrafts((state) => state.drafts[threadId] ?? emptyAttachmentDraft);
@@ -118,7 +120,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const [queuedCommandPendingId, setQueuedCommandPendingId] = useState<string | null>(null);
   const running = runtimeState === "running" || runtimeState === "waitingForInput"; const disconnected = runtimeState === "disconnected"; const blocked = (disabled || disconnected) && !running;
   const blockedMessage = disabled ? "Project 目录不可用；恢复该目录后重新扫描即可继续。" : "Session 尚未完成重同步；请等待状态恢复后继续。";
-  const skills = useQuery({ queryKey: ["skills", project.id, isPi ? "pi" : "codex"], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: !isPi && project.available && !disconnected, staleTime: 60_000 });
+  const skills = useQuery({ queryKey: ["skills", project.id, backend], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: codexFeatures && project.available && !disconnected, staleTime: 60_000 });
 
   useEffect(() => {
     const nextModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
@@ -132,7 +134,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     setServiceTier(nextServiceTier);
     setAccessMode(nextAccessMode);
     steerDraftTurnId.current = null;
-    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode("steer"); setDraggingFiles(false); setQueuedCommandPendingId(null);
+    setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode(supportsSteer ? "steer" : "queue"); setDraggingFiles(false); setQueuedCommandPendingId(null);
   }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.serviceTier, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
   useEffect(() => {
     if (!selectedModel || selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) return;
@@ -156,7 +158,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   })), [models]);
   const reasoningSelectOptions = useMemo(() => (selectedModel?.supportedReasoning ?? []).map((item) => ({
     value: item.effort,
-    label: reasoningLabel(item.effort),
+    label: item.effort === "default" ? "模型默认" : reasoningLabel(item.effort),
     description: item.description,
     ...(item.effort === selectedModel?.defaultReasoning ? { meta: "默认" } : {}),
   })), [selectedModel]);
@@ -209,8 +211,12 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
 
   const uploadFiles = useCallback((files: readonly File[]) => {
     if (fileInput.current) fileInput.current.value = "";
+    if (backend === "agy" && files.some((file) => file.type.startsWith("image/"))) {
+      setFeedback({ tone: "error", text: "agy 当前不支持图片附件，请添加文本或其他文件。" });
+      return Promise.resolve();
+    }
     return useAttachmentDrafts.getState().upload(threadId, files);
-  }, [threadId]);
+  }, [threadId, backend]);
 
   const removeAttachment = useCallback(async (attachment: UploadedAttachment) => {
     setAttachments((current) => current.filter((candidate) => candidate.id !== attachment.id));
@@ -230,7 +236,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     const parsed = parseSlashCommand(raw);
     if (!parsed || !isSupportedSlashCommand(parsed.name)) throw new Error(`不支持的 Slash 命令：/${parsed?.name ?? ""}`);
     const command = parsed.name as SlashCommandName; const args = parsed.args;
-    if (!supportsCommand(command)) throw new Error(`pi 暂不支持 /${command}`);
+    if (!supportsCommand(command)) throw new Error(`${backend} 暂不支持 /${command}`);
     if (command === "goal") {
       if (!args) {
         setFeedback({ tone: "info", text: goal ? `Goal · ${goal.status} · ${goal.objective} · ${goal.tokensUsed}/${goal.tokenBudget ?? "∞"} tokens` : "当前 Session 尚未设置 Goal。用 /goal <目标> 创建。" });
@@ -311,7 +317,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
       setFeedback({ tone: "info", text: `${runtimeState} · ${selectedModel?.displayName ?? model} · ${fastMode ? "Fast" : "Standard"} · reasoning ${reasoning || "default"} · ${accessModeLabel(accessMode)} · 上下文 ${context}` }); return {};
     }
     updateDraft("$", 1); setFeedback(null); return {};
-  }, [isPi, accessMode, contextUsage, fastMode, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
+  }, [backend, accessMode, contextUsage, fastMode, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
 
   const send = useMutation({ mutationFn: async ({ expectedTurnId }: { expectedTurnId?: string | null } = {}) => {
     const submittedDraft = draft; const submittedAttachments = [...attachments]; const text = submittedDraft.trim(); if (!text && !submittedAttachments.length) return;
@@ -377,7 +383,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
           removeQueuedSubmission(threadId, queuedUserMessage.clientRequestId);
           setDraft(threadId, result.draft ?? queuedUserMessage.text);
           setAttachments(queuedUserMessage.attachments ?? []);
-          setDeliveryMode("steer");
+          setDeliveryMode(supportsSteer ? "steer" : "queue");
         }
         if (result.draft && !pendingSubmission) { setDraft(threadId, result.draft); beginSubmission(threadId, result.draft, result.clientUserMessageId ?? requestId()); }
         markSubmissionRetryReady(threadId, result.clientUserMessageId);
@@ -465,7 +471,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     setConfirmedDraft(null);
     if (blocked || send.isPending || uploadingCount > 0 || !hasPayload) return;
     const parsed = parseSlashCommand(draft);
-    if (parsed) {
+    if (parsed && (codexFeatures || isSupportedSlashCommand(parsed.name))) {
       if (attachments.length) { setFeedback({ tone: "error", text: "Slash 命令不能附带附件；请先移除附件或改为普通消息。" }); return; }
       if (!isSupportedSlashCommand(parsed.name)) { setFeedback({ tone: "error", text: `不支持的 Slash 命令：/${parsed.name}` }); return; }
       if (running && parsed.name !== "goal") { queueCommand(draft); return; }
@@ -567,9 +573,9 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
         </div>}
         {uploadError && <p className="dialog-error" role="alert">{uploadError}</p>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
-        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : isPi ? "输入消息；可添加图片或文件，/ 执行命令" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
+        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : !codexFeatures ? (backend === "agy" ? "输入消息；可添加文件，/ 执行命令" : "输入消息；可添加图片或文件，/ 执行命令") : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
-          {isPi ? <span className="access-control" data-tooltip="pi 当前使用 Full Access，无工作区沙箱">Full Access</span> : <AccessModeSelect className="access-control" value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />}
+          {!codexFeatures ? <span className="access-control" data-tooltip={backend === "agy" ? "agy accept-edits：自动接受文件编辑，命令遵循原生权限。无 Codex 沙箱，不支持 Web 审批。" : "pi 当前使用 Full Access，无工作区沙箱"}>{backend === "agy" ? "agy 权限" : "Full Access"}</span> : <AccessModeSelect className="access-control" value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />}
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
               <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked || modelSelectOptions.length === 0} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); const nextReasoning = preferredReasoningForModel(option); const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier); effectiveSettings.current = { ...effectiveSettings.current, model: next, reasoning: nextReasoning, serviceTier: nextServiceTier }; setModel(next); setReasoning(nextReasoning); setServiceTier(nextServiceTier); }} />
@@ -579,9 +585,9 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
             <div className="composer-actions">
               {!compact && <PromptSchedule key={threadId} threadId={threadId} />}
               <input ref={fileInput} className="attachment-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => void uploadFiles([...(event.target.files ?? [])])} />
-              <button type="button" className="attachment-picker" aria-label="添加图片或文件" data-tooltip="添加图片或文件" disabled={blocked || uploadingCount > 0 || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}>{uploadingCount > 0 ? <SpinnerGap className="spinning" size={16} /> : <Paperclip size={16} />}</button>
+              <button type="button" className="attachment-picker" aria-label={backend === "agy" ? "添加文件" : "添加图片或文件"} data-tooltip={backend === "agy" ? "添加文件" : "添加图片或文件"} disabled={blocked || uploadingCount > 0 || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}>{uploadingCount > 0 ? <SpinnerGap className="spinning" size={16} /> : <Paperclip size={16} />}</button>
               <div className={`composer-running-controls ${running ? "is-active" : "is-idle"}`}>
-                <button type="button" className={`delivery-mode-toggle ${deliveryMode}`} role="switch" aria-checked={deliveryMode === "queue"} aria-label={running ? `需求发送方式：${deliveryMode === "queue" ? "排队" : "Steer"}` : "需求发送方式当前不可用，没有正在运行的 Turn"} data-tooltip={running ? deliveryMode === "queue" ? "排队：当前 Turn 完成后自动发送" : "Steer：立即追加到当前 Turn" : "当前没有正在运行的 Turn"} disabled={!running} onClick={() => { const next = deliveryMode === "steer" ? "queue" : "steer"; setDeliveryMode(next); if (next === "queue") steerDraftTurnId.current = null; }}><span className="delivery-mode-track" aria-hidden="true"><span /></span></button>
+                {supportsSteer && <button type="button" className={`delivery-mode-toggle ${deliveryMode}`} role="switch" aria-checked={deliveryMode === "queue"} aria-label={running ? `需求发送方式：${deliveryMode === "queue" ? "排队" : "Steer"}` : "需求发送方式当前不可用，没有正在运行的 Turn"} data-tooltip={running ? deliveryMode === "queue" ? "排队：当前 Turn 完成后自动发送" : "Steer：立即追加到当前 Turn" : "当前没有正在运行的 Turn"} disabled={!running} onClick={() => { const next = deliveryMode === "steer" ? "queue" : "steer"; setDeliveryMode(next); if (next === "queue") steerDraftTurnId.current = null; }}><span className="delivery-mode-track" aria-hidden="true"><span /></span></button>}
               </div>
               <button className={stopPrimaryAction ? "stop-button" : "send-button"} onPointerDown={() => { if (!stopPrimaryAction) rememberSteerIntent(); }} onClick={runPrimaryAction} disabled={primaryActionDisabled} aria-label={stopPrimaryAction ? "停止当前 Turn" : running && deliveryMode === "queue" ? "排到下一 Turn" : running ? "Steer 当前 Turn 或排队 Slash 命令" : "发送或执行命令"} data-tooltip={stopPrimaryAction ? "停止当前 Turn" : undefined}>{stopPrimaryAction ? <Square size={16} weight="fill" /> : running && deliveryMode === "queue" ? <ClockCounterClockwise size={16} weight="bold" /> : <ArrowUp size={16} weight="bold" />}</button>
             </div>

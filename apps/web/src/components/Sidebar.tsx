@@ -1,4 +1,4 @@
-import { sessionBackend } from "@codex-web/shared-types";
+import { sessionBackend, BACKEND_LABELS } from "@codex-web/shared-types";
 import { SessionCostSetting } from "./SessionCost";
 import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
@@ -51,7 +51,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
   const connectionState = useAppStore((state) => state.connectionState);
   const codexConnectionState = useAppStore((state) => state.codexConnectionState);
-  const runtimeState = connectionState === "connected" && (sessionBackend(session.threadId) === "pi" || codexConnectionState === "connected") ? (liveRuntime?.state ?? session.runtimeState) : "disconnected";
+  const runtimeState = connectionState === "connected" && (sessionBackend(session.threadId) !== "codex" || codexConnectionState === "connected") ? (liveRuntime?.state ?? session.runtimeState) : "disconnected";
   const track = useRef<HTMLDivElement>(null);
   const programmaticTarget = useRef<number | null>(null);
   const suppressClick = useRef(false);
@@ -86,7 +86,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
       <div className="session-row-content">
         <div className="session-row-line">
           <button className="session-row" aria-current={active ? "page" : undefined} onClick={open}>
-            <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{sessionBackend(session.threadId) === "pi" && <>pi<span aria-hidden>·</span></>}{projectName && <>{projectName}<span aria-hidden>·</span></>}{relativeTime(session.updatedAt, now)}</span></span>
+            <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{sessionBackend(session.threadId) !== "codex" && <>{BACKEND_LABELS[sessionBackend(session.threadId)]}<span aria-hidden>·</span></>}{projectName && <>{projectName}<span aria-hidden>·</span></>}{relativeTime(session.updatedAt, now)}</span></span>
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
           <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} data-tooltip={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">

@@ -453,7 +453,7 @@ export class SessionService extends EventEmitter {
       title: snapshot.name || snapshot.preview || "Untitled session",
       preview: snapshot.preview,
       cwd: snapshot.cwd,
-      sourceKind: sessionBackend(snapshot.id) === "pi" ? "pi" : "appServer",
+      sourceKind: sessionBackend(snapshot.id) === "codex" ? "appServer" : sessionBackend(snapshot.id),
       createdAt: snapshot.createdAt * 1_000,
       updatedAt: snapshot.updatedAt * 1_000,
       origin: metadata.origin,
@@ -487,7 +487,7 @@ export class SessionService extends EventEmitter {
   async readSessionCost(threadId: string) {
     if (!this.runtimes.getSideChat(threadId)) this.requireMapping(threadId);
     const native = await this.adapter.readSessionCost(threadId).catch(() => null);
-    return sessionBackend(threadId) === "pi" && native ? native : chooseSessionCost(native, this.repositories.getCostLedger(threadId), threadId);
+    return sessionBackend(threadId) !== "codex" && native ? native : chooseSessionCost(native, this.repositories.getCostLedger(threadId), threadId);
   }
 
   private async readSessionUnlocked(threadId: string) {
@@ -528,7 +528,7 @@ export class SessionService extends EventEmitter {
   }
 
   async setAccessModeOverride(threadId: string, accessMode: AccessMode): Promise<SessionSettings> {
-    if (sessionBackend(threadId) === "pi" && accessMode !== "fullAccess") throw Object.assign(new Error("pi 当前仅支持 Full Access"), { statusCode: 400 });
+    if (sessionBackend(threadId) !== "codex" && accessMode !== "fullAccess") throw Object.assign(new Error(`${sessionBackend(threadId)} 使用原生权限，不支持 Codex 沙箱模式`), { statusCode: 400 });
     return this.withLock(threadId, async () => {
       const sideChat = this.runtimes.getSideChat(threadId);
       if (sideChat) {
@@ -639,8 +639,8 @@ export class SessionService extends EventEmitter {
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
     return this.idempotent(`project:${projectId}:create`, clientRequestId, () => this.projectLocks.withKey(projectId, () => this.withRecoveryCriticalOperation(async () => {
       const project = this.requireAvailableProject(projectId);
-      const settings: SessionSettings = input.backend === "pi"
-        ? { backend: "pi", model: input.model ?? null, reasoning: input.reasoning ?? null, serviceTier: input.serviceTier ?? null, accessMode: input.accessMode ?? "fullAccess" }
+      const settings: SessionSettings = input.backend && input.backend !== "codex"
+        ? { backend: input.backend, model: input.model ?? null, reasoning: input.reasoning ?? null, serviceTier: input.serviceTier ?? null, accessMode: input.accessMode ?? "fullAccess" }
         : this.resolveSettings(projectId, input);
       const recovery: PendingSessionRecovery = {
         threadSource: recoveryThreadSource("session", projectId, clientRequestId),
@@ -651,7 +651,7 @@ export class SessionService extends EventEmitter {
       this.indexer.markThreadSourcePending?.(recovery.threadSource);
       try {
         const response = await this.adapter.startSession(project.canonicalPath, settings, false, recovery.threadSource);
-        if (input.backend === "pi") recovery.settings = (await this.adapter.resumeSession(response.thread.id)).settings;
+        if (input.backend && input.backend !== "codex") recovery.settings = (await this.adapter.resumeSession(response.thread.id)).settings;
         this.observedSessions.set(recovery.threadSource, response.thread);
         const result = await this.finalizeCreatedSession(response.thread, recovery, true);
         this.uncertainSessions.delete(recovery.threadSource);
@@ -707,7 +707,7 @@ export class SessionService extends EventEmitter {
       const now = Date.now();
       this.repositories.upsertProjectSession({
         thread_id: thread.id, project_id: recovery.projectId, cwd_snapshot: thread.cwd,
-        source_kind: sessionBackend(thread.id) === "pi" ? "pi" : "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+        source_kind: sessionBackend(thread.id) === "codex" ? "appServer" : sessionBackend(thread.id), origin: "created", parent_thread_id: null, fork_turn_id: null,
         summary_title: thread.name || thread.preview || "Untitled session",
         summary_preview: thread.preview,
         summary_created_at: thread.createdAt * 1_000,
@@ -862,7 +862,7 @@ export class SessionService extends EventEmitter {
   }
 
   async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string, empty = false, prefill?: string) {
-    if (sessionBackend(threadId) === "pi") throw Object.assign(new Error("pi 暂不支持 Fork"), { statusCode: 400 });
+    if (sessionBackend(threadId) !== "codex") throw Object.assign(new Error(`${sessionBackend(threadId)} 暂不支持 Fork`), { statusCode: 400 });
     this.assertPersistentSession(threadId, "Fork");
     const sourceProjectId = this.requireMapping(threadId).project_id;
     return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.projectLocks.withKey(sourceProjectId, () => this.withLock(threadId, () => this.withRecoveryCriticalOperation(async () => {
@@ -1367,7 +1367,7 @@ export class SessionService extends EventEmitter {
   }
 
   async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
-    if (sessionBackend(parentThreadId) === "pi") throw Object.assign(new Error("pi 暂不支持 Side Chat"), { statusCode: 400 });
+    if (sessionBackend(parentThreadId) !== "codex") throw Object.assign(new Error(`${sessionBackend(parentThreadId)} 暂不支持 Side Chat`), { statusCode: 400 });
     this.assertPersistentSession(parentThreadId, "nested Side Chat");
     return this.withLocks([parentThreadId, `side-chat:${parentThreadId}`], () => this.withRecoveryCriticalOperation(async () => {
       this.assertSessionReconciled(parentThreadId, "Side Chat");
@@ -1599,7 +1599,7 @@ export class SessionService extends EventEmitter {
     const current = this.settings.get(threadId);
     const mapping = this.requireMapping(threadId);
     const project = this.requireProject(mapping.project_id);
-    const coldAccessMode = sessionBackend(threadId) === "pi" ? "fullAccess" : mapping.access_mode_override ?? project.defaultAccessMode;
+    const coldAccessMode = sessionBackend(threadId) !== "codex" ? "fullAccess" : mapping.access_mode_override ?? project.defaultAccessMode;
     const persistedTurnSettings = {
       ...(mapping.last_model ? { model: mapping.last_model } : {}),
       ...(mapping.last_reasoning ? { reasoning: mapping.last_reasoning } : {}),

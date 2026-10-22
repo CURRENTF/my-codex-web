@@ -1,5 +1,10 @@
 export type AccessMode = "fullAccess" | "workspaceWrite" | "readOnly";
-export type BackendId = "codex" | "pi";
+export const BACKEND_IDS = ["codex", "pi", "agy"] as const;
+export type BackendId = typeof BACKEND_IDS[number];
+export const BACKEND_LABELS: Record<BackendId, string> = { codex: "Codex", pi: "pi", agy: "agy" };
+export function backendCapabilities(backend: BackendId) {
+  return { codexFeatures: backend === "codex", steer: backend !== "agy", compact: backend !== "agy" };
+}
 export interface BackendOption {
   id: BackendId;
   name: string;
@@ -7,7 +12,7 @@ export interface BackendOption {
   message?: string;
   models: ModelOption[];
 }
-export function sessionBackend(threadId: string): BackendId { return threadId.startsWith("pi:") ? "pi" : "codex"; }
+export function sessionBackend(threadId: string): BackendId { return threadId.startsWith("pi:") ? "pi" : threadId.startsWith("agy:") ? "agy" : "codex"; }
 export type RuntimeState =
   | "idle"
   | "running"
@@ -94,7 +99,7 @@ export interface SubagentRuntime extends ThreadRuntime, SubagentDescriptor {
 export interface SessionCost {
   threadId: string;
   status: "available" | "unavailable" | "unsupported";
-  source?: "codex" | "tokens" | "pi";
+  source?: "codex" | "tokens" | "pi" | "agy";
   notes?: string[];
   pricingDate?: string;
   unavailableReason?: "noUsage" | "missingPricing" | "incompleteUsage";

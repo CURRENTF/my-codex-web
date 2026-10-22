@@ -1,4 +1,4 @@
-import type { ModelOption } from "@codex-web/shared-types";
+import { BACKEND_IDS, BACKEND_LABELS, type ModelOption } from "@codex-web/shared-types";
 import { useComposerPreferences } from "../composer-preferences";
 import { SettingsSelect } from "./SettingsSelect";
 
@@ -18,14 +18,14 @@ export function SessionDefaultsSettings({ models }: { models: ModelOption[] }) {
     <p>自动保存到此浏览器，仅影响之后新建的对话。</p>
     <label className="field-label">默认后端<SettingsSelect
       className="settings-dialog-select" variant="standard" ariaLabel="新 Session 默认后端" menuLabel="默认后端"
-      value={backend} placeholder="Codex" options={[{ value: "codex", label: "Codex" }, { value: "pi", label: "pi" }]}
-      onValueChange={(next) => setBackend(next === "pi" ? "pi" : "codex")}
+      value={backend} placeholder="Codex" options={BACKEND_IDS.map((id) => ({ value: id, label: BACKEND_LABELS[id] }))}
+      onValueChange={(next) => setBackend(BACKEND_IDS.find((id) => id === next) ?? "codex")}
     /></label>
     <button className="app-settings-row" role="switch" aria-checked={askBackend} aria-label="每次新建时询问后端" onClick={() => setAskBackend(!askBackend)}>
       <span><strong>每次新建时询问后端</strong><small>关闭时直接使用默认后端，无需重启。</small></span>
       <span className={`settings-toggle ${askBackend ? "enabled" : ""}`} aria-hidden="true"><span /></span>
     </button>
-    <p>以下模型设置仅用于 Codex，优先于项目默认。pi 使用其自身的模型配置。</p>
+    <p>以下模型设置仅用于 Codex，优先于项目默认。pi 和 agy 使用各自的模型配置。</p>
     <label className="field-label">默认模型<SettingsSelect
       className="settings-dialog-select" variant="model" ariaLabel="新 Session 默认模型" menuLabel="默认模型"
       value={selected?.model ?? model ?? ""} placeholder="使用项目默认"

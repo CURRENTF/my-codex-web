@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { CodexAdapter, type SessionSettings } from "@codex-web/codex-adapter";
 import { sessionBackend, type BackendOption } from "@codex-web/shared-types";
-import { PiAdapter, unsupportedPiFeature } from "./pi-adapter.js";
+import { PiAdapter } from "./pi-adapter.js";
+import { AgyAdapter } from "./agy-adapter.js";
 
 /** The service consumes operations, never the Codex transport or process supervisor. */
 export type AgentBackend = Pick<CodexAdapter,
@@ -13,9 +14,9 @@ export type AgentBackend = Pick<CodexAdapter,
 };
 
 export class BackendRouter extends EventEmitter implements AgentBackend {
-  constructor(readonly codex: CodexAdapter, readonly pi: PiAdapter) {
+  constructor(readonly codex: CodexAdapter, readonly pi: PiAdapter, readonly agy?: AgyAdapter) {
     super();
-    for (const source of [codex, pi]) for (const event of ["event", "pendingRequest", "stderr", "warning", "error"]) {
+    for (const source of [codex, pi, ...(agy ? [agy] : [])]) for (const event of ["event", "pendingRequest", "stderr", "warning", "error"]) {
       source.on(event, (...args) => this.emit(event, ...args));
     }
     codex.on("connection", (event) => this.emit("connection", event));
@@ -24,14 +25,18 @@ export class BackendRouter extends EventEmitter implements AgentBackend {
   get models() { return this.codex.models; }
   async describe(): Promise<BackendOption[]> {
     return [{ id: "codex", name: "Codex", available: this.codex.connected && this.codex.account !== null,
-      models: this.codex.models, ...(!this.codex.account ? { message: "请在服务所在机器完成 codex login。" } : !this.codex.connected ? { message: "Codex 正在重连。" } : {}) }, await this.pi.describe()];
+      models: this.codex.models, ...(!this.codex.account ? { message: "请在服务所在机器完成 codex login。" } : !this.codex.connected ? { message: "Codex 正在重连。" } : {}) }, ...await Promise.all([this.pi.describe(), ...(this.agy ? [this.agy.describe()] : [])])];
   }
   async start() { try { await this.codex.start(); } catch (error) { this.emit("warning", error); } }
-  stop() { this.pi.stop(); this.codex.stop(); }
-  private forSession(id: string) { return sessionBackend(id) === "pi" ? this.pi : this.codex; }
-  private codexOnly(id: string, feature: string) { if (sessionBackend(id) === "pi") unsupportedPiFeature(feature); return this.codex; }
+  async stop() { this.pi.stop(); this.codex.stop(); await this.agy?.stop(); }
+  private forBackend(backend: string) {
+    if (backend === "agy") { if (!this.agy) throw new Error("agy backend is unavailable"); return this.agy; }
+    return backend === "pi" ? this.pi : this.codex;
+  }
+  private forSession(id: string) { return this.forBackend(sessionBackend(id)); }
+  private codexOnly(id: string, feature: string) { if (sessionBackend(id) !== "codex") throw Object.assign(new Error(`${sessionBackend(id)} 暂不支持 ${feature}`), { statusCode: 400 }); return this.codex; }
   startSession: AgentBackend["startSession"] = (cwd, settings, ephemeral, source) =>
-    (settings.backend === "pi" ? this.pi : this.codex).startSession(cwd, settings, ephemeral, source);
+    this.forBackend(settings.backend ?? "codex").startSession(cwd, settings, ephemeral, source);
   readSession: AgentBackend["readSession"] = (id) => this.forSession(id).readSession(id);
   resumeSession: AgentBackend["resumeSession"] = (id, settings) => this.forSession(id).resumeSession(id, settings);
   startTurn: AgentBackend["startTurn"] = (id, ...args) => this.forSession(id).startTurn(id, ...args);
@@ -54,8 +59,8 @@ export class BackendRouter extends EventEmitter implements AgentBackend {
   listSessions: AgentBackend["listSessions"] = async (input = {}) => {
     const page = this.codex.connected ? await this.codex.listSessions(input) : { data: [], nextCursor: null };
     if (page.nextCursor) return page;
-    const pi = await this.pi.listSessions(input);
-    return { data: [...page.data, ...pi.data], nextCursor: null };
+    const extra = await Promise.all([this.pi.listSessions(input), ...(this.agy ? [this.agy.listSessions(input)] : [])]);
+    return { data: [...page.data, ...extra.flatMap((result) => result.data)], nextCursor: null };
   };
   respondPendingRequest: AgentBackend["respondPendingRequest"] = (id, allow, answers) => {
     if (id.startsWith("pi-request:")) this.pi.respondPendingRequest(id, allow, answers);
@@ -63,6 +68,6 @@ export class BackendRouter extends EventEmitter implements AgentBackend {
   };
   restartForRecovery() { return this.codex.restartForRecovery(); }
   generateSessionTitle(cwd: string, userRequest: string, outcome: string, id?: string) {
-    return id && sessionBackend(id) === "pi" ? this.pi.generateSessionTitle(cwd, userRequest) : this.codex.generateSessionTitle(cwd, userRequest, outcome);
+    return this.forBackend(id ? sessionBackend(id) : "codex").generateSessionTitle(cwd, userRequest, outcome);
   }
 }
