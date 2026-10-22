@@ -504,6 +504,11 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .backend-segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .backend-segmented button:disabled { cursor: default; opacity: .6; }
 .timeline-empty .backend-switch-error { max-width: 360px; color: var(--danger); overflow-wrap: anywhere; }
+.model-catalog-refresh { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-soft); }
+.model-catalog-refresh:hover:not([data-disabled]), .model-catalog-refresh[data-highlighted] { background: var(--surface-hover); color: var(--text); }
+.model-catalog-refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-select-message { margin: 6px 10px; max-width: 320px; color: var(--text-soft); font-size: 12px; overflow-wrap: anywhere; }
+.settings-select-message[role="alert"] { color: var(--danger); }
 .no-selection { padding: clamp(24px, 6vw, 64px); }
 .no-selection-mark { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 18px; border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line)); border-radius: 15px; background: color-mix(in srgb, var(--accent) 6%, var(--surface-strong)); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-strong) 80%, transparent); color: var(--accent); }
 .no-selection-copy { display: grid; justify-items: center; gap: 7px; }

@@ -75,7 +75,9 @@ HTML 文件（`.html` / `.htm`，大小写均可）默认渲染预览，可在�
 
 空白对话的「准备开始」下方可直接选择 Codex、pi 或 agy，无需开启逐次询问。选择其他后端会在同一 Project 打开新对话，带入未发送的文字和附件，保留原对话，不改变已保存的默认后端；已有消息的对话不会显示此入口。普通新建直接调用所选后端，创建结果立即显示，不等待其他后端的状态探测或额外的历史读取。
 
-pi 随 `npm run setup` 安装（固定版本 `@earendil-works/pi-coding-agent@1.4.0`）。在服务所在机器、以服务运行用户执行 `npx --no-install pi`，通过 `/login` 配置所需提供商，或配置该提供商支持的 API Key 环境变量及 pi 的 `models.json`。pi 默认使用 `~/.pi/agent`；可通过 `PI_CODING_AGENT_DIR` 指定独立配置目录。Web 不共享 Codex 凭证，也不在浏览器里接收提供商密钥。配置完成后，在新建弹窗点击「刷新状态」即可重新检测模型；已启动进程的环境变量变化仍需要由服务管理器重新加载。
+每个后端可在「设置 → 新 Session 默认设置」独立保存默认模型与 effort，选择「使用项目默认」或「使用 pi / agy 默认」则沿用原生配置。当前对话通过输入框右下角的模型菜单选择模型，选择只影响该对话的下一轮。模型菜单提供刷新入口，仅查询当前后端：Codex 使用 App Server `model/list`，pi 使用 RPC `get_available_models` 与 `get_state`，agy 使用 `agy models` 与 `agy -p /model`。Web 模型列表缓存 30 秒，手动刷新立即重新查询；登录失效或没有模型时显示后端返回的原因。
+
+pi 随 `npm run setup` 安装（固定版本 `@earendil-works/pi-coding-agent@1.4.0`）。在服务所在机器、以服务运行用户执行 `npx --no-install pi`，通过 `/login` 配置所需提供商，或配置该提供商支持的 API Key 环境变量及 pi 的 `models.json`。pi 默认使用 `~/.pi/agent`；可通过 `PI_CODING_AGENT_DIR` 指定独立配置目录。Web 不共享 Codex 凭证，也不在浏览器里接收提供商密钥。配置完成后，在模型菜单点击刷新图标即可重新检测模型；已启动进程的环境变量变化仍需要由服务管理器重新加载。
 
 每个活动 pi 对话运行独立 RPC 子进程。原生历史与 Web 展示元数据位于 `CODEX_WEB_DATA_DIR/pi`，重启后继续使用同一原生历史；不会把压缩后的 UI 文本重新拼成模型上下文。现有 pi CLI 历史不会自动导入。可用 `CODEX_WEB_PI_BIN=/absolute/path/to/pi` 覆盖执行文件，但必须提供与内置 1.4.0 一致的 RPC 接口（包括 `agent_settled`）。
 
@@ -83,7 +85,7 @@ pi 支持流式文本、思考与工具结果、模型选择、Steer、中断、
 
 ### agy CLI
 
-agy 需要在服务所在机器单独安装，并以服务运行用户完成登录；先确认 `agy models` 可用。Web 从服务进程的 `PATH` 查找 `agy`，也可通过 `CODEX_WEB_AGY_BIN=/absolute/path/to/agy` 指定执行文件。安装 CLI 和设置启动环境后需首次重新启动 Web；之后在设置里切换默认后端无需重启。模型列表来自 agy，默认模型沿用其配置，effort 暂时使用模型默认值。成功的模型探测缓存 30 秒；未安装或未登录不影响 Codex / pi 使用。
+agy 需要在服务所在机器单独安装，并以服务运行用户完成登录；先确认 `agy models` 可用。Web 从服务进程的 `PATH` 查找 `agy`，也可通过 `CODEX_WEB_AGY_BIN=/absolute/path/to/agy` 指定执行文件。安装 CLI 和设置启动环境后需首次重新启动 Web；之后在设置里切换默认后端无需重启。模型列表来自 agy；未在 Web 指定默认模型时沿用其配置，effort 暂时使用模型默认值。成功的模型探测缓存 30 秒；未安装或未登录不影响 Codex / pi 使用。
 
 agy 每轮运行独立 CLI 进程，通过 `--input-format stream-json` / `--output-format stream-json` 传递消息与事件，用明确的 `--conversation` ID 恢复原生上下文，不使用会续接最近对话的 `--continue`。Web 显示历史和原生 ID 映射保存在 `CODEX_WEB_DATA_DIR/agy`；原生上下文仍由 agy 管理，备份或迁移时需同时保留 agy 自身的会话数据。只展示从 Web 创建的会话，不导入已有 CLI 历史。
 

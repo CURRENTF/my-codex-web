@@ -29,6 +29,29 @@ beforeAll(async () => {
   cookie = `${response.cookies[0]!.name}=${response.cookies[0]!.value}`; csrf = response.json().csrfToken;
 });
 afterAll(async () => { await server?.close(); vi.unstubAllEnvs(); await rm(state.directory, { recursive: true, force: true }); });
+it("refreshes only the requested backend and exposes its native default model", async () => {
+  const piProbe = vi.spyOn(server.adapter.pi, "describe").mockImplementation(() => new Promise(() => {}));
+  const agyProbe = vi.spyOn(server.adapter.agy!, "describe");
+  try {
+    const response = await server.app.inject({ url: "/api/backends/agy?refresh=1", headers: headers() });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: "agy", available: true, models: [
+      { model: "fixture-model", isDefault: true }, { model: "fixture-alternate", isDefault: false },
+    ] });
+    expect(agyProbe).toHaveBeenCalledWith(true);
+    expect(piProbe).not.toHaveBeenCalled();
+    const invalid = await server.app.inject({ url: "/api/backends/unknown", headers: headers() });
+    expect(invalid.statusCode).toBe(400);
+  } finally { piProbe.mockRestore(); agyProbe.mockRestore(); }
+});
+it("creates native sessions with the explicit model chosen in Web defaults", async () => {
+  const project = (await server.app.inject({ method: "POST", url: "/api/projects", headers: headers(), payload: { path: state.directory, clientRequestId: randomUUID() } })).json();
+  for (const [backend, model, reasoning] of [["pi", "test/alternate", "off"], ["agy", "fixture-alternate", "default"]]) {
+    const response = await server.app.inject({ method: "POST", url: `/api/projects/${project.id}/sessions`, headers: headers(), payload: { backend, model, reasoning, clientRequestId: randomUUID() } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings).toMatchObject({ backend, model, reasoning });
+  }
+});
 it("creates and continues Pi through HTTP with Codex unavailable, without inheriting Codex project defaults", async () => {
   const catalog = await server.app.inject({ url: "/api/backends", headers: headers() });
   expect(catalog.json().map((item: any) => [item.id, item.available])).toEqual([["codex", false], ["pi", true], ["agy", true]]);

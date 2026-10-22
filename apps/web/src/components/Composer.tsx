@@ -1,4 +1,5 @@
 import { sessionBackend, backendCapabilities } from "@codex-web/shared-types";
+import { useBackendCatalog } from "../backend-catalog";
 import { PromptSchedule } from "./PromptSchedule";
 import { composerWordCount, useComposerPreferences } from "../composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -60,7 +61,7 @@ function normalizeAccessMode(value: string): AccessMode | null {
   return null;
 }
 
-export function Composer({ errorTarget, threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, disabledReason, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
+export function Composer({ errorTarget, threadId, project, models: suppliedModels, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, disabledReason, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
   errorTarget?: HTMLElement | null;
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
@@ -70,6 +71,10 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
 }) {
   const backend = sessionBackend(threadId);
+  const catalog = useBackendCatalog(backend);
+  const models = catalog.data?.models ?? suppliedModels;
+  const modelsRef = useRef(models);
+  modelsRef.current = models;
   const capabilities = backendCapabilities(backend);
   const { codexFeatures, steer: supportsSteer } = capabilities;
   const supportsCommand = (name: string) => (capabilities.compact || name !== "compact") && (codexFeatures || !["goal", "review", "fork", "side", "permissions", "skills"].includes(name));
@@ -94,10 +99,10 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const applyQueuedSettings = useAppStore((state) => state.applyQueuedSettings);
   const setStoredQueuedTurnBarrier = useAppStore((state) => state.setQueuedTurnBarrier);
   const removeQueuedSubmission = useAppStore((state) => state.removeQueuedSubmission);
-  const initialModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
+  const initialModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? (codexFeatures ? project.defaultModel : null) ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
   const [model, setModel] = useState(initialModel);
   const selectedModel = useMemo(() => models.find((item) => item.model === model || item.id === model), [models, model]);
-  const [reasoning, setReasoning] = useState(queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(selectedModel));
+  const [reasoning, setReasoning] = useState(queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? (codexFeatures ? project.defaultReasoning : null) ?? preferredReasoningForModel(selectedModel));
   const [serviceTier, setServiceTier] = useState<string | null>(queuedEffectiveSettings ? queuedEffectiveSettings.serviceTier : serviceTierForModel(selectedModel, initialSettings.serviceTier));
   const [accessMode, setAccessMode] = useState<AccessMode>(queuedEffectiveSettings?.accessMode ?? initialSettings.accessMode ?? project.defaultAccessMode);
   const effectiveSettings = useRef<QueuedMessageSettings>({ model, reasoning, serviceTier, accessMode });
@@ -123,9 +128,10 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const skills = useQuery({ queryKey: ["skills", project.id, backend], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: codexFeatures && project.available && !disconnected, staleTime: 60_000 });
 
   useEffect(() => {
-    const nextModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
+    const models = modelsRef.current;
+    const nextModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? (codexFeatures ? project.defaultModel : null) ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
     const option = models.find((item) => item.model === nextModel || item.id === nextModel);
-    const nextReasoning = queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? project.defaultReasoning ?? preferredReasoningForModel(option);
+    const nextReasoning = queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? (codexFeatures ? project.defaultReasoning : null) ?? preferredReasoningForModel(option);
     const nextServiceTier = queuedEffectiveSettings ? queuedEffectiveSettings.serviceTier : serviceTierForModel(option, initialSettings.serviceTier);
     const nextAccessMode = queuedEffectiveSettings?.accessMode ?? initialSettings.accessMode ?? project.defaultAccessMode;
     effectiveSettings.current = { model: nextModel, reasoning: nextReasoning, serviceTier: nextServiceTier, accessMode: nextAccessMode };
@@ -135,7 +141,13 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     setAccessMode(nextAccessMode);
     steerDraftTurnId.current = null;
     setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setCompletedSkillMention(null); setCursor(0); setDeliveryMode(supportsSteer ? "steer" : "queue"); setDraggingFiles(false); setQueuedCommandPendingId(null);
-  }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.serviceTier, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, models]);
+  }, [threadId, initialSettings.model, initialSettings.reasoning, initialSettings.serviceTier, initialSettings.accessMode, project.defaultModel, project.defaultReasoning, project.defaultAccessMode, codexFeatures]);
+  useEffect(() => {
+    if (model || !models.length) return;
+    const option = models.find((item) => item.isDefault) ?? models[0]!;
+    setModel(option.model);
+    setReasoning(preferredReasoningForModel(option));
+  }, [model, models]);
   useEffect(() => {
     if (!selectedModel || selectedModel.supportedReasoning.some((item) => item.effort === reasoning)) return;
     effectiveSettings.current = { ...effectiveSettings.current, reasoning: selectedModel.defaultReasoning };
@@ -578,7 +590,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
           {!codexFeatures ? <span className="access-control" data-tooltip={backend === "agy" ? "agy accept-edits：自动接受文件编辑，命令遵循原生权限。无 Codex 沙箱，不支持 Web 审批。" : "pi 当前使用 Full Access，无工作区沙箱"}>{backend === "agy" ? "agy 权限" : "Full Access"}</span> : <AccessModeSelect className="access-control" value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />}
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
-              <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked || modelSelectOptions.length === 0} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); const nextReasoning = preferredReasoningForModel(option); const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier); effectiveSettings.current = { ...effectiveSettings.current, model: next, reasoning: nextReasoning, serviceTier: nextServiceTier }; setModel(next); setReasoning(nextReasoning); setServiceTier(nextServiceTier); }} />
+              <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked} onOpen={catalog.refreshIfStale} onRefresh={() => void catalog.refetch()} refreshing={catalog.isFetching} error={catalog.error?.message ?? catalog.data?.message} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); const nextReasoning = preferredReasoningForModel(option); const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier); effectiveSettings.current = { ...effectiveSettings.current, model: next, reasoning: nextReasoning, serviceTier: nextServiceTier }; setModel(next); setReasoning(nextReasoning); setServiceTier(nextServiceTier); }} />
               <SettingsSelect className="reasoning-select" variant="reasoning" ariaLabel="Reasoning effort" menuLabel="Reasoning effort" value={reasoning} options={reasoningSelectOptions} placeholder="Reasoning" disabled={running || blocked || reasoningSelectOptions.length === 0} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, reasoning: next }; setReasoning(next); }} />
               {fastServiceTier && <button type="button" className={`service-tier-toggle ${fastMode ? "active" : ""}`} role="switch" aria-checked={fastMode} aria-label={`Fast 模式${fastMode ? "已开启" : "已关闭"}`} data-tooltip={`${fastServiceTier.name}：${fastServiceTier.description}`} disabled={running || blocked} onClick={() => { const next = fastMode ? null : fastServiceTier.id; effectiveSettings.current = { ...effectiveSettings.current, serviceTier: next }; setServiceTier(next); }}><Lightning size={16} weight={fastMode ? "fill" : "regular"} /></button>}
             </div>

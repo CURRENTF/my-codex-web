@@ -68,11 +68,65 @@ test("switches empty-session backends and creates without waiting for catalog or
     releaseReads();
     await page.unrouteAll({ behavior: "wait" });
 
+    // Each backend has its own saved default and its own native model list.
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const defaultModel = page.getByRole("button", { name: "新 Session 默认模型", exact: true });
+    const defaultBackend = page.getByRole("button", { name: "新 Session 默认后端", exact: true });
+    await expect(defaultModel).toHaveText("使用 pi 默认");
+    await defaultModel.click();
+    await page.getByRole("menuitemradio", { name: /Pi alternate/ }).click();
+    await defaultBackend.click();
+    await page.getByRole("menuitemradio", { name: "agy", exact: true }).click();
+    await expect(defaultModel).toHaveText("使用 agy 默认");
+    await defaultModel.click();
+    await page.getByRole("menuitemradio", { name: /Agy alternate/ }).click();
+    await defaultBackend.click();
+    await page.getByRole("menuitemradio", { name: "Codex", exact: true }).click();
+    await expect(defaultModel).toHaveText("使用项目默认");
+    await defaultBackend.click();
+    await page.getByRole("menuitemradio", { name: "pi", exact: true }).click();
+    await expect(defaultModel).toContainText("Pi alternate");
+    await page.keyboard.press("Escape");
+    const beforeDefaultCreation = page.url();
+    await page.locator(".sidebar").getByRole("button", { name: "新建 Session", exact: true }).click();
+    await expect(page).not.toHaveURL(beforeDefaultCreation);
+    await expect(page.getByRole("button", { name: "模型", exact: true })).toContainText("Pi alternate");
+    await selector.getByRole("button", { name: "使用 agy 后端" }).click();
+    await expect(page.getByRole("button", { name: "模型", exact: true })).toContainText("Agy alternate");
+
+    // Refreshing a changed catalog must not reset an unsent model selection.
+    const modelButton = page.getByRole("button", { name: "模型", exact: true });
+    await modelButton.click();
+    await page.getByRole("menuitemradio", { name: /Fixture model/ }).click();
+    await page.getByRole("textbox", { name: "消息", exact: true }).fill("keep model and draft");
+    let refreshes = 0;
+    await page.route("**/api/backends/agy?refresh=1", async (route) => {
+      refreshes++;
+      const response = await route.fetch();
+      const catalog = await response.json();
+      catalog.models.push({ ...catalog.models[0], id: "extra", model: "extra", displayName: "Newly available", isDefault: false });
+      await route.fulfill({ response, json: catalog });
+    });
+    await modelButton.click();
+    await page.getByRole("menuitem", { name: "刷新模型列表", exact: true }).click();
+    await expect(page.getByRole("menuitemradio", { name: /Newly available/ })).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: /Fixture model/ })).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await expect(modelButton).toContainText("Fixture model");
+    await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep model and draft");
+    expect(refreshes).toBe(1);
+    await page.unrouteAll({ behavior: "wait" });
+
     // Once a conversation has history, the empty-state switch disappears.
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("hello");
     await page.getByRole("button", { name: "发送或执行命令", exact: true }).click();
     await expect(page.locator(".user-message").filter({ hasText: "hello" })).toBeVisible();
     await expect(selector).toHaveCount(0);
+    const threadId = page.url().split("/sessions/")[1]!;
+    await expect.poll(() => page.evaluate(async (id) => {
+      const session = await fetch(`/api/sessions/${id}`).then((response) => response.json());
+      return session.thread.turns[0]?.status;
+    }, threadId)).toBe("completed");
   } finally {
     releaseReads();
     await page.unrouteAll({ behavior: "wait" });

@@ -417,6 +417,11 @@ export class CodexAdapter extends EventEmitter {
     return this.accountCheckPromise;
   }
 
+  async refreshModels(): Promise<ModelOption[]> {
+    this.modelsValue = await this.listModels();
+    return this.modelsValue;
+  }
+
   async listModels(): Promise<ModelOption[]> {
     const models: ModelListResponse["data"] = [];
     let cursor: string | null = null;

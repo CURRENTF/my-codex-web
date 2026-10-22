@@ -1,5 +1,6 @@
 import { NewSessionDialog } from "./components/NewSessionDialog";
-import { sessionBackend, type BackendId, type ModelOption } from "@codex-web/shared-types";
+import { sessionBackend, type BackendId, type BackendOption, type ModelOption } from "@codex-web/shared-types";
+import { backendCatalogKey } from "./backend-catalog";
 import { useAttachmentDrafts } from "./attachment-drafts";
 import { removeSessionHistory } from "./session-history-cache";
 import { MachineMonitor } from "./components/MachineMonitor";
@@ -393,9 +394,13 @@ export function App() {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
       // The selected backend validates its own configuration. Probing every CLI
       // here made even Codex creation wait for unrelated backend processes.
-      const defaults = backend !== "codex"
-        ? { model: null, reasoning: null, accessMode: "fullAccess", serviceTier: null }
-        : sessionCreationDefaults(useComposerPreferences.getState(), models ?? bootstrapData?.models ?? []);
+      const catalogModels = models ?? client.getQueryData<BackendOption>(backendCatalogKey(backend))?.models
+        ?? bootstrapData?.backends?.find((item) => item.id === backend)?.models
+        ?? (backend === "codex" ? bootstrapData?.models : []) ?? [];
+      const defaults = {
+        ...(backend !== "codex" ? { model: null, reasoning: null, accessMode: "fullAccess", serviceTier: null } : {}),
+        ...sessionCreationDefaults(useComposerPreferences.getState(), catalogModels, backend),
+      };
       const result = await api<SessionPayload & { summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, backend, clientRequestId: crypto.randomUUID() }) });
       // The creation response already contains the empty session. Render it
       // immediately while the regular history query synchronizes in background.

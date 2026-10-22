@@ -425,6 +425,12 @@ export async function createServer() {
   });
   app.get("/api/models", async () => adapter.models);
   app.get("/api/backends", async () => adapter.describe());
+  app.get("/api/backends/:backendId", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const backend = z.enum(BACKEND_IDS).parse((request.params as { backendId: string }).backendId);
+    const { refresh } = z.object({ refresh: z.enum(["0", "1"]).default("0") }).parse(request.query);
+    return adapter.describeBackend(backend, refresh === "1");
+  });
   app.get("/api/projects", async () => repositories.listProjects());
   app.get("/api/projects/:projectId/skills", async (request) => sessions.listProjectSkills(idSchema.parse((request.params as { projectId: string }).projectId)));
   app.get("/api/machine-metrics", async (_request, reply) => {

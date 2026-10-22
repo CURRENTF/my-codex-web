@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { CodexAdapter, type SessionSettings } from "@codex-web/codex-adapter";
-import { sessionBackend, type BackendOption } from "@codex-web/shared-types";
+import { sessionBackend, type BackendId, type BackendOption } from "@codex-web/shared-types";
 import { PiAdapter } from "./pi-adapter.js";
 import { AgyAdapter } from "./agy-adapter.js";
 
@@ -23,9 +23,15 @@ export class BackendRouter extends EventEmitter implements AgentBackend {
   }
   get account() { return this.codex.account; }
   get models() { return this.codex.models; }
+  async describeBackend(backend: BackendId, refresh = false): Promise<BackendOption> {
+    if (backend === "pi") return this.pi.describe();
+    if (backend === "agy") return this.agy ? this.agy.describe(refresh) : { id: "agy", name: "agy", available: false, models: [], message: "agy 未配置。" };
+    const models = refresh && this.codex.connected ? await this.codex.refreshModels() : this.codex.models;
+    return { id: "codex", name: "Codex", available: this.codex.connected && this.codex.account !== null,
+      models, ...(!this.codex.account ? { message: "请在服务所在机器完成 codex login。" } : !this.codex.connected ? { message: "Codex 正在重连。" } : {}) };
+  }
   async describe(): Promise<BackendOption[]> {
-    return [{ id: "codex", name: "Codex", available: this.codex.connected && this.codex.account !== null,
-      models: this.codex.models, ...(!this.codex.account ? { message: "请在服务所在机器完成 codex login。" } : !this.codex.connected ? { message: "Codex 正在重连。" } : {}) }, ...await Promise.all([this.pi.describe(), ...(this.agy ? [this.agy.describe()] : [])])];
+    return Promise.all([this.describeBackend("codex"), this.describeBackend("pi"), ...(this.agy ? [this.describeBackend("agy")] : [])]);
   }
   async start() { try { await this.codex.start(); } catch (error) { this.emit("warning", error); } }
   async stop() { this.pi.stop(); this.codex.stop(); await this.agy?.stop(); }

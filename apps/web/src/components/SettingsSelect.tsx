@@ -1,4 +1,4 @@
-import { Check } from "@phosphor-icons/react";
+import { ArrowClockwise, Check } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { ReactNode } from "react";
 
@@ -22,6 +22,10 @@ export function SettingsSelect({
   variant,
   icon,
   className = "",
+  onOpen,
+  onRefresh,
+  refreshing = false,
+  error,
 }: {
   ariaLabel: string;
   menuLabel: string;
@@ -33,10 +37,14 @@ export function SettingsSelect({
   variant: "model" | "reasoning" | "access" | "status" | "standard";
   icon?: ReactNode;
   className?: string;
+  onOpen?(): void;
+  onRefresh?(): void;
+  refreshing?: boolean;
+  error?: string;
 }) {
   const selected = options.find((option) => option.value === value);
   const selectedValue = value || EMPTY_VALUE;
-  return <DropdownMenu.Root>
+  return <DropdownMenu.Root onOpenChange={(open) => { if (open) onOpen?.(); }}>
     <DropdownMenu.Trigger asChild>
       <button
         type="button"
@@ -58,7 +66,9 @@ export function SettingsSelect({
         collisionPadding={8}
         loop
       >
-        <DropdownMenu.Label className="settings-select-menu-label"><span>{menuLabel}</span><small>{options.length} 项</small></DropdownMenu.Label>
+        <div className="settings-select-menu-label"><DropdownMenu.Label>{menuLabel}</DropdownMenu.Label>{onRefresh ? <DropdownMenu.Item className="model-catalog-refresh" aria-label="刷新模型列表" disabled={refreshing} onSelect={(event) => { event.preventDefault(); onRefresh(); }}><ArrowClockwise size={14} className={refreshing ? "spinning" : undefined} /></DropdownMenu.Item> : <small>{options.length} 项</small>}</div>
+        {error && <p className="settings-select-message" role="alert">{error}</p>}
+        {!error && options.length === 0 && <p className="settings-select-message">{refreshing ? "正在获取模型…" : "暂无可用模型"}</p>}
         <DropdownMenu.RadioGroup value={selectedValue} onValueChange={(next) => onValueChange(next === EMPTY_VALUE ? "" : next)}>
           {options.map((option) => <DropdownMenu.RadioItem
             key={option.value || EMPTY_VALUE}

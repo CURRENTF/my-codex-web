@@ -8,7 +8,7 @@ vi.hoisted(() => {
 });
 
 describe("composer preferences", () => {
-  beforeEach(() => useComposerPreferences.setState({ longTextConfirmation: false, showUserMessageRail: true, defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null }));
+  beforeEach(() => useComposerPreferences.setState({ longTextConfirmation: false, showUserMessageRail: true, defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null, backendDefaults: {} }));
   it("defaults to direct Codex creation for existing browser settings", async () => {
     localStorage.setItem("codex-web:composer-preferences:v1", JSON.stringify({ version: 1, state: { defaultModel: "model-a", defaultReasoning: "high" } }));
     await useComposerPreferences.persist.rehydrate();
@@ -34,6 +34,23 @@ describe("composer preferences", () => {
     localStorage.setItem("codex-web:composer-preferences:v1", saved);
     await useComposerPreferences.persist.rehydrate();
     expect(useComposerPreferences.getState()).toMatchObject({ defaultBackend: "agy", askBackendOnNewSession: false });
+  });
+  it("keeps each backend's explicit model independent and restores all defaults", async () => {
+    const prefs = useComposerPreferences.getState();
+    prefs.setBackendDefaults("codex", "model-a", "high");
+    expect(sessionCreationDefaults(useComposerPreferences.getState(), models, "pi")).toEqual({});
+    prefs.setBackendDefaults("pi", "pi-model", null);
+    prefs.setBackendDefaults("agy", "agy-model", "default");
+    const saved = localStorage.getItem("codex-web:composer-preferences:v1")!;
+    useComposerPreferences.setState({ backendDefaults: {}, defaultModel: null, defaultReasoning: null });
+    localStorage.setItem("codex-web:composer-preferences:v1", saved);
+    await useComposerPreferences.persist.rehydrate();
+    expect(sessionCreationDefaults(useComposerPreferences.getState(), models)).toEqual({ model: "model-a", reasoning: "high" });
+    expect(sessionCreationDefaults(useComposerPreferences.getState(), [{ ...models[0]!, model: "pi-model" }], "pi")).toEqual({ model: "pi-model", reasoning: "medium" });
+    expect(sessionCreationDefaults(useComposerPreferences.getState(), [{ ...models[0]!, model: "agy-model", defaultReasoning: "default", supportedReasoning: [{ effort: "default" }] }], "agy")).toEqual({ model: "agy-model", reasoning: "default" });
+    prefs.setBackendDefaults("pi", null, null);
+    expect(sessionCreationDefaults(useComposerPreferences.getState(), [], "pi")).toEqual({});
+    expect(useComposerPreferences.getState().backendDefaults.agy?.defaultModel).toBe("agy-model");
   });
   it("counts Chinese characters, English words and mixed text without punctuation", () => {
     expect(composerWordCount("你好 world! Let's test，中文。")).toBe(7);
@@ -77,7 +94,7 @@ describe("composer preferences", () => {
   });
   it("discards implicit model history during migration but preserves the text preference", () => {
     const migrate = useComposerPreferences.persist.getOptions().migrate!;
-    expect(migrate({ longTextConfirmation: true, lastCreatedThreadId: "old", lastCreatedModel: "model-a" }, 0)).toEqual({ longTextConfirmation: true, showUserMessageRail: true, defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null });
+    expect(migrate({ longTextConfirmation: true, lastCreatedThreadId: "old", lastCreatedModel: "model-a" }, 0)).toEqual({ longTextConfirmation: true, showUserMessageRail: true, defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null, backendDefaults: {} });
   });
 });
 

@@ -27,8 +27,8 @@ export class AgyAdapter extends EventEmitter {
       this.records.set(saved.thread.id, saved);
     }
   }
-  async describe(): Promise<BackendOption> {
-    if (this.catalog && Date.now() - this.catalog.at < 30_000) return this.catalog.value;
+  async describe(refresh = false): Promise<BackendOption> {
+    if (!refresh && this.catalog && Date.now() - this.catalog.at < 30_000) return this.catalog.value;
     this.probePromise ??= this.probe().finally(() => { this.probePromise = undefined; });
     return this.probePromise;
   }
@@ -43,7 +43,7 @@ export class AgyAdapter extends EventEmitter {
       const value: BackendOption = { id: "agy", name: "agy", models, available: models.length > 0,
         ...(!models.length ? { message: "agy 尚无可用模型，请先在服务所在机器登录 agy。" } : {}) };
       this.catalog = { at: Date.now(), value }; return value;
-    } catch (error) { return { id: "agy", name: "agy", models: [], available: false, message: error instanceof Error ? error.message : "agy 不可用" }; }
+    } catch (error) { this.catalog = undefined; return { id: "agy", name: "agy", models: [], available: false, message: error instanceof Error ? error.message : "agy 不可用" }; }
   }
   private require(id: string) { const saved = this.records.get(id); if (!saved) throw Object.assign(new Error("agy session not found"), { statusCode: 404 }); return saved; }
   private save(saved: SavedSession) {

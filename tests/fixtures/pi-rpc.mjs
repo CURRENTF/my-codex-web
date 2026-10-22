@@ -9,7 +9,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   const respond = (data) => send({ type: 'response', command: command.type, id: command.id, success: true, data });
   switch (command.type) {
     case 'get_state': respond({ model, thinkingLevel: 'off' }); break;
-    case 'get_available_models': respond({ models: [model] }); break;
+    case 'get_available_models': respond({ models: [model, { ...model, id: "alternate", name: "Pi alternate" }] }); break;
     case 'get_available_thinking_levels': respond({ levels: ['off'] }); break;
     case 'get_session_stats': respond({ cost: 0, contextUsage: { tokens: 42, contextWindow: 8192 } }); break;
     case 'prompt': {

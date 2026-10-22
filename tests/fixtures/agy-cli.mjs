@@ -7,7 +7,7 @@ const arg = name => args[args.indexOf(name) + 1];
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 if (args.includes('--continue') || args.includes('--dangerously-skip-permissions')) process.exit(9);
 if (args.includes('models')) {
-  send({ status: 'SUCCESS', command: { data: { models: [{ id: 'fixture-model', label: 'Fixture model' }] } } });
+  send({ status: 'SUCCESS', command: { data: { models: [{ id: 'fixture-model', label: 'Fixture model' }, { id: 'fixture-alternate', label: 'Agy alternate' }] } } });
   process.exit(0);
 }
 if (args.includes('-p')) {
