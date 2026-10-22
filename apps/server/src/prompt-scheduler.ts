@@ -11,7 +11,7 @@ export class PromptScheduler {
   private pending = new Set<Promise<void>>();
   private running = new Set<string>();
 
-  constructor(private repositories: Repositories, private sessions: Pick<SessionService, "startTurn" | "readSession">, private connected: () => boolean, private onEnabledChange?: (threadId: string, enabled: boolean) => void) {
+  constructor(private repositories: Repositories, private sessions: Pick<SessionService, "startTurn" | "readSession">, private connected: (threadId?: string) => boolean, private onEnabledChange?: (threadId: string, enabled: boolean) => void) {
     repositories.db.exec(`CREATE TABLE IF NOT EXISTS prompt_schedules (
       thread_id TEXT PRIMARY KEY REFERENCES project_sessions(thread_id) ON DELETE CASCADE,
       value TEXT NOT NULL
@@ -61,11 +61,10 @@ export class PromptScheduler {
   }
 
   tick(now = Date.now()): void {
-    if (!this.connected()) return;
     const rows = this.repositories.db.prepare("SELECT value FROM prompt_schedules").all() as { value: string }[];
     for (const row of rows) {
       const schedule = JSON.parse(row.value) as PromptSchedule;
-      if (!schedule.enabled) continue;
+      if (!schedule.enabled || !this.connected(schedule.threadId)) continue;
       const mapping = this.repositories.getProjectSession(schedule.threadId);
       if (!mapping || mapping.hidden) {
         this.write({ ...schedule, enabled: false, nextRunAt: null, lastResult: "任务已归档，轮询已暂停" });

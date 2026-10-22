@@ -3,6 +3,10 @@ import { useComposerPreferences } from "../composer-preferences";
 import { SettingsSelect } from "./SettingsSelect";
 
 export function SessionDefaultsSettings({ models }: { models: ModelOption[] }) {
+  const backend = useComposerPreferences((state) => state.defaultBackend);
+  const askBackend = useComposerPreferences((state) => state.askBackendOnNewSession);
+  const setBackend = useComposerPreferences((state) => state.setDefaultBackend);
+  const setAskBackend = useComposerPreferences((state) => state.setAskBackendOnNewSession);
   const model = useComposerPreferences((state) => state.defaultModel);
   const reasoning = useComposerPreferences((state) => state.defaultReasoning);
   const setDefaults = useComposerPreferences((state) => state.setSessionDefaults);
@@ -11,7 +15,17 @@ export function SessionDefaultsSettings({ models }: { models: ModelOption[] }) {
   const invalidEffort = !!selected && reasoning !== null && !selected.supportedReasoning.some((item) => item.effort === reasoning);
   return <section className="session-defaults-settings" aria-label="新 Session 默认设置">
     <h3>新 Session 默认设置</h3>
-    <p>自动保存到此浏览器。仅影响新建 Session，优先于项目默认设置。</p>
+    <p>自动保存到此浏览器，仅影响之后新建的对话。</p>
+    <label className="field-label">默认后端<SettingsSelect
+      className="settings-dialog-select" variant="standard" ariaLabel="新 Session 默认后端" menuLabel="默认后端"
+      value={backend} placeholder="Codex" options={[{ value: "codex", label: "Codex" }, { value: "pi", label: "pi" }]}
+      onValueChange={(next) => setBackend(next === "pi" ? "pi" : "codex")}
+    /></label>
+    <button className="app-settings-row" role="switch" aria-checked={askBackend} aria-label="每次新建时询问后端" onClick={() => setAskBackend(!askBackend)}>
+      <span><strong>每次新建时询问后端</strong><small>关闭时直接使用默认后端，无需重启。</small></span>
+      <span className={`settings-toggle ${askBackend ? "enabled" : ""}`} aria-hidden="true"><span /></span>
+    </button>
+    <p>以下模型设置仅用于 Codex，优先于项目默认。pi 使用其自身的模型配置。</p>
     <label className="field-label">默认模型<SettingsSelect
       className="settings-dialog-select" variant="model" ariaLabel="新 Session 默认模型" menuLabel="默认模型"
       value={selected?.model ?? model ?? ""} placeholder="使用项目默认"

@@ -1,3 +1,4 @@
+import { sessionBackend, type BackendId } from "@codex-web/shared-types";
 import type { PendingRequestSummary, RuntimeState, SessionTurn, SideChatRuntime, SubagentDescriptor, SubagentRuntime, ThreadRuntime } from "@codex-web/shared-types";
 import type { AdapterEvent, AdapterPendingRequest, ListedSubagent } from "@codex-web/codex-adapter";
 import { EventGateway } from "./event-gateway.js";
@@ -148,14 +149,14 @@ export class ThreadRuntimeRegistry {
     });
   }
 
-  handleConnection(state: "connected" | "connecting" | "disconnected"): void {
+  handleConnection(state: "connected" | "connecting" | "disconnected", backend?: BackendId): void {
+    const affected = (id: string) => !backend || sessionBackend(id) === backend;
     if (state === "disconnected") {
-      this.liveDeltas.clear();
-      this.liveDeltaThreads.clear();
-      this.pendingRequests.clear();
-      this.pendingRequestOwners.clear();
-      this.activeThreadHints.clear();
+      for (const [key, id] of this.liveDeltaThreads) if (affected(id)) { this.liveDeltas.delete(key); this.liveDeltaThreads.delete(key); }
+      for (const [key, id] of this.pendingRequestOwners) if (affected(id)) { this.pendingRequests.delete(key); this.pendingRequestOwners.delete(key); }
+      for (const id of this.activeThreadHints) if (affected(id)) this.activeThreadHints.delete(id);
       for (const [threadId, runtime] of this.runtimes) {
+        if (!affected(threadId)) continue;
         if (runtime.state === "running" || runtime.state === "waitingForInput") {
           this.connectionInterruptedTurns.set(threadId, runtime.activeTurnId ?? null);
           this.setRuntime(threadId, { state: "disconnected", activeTurnId: undefined, pendingRequestIds: [] });
@@ -168,7 +169,7 @@ export class ThreadRuntimeRegistry {
         }
       }
     }
-    this.events.publish("connection.changed", { state });
+    this.events.publish(backend ? "backend.connection.changed" : "connection.changed", { state, ...(backend ? { backend } : {}) });
   }
 
   reconcileFromSnapshot(threadId: string, turns: SessionTurn[]): SnapshotReconciliationResult {

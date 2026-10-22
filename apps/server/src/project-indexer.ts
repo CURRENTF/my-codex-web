@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { Project } from "@codex-web/shared-types";
-import type { CodexAdapter } from "@codex-web/codex-adapter";
+import type { AgentBackend } from "./agent-backend.js";
 import { Repositories } from "./database.js";
 import { KeyedOperationLock } from "./keyed-operation-lock.js";
 
@@ -26,7 +26,7 @@ export class ProjectIndexer extends EventEmitter {
 
   constructor(
     private readonly repositories: Repositories,
-    private readonly adapter: CodexAdapter,
+    private readonly adapter: AgentBackend,
     private readonly projectLocks = new KeyedOperationLock(),
   ) { super(); }
 

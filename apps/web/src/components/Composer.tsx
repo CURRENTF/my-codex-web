@@ -1,3 +1,4 @@
+import { sessionBackend } from "@codex-web/shared-types";
 import { PromptSchedule } from "./PromptSchedule";
 import { composerWordCount, useComposerPreferences } from "../composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -68,6 +69,8 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   compact?: boolean; disabled?: boolean; onTextareaReady?(element: HTMLTextAreaElement | null): void;
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
 }) {
+  const isPi = sessionBackend(threadId) === "pi";
+  const supportsCommand = (name: string) => !isPi || !["goal", "review", "fork", "side", "permissions", "skills"].includes(name);
   const queryClient = useQueryClient(); const textarea = useRef<HTMLTextAreaElement>(null); const fileInput = useRef<HTMLInputElement>(null);
   const bindTextarea = useCallback((element: HTMLTextAreaElement | null) => { textarea.current = element; onTextareaReady?.(element); }, [onTextareaReady]);
   const steerDraftTurnId = useRef<string | null>(null);
@@ -115,7 +118,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const [queuedCommandPendingId, setQueuedCommandPendingId] = useState<string | null>(null);
   const running = runtimeState === "running" || runtimeState === "waitingForInput"; const disconnected = runtimeState === "disconnected"; const blocked = (disabled || disconnected) && !running;
   const blockedMessage = disabled ? "Project 目录不可用；恢复该目录后重新扫描即可继续。" : "Session 尚未完成重同步；请等待状态恢复后继续。";
-  const skills = useQuery({ queryKey: ["skills", project.id], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: project.available && !disconnected, staleTime: 60_000 });
+  const skills = useQuery({ queryKey: ["skills", project.id, isPi ? "pi" : "codex"], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: !isPi && project.available && !disconnected, staleTime: 60_000 });
 
   useEffect(() => {
     const nextModel = queuedEffectiveSettings?.model ?? initialSettings.model ?? project.defaultModel ?? models.find((item) => item.isDefault)?.model ?? models[0]?.model ?? "";
@@ -186,7 +189,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     }
     if (trigger?.kind === "command") {
       const query = trigger.query.toLocaleLowerCase();
-      const options = slashCommands.filter((command) => !query || command.name.includes(query) || command.description.toLocaleLowerCase().includes(query)).map((command) => ({ key: command.name, value: command.name, label: `/${command.name}`, description: command.description, meta: command.usage }));
+      const options = slashCommands.filter((command) => supportsCommand(command.name) && (!query || command.name.includes(query) || command.description.toLocaleLowerCase().includes(query))).map((command) => ({ key: command.name, value: command.name, label: `/${command.name}`, description: command.description, meta: command.usage }));
       return { kind: "command", options, title: "Slash 命令", hint: running ? "Enter 补全 · Tab 将完整命令排到下一轮" : "Enter 补全 · Esc 关闭" };
     }
     if (trigger?.kind === "skill") {
@@ -227,6 +230,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
     const parsed = parseSlashCommand(raw);
     if (!parsed || !isSupportedSlashCommand(parsed.name)) throw new Error(`不支持的 Slash 命令：/${parsed?.name ?? ""}`);
     const command = parsed.name as SlashCommandName; const args = parsed.args;
+    if (!supportsCommand(command)) throw new Error(`pi 暂不支持 /${command}`);
     if (command === "goal") {
       if (!args) {
         setFeedback({ tone: "info", text: goal ? `Goal · ${goal.status} · ${goal.objective} · ${goal.tokensUsed}/${goal.tokenBudget ?? "∞"} tokens` : "当前 Session 尚未设置 Goal。用 /goal <目标> 创建。" });
@@ -307,7 +311,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
       setFeedback({ tone: "info", text: `${runtimeState} · ${selectedModel?.displayName ?? model} · ${fastMode ? "Fast" : "Standard"} · reasoning ${reasoning || "default"} · ${accessModeLabel(accessMode)} · 上下文 ${context}` }); return {};
     }
     updateDraft("$", 1); setFeedback(null); return {};
-  }, [accessMode, contextUsage, fastMode, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
+  }, [isPi, accessMode, contextUsage, fastMode, goal, latestCompletedTurnId, model, models, onAccessModeChange, onForkLatest, onOpenSideChat, persistAccessMode, queryClient, reasoning, runtimeState, selectedModel, threadId, updateDraft]);
 
   const send = useMutation({ mutationFn: async ({ expectedTurnId }: { expectedTurnId?: string | null } = {}) => {
     const submittedDraft = draft; const submittedAttachments = [...attachments]; const text = submittedDraft.trim(); if (!text && !submittedAttachments.length) return;
@@ -563,9 +567,9 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
         </div>}
         {uploadError && <p className="dialog-error" role="alert">{uploadError}</p>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
-        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
+        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : isPi ? "输入消息；可添加图片或文件，/ 执行命令" : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
-          <AccessModeSelect className="access-control" value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />
+          {isPi ? <span className="access-control" data-tooltip="pi 当前使用 Full Access，无工作区沙箱">Full Access</span> : <AccessModeSelect className="access-control" value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />}
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
               <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked || modelSelectOptions.length === 0} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); const nextReasoning = preferredReasoningForModel(option); const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier); effectiveSettings.current = { ...effectiveSettings.current, model: next, reasoning: nextReasoning, serviceTier: nextServiceTier }; setModel(next); setReasoning(nextReasoning); setServiceTier(nextServiceTier); }} />

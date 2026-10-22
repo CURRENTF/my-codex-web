@@ -1,3 +1,5 @@
+import { BackendRouter } from "./agent-backend.js";
+import { PiAdapter } from "./pi-adapter.js";
 import { sessionSyncResponse } from "./session-sync.js";
 import { ServiceRestartConflictError, ServiceRestartManager } from "./service-restart.js";
 import { PromptScheduler } from "./prompt-scheduler.js";
@@ -88,12 +90,12 @@ export async function createServer() {
   const machineMetrics = new MachineMetricsSampler();
   const attachments = new AttachmentStore(config.dataDir);
   await attachments.initialize();
-  const adapter = new CodexAdapter({
+  const adapter = new BackendRouter(new CodexAdapter({
     cwd: config.projectRoot,
     codexHome: config.codexHome,
     codexCommand: config.codexCommand,
     version: config.version,
-  });
+  }), new PiAdapter(path.join(config.dataDir, "pi"), config.piCommand));
   const authenticateSocket = (request: IncomingMessage) => {
     return isAllowedSocketContext({ host: request.headers.host, origin: request.headers.origin }, allowedHosts, allowedOrigins)
       && hasSession(parseCookieHeader(request.headers.cookie)[config.sessionCookieName]);
@@ -139,14 +141,14 @@ export async function createServer() {
 
   let startupPhase = true;
   let connectionState: AppServerConnectionState = "disconnected";
-  const promptScheduler = new PromptScheduler(repositories, sessions, () => connectionState === "connected" && serviceRestart.getStatus().state !== "restarting", (threadId, scheduledPollingEnabled) => {
+  const promptScheduler = new PromptScheduler(repositories, sessions, (threadId) => (threadId?.startsWith("pi:") || connectionState === "connected") && serviceRestart.getStatus().state !== "restarting", (threadId, scheduledPollingEnabled) => {
     events.publish("session.summary.updated", { reason: "schedule-updated", scheduledPollingEnabled }, { threadId });
   });
   const recovery = new ConnectionRecovery({
     reconcile: () => sessions.reconcileAfterReconnect(),
     onState: (state) => {
       connectionState = state;
-      runtimes.handleConnection(state);
+      runtimes.handleConnection(state, "codex");
     },
     onRecovered: () => {
       if (!startupPhase && adapter.account) {
@@ -202,9 +204,6 @@ export async function createServer() {
     if (request.method !== "GET" && request.method !== "HEAD" && !secureEqual(request.headers["x-csrf-token"] as string | undefined, csrfToken)) {
       return reply.code(403).send({ error: "Invalid CSRF token" });
     }
-    if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/code/file" && pathname !== "/api/system/restart" && connectionState !== "connected") {
-      return reply.code(503).send({ error: "Codex App Server is still reconnecting" });
-    }
     const updateState = selfUpdater.getStatus().state;
     if (request.method !== "GET" && request.method !== "HEAD" && serviceRestart.getStatus().state === "restarting") {
       return reply.code(503).send({ error: "restart_in_progress", message: "my-codex-web 正在重启，请稍候。" });
@@ -212,6 +211,18 @@ export async function createServer() {
     if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/system/update" && (updateState === "running" || updateState === "restarting")) {
       return reply.code(503).send({ error: "update_in_progress", message: "Codex Web 正在更新，完成后页面会自动刷新。" });
     }
+  });
+
+  app.addHook("preHandler", async (request, reply) => {
+    if (request.method === "GET" || request.method === "HEAD" || connectionState === "connected") return;
+    const pathname = request.url.split("?", 1)[0] ?? "";
+    const thread = /^\/api\/sessions\/([^/]+)/.exec(pathname)?.[1];
+    const pending = /^\/api\/pending-requests\/([^/]+)/.exec(pathname)?.[1];
+    const creating = /^\/api\/projects\/[^/]+\/sessions$/.test(pathname);
+    const backend = (request.body as { backend?: string } | undefined)?.backend;
+    if ((thread && !decodeURIComponent(thread).startsWith("pi:"))
+      || (pending && !decodeURIComponent(pending).startsWith("pi-request:"))
+      || (creating && (backend === undefined || backend === "codex"))) return reply.code(503).send({ error: "Codex App Server is still reconnecting" });
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
@@ -263,6 +274,8 @@ export async function createServer() {
         message: "Codex 未确认该操作结果；连接正在重启并重新同步。请先检查当前 Session，再决定是否重试。",
       });
     }
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode && statusCode >= 400 && statusCode < 500) return reply.code(statusCode).send({ error: error instanceof Error ? error.message : "Invalid request" });
     app.log.error({ error: safeErrorForLog(error) }, "Request failed");
     return reply.code(500).send({ error: error instanceof Error ? error.message : "Unknown server error" });
   });
@@ -294,10 +307,12 @@ export async function createServer() {
   app.get("/api/bootstrap", async (_request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");
     if (!passwordRequired) setSessionCookie(reply);
+    const backends = await adapter.describe();
     return {
       eventSeq: events.currentSeq,
-      connection: { state: connectionState, codexVersion: null },
-      authReady: adapter.account !== null,
+      connection: { state: "connected", codexVersion: null },
+      authReady: true,
+      backends,
       csrfToken,
       projects: repositories.listProjects(),
       preferences: repositories.getPreferences(),
@@ -407,6 +422,7 @@ export async function createServer() {
     return reply.type(content.mimeType).send(streamLocalFile(content.path));
   });
   app.get("/api/models", async () => adapter.models);
+  app.get("/api/backends", async () => adapter.describe());
   app.get("/api/projects", async () => repositories.listProjects());
   app.get("/api/projects/:projectId/skills", async (request) => sessions.listProjectSkills(idSchema.parse((request.params as { projectId: string }).projectId)));
   app.get("/api/machine-metrics", async (_request, reply) => {
@@ -525,7 +541,7 @@ export async function createServer() {
   });
   app.post("/api/projects/:projectId/sessions", async (request) => {
     const projectId = idSchema.parse((request.params as { projectId: string }).projectId);
-    const body = settingsSchema.extend({ clientRequestId: requestIdSchema }).parse(request.body);
+    const body = settingsSchema.extend({ backend: z.enum(["codex", "pi"]).default("codex"), clientRequestId: requestIdSchema }).parse(request.body);
     return once(request, body.clientRequestId, () => sessions.createSession(projectId, body, body.clientRequestId));
   });
   app.post("/api/sessions/:threadId/turns", async (request) => {
@@ -616,11 +632,9 @@ export async function createServer() {
   await adapter.start();
   await recovery.waitForCurrent();
   startupPhase = false;
-  if (adapter.account && (connectionState as AppServerConnectionState) === "connected") {
-    await indexer.scanStartupRoots();
-    await restoreSubagentsSafely("startup");
-    indexer.scanAllInBackground();
-  }
+  await indexer.scanStartupRoots();
+  await restoreSubagentsSafely("startup");
+  indexer.scanAllInBackground();
 
   promptScheduler.start();
   return {

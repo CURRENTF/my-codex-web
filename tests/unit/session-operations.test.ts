@@ -3321,7 +3321,7 @@ describe("session operation rules", () => {
     service.handleEvent({ type: "turnCompleted", threadId: "thread-1", turn: { ...turn("turn-2", "completed"), items: [] } });
 
     expect(adapter.generateSessionTitle).toHaveBeenCalledTimes(1);
-    expect(adapter.generateSessionTitle).toHaveBeenCalledWith("/tmp/project", "实现自动 Session 标题", "已实现并完成测试");
+    expect(adapter.generateSessionTitle).toHaveBeenCalledWith("/tmp/project", "实现自动 Session 标题", "已实现并完成测试", "thread-1");
   });
 
   it("does not title Side Chats even after a completed Turn", async () => {
@@ -3390,7 +3390,7 @@ describe("session operation rules", () => {
 
     service.handleEvent({ type: "turnCompleted", threadId: "child", turn: newTurn });
     await vi.waitFor(() => expect(adapter.renameSession).toHaveBeenCalledWith("child", "Fork 修复"));
-    expect(adapter.generateSessionTitle).toHaveBeenCalledWith("/tmp/project", "继续修复", "Fork 修复完成");
+    expect(adapter.generateSessionTitle).toHaveBeenCalledWith("/tmp/project", "继续修复", "Fork 修复完成", "child");
   });
 
   it("contains title generation failures without affecting the completed Turn", async () => {

@@ -1,10 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { ModelOption } from "@codex-web/shared-types";
+import type { BackendId, ModelOption } from "@codex-web/shared-types";
 
 interface ComposerPreferences {
   longTextConfirmation: boolean;
   showUserMessageRail: boolean;
+  defaultBackend: BackendId;
+  askBackendOnNewSession: boolean;
+  setDefaultBackend(backend: BackendId): void;
+  setAskBackendOnNewSession(enabled: boolean): void;
   defaultModel: string | null;
   defaultReasoning: string | null;
   setLongTextConfirmation(enabled: boolean): void;
@@ -15,6 +19,10 @@ interface ComposerPreferences {
 export const useComposerPreferences = create<ComposerPreferences>()(persist((set) => ({
   longTextConfirmation: false,
   showUserMessageRail: true,
+  defaultBackend: "codex",
+  askBackendOnNewSession: false,
+  setDefaultBackend: (defaultBackend) => set({ defaultBackend }),
+  setAskBackendOnNewSession: (askBackendOnNewSession) => set({ askBackendOnNewSession }),
   defaultModel: null,
   defaultReasoning: null,
   setLongTextConfirmation: (longTextConfirmation) => set({ longTextConfirmation }),
@@ -24,8 +32,8 @@ export const useComposerPreferences = create<ComposerPreferences>()(persist((set
   name: "codex-web:composer-preferences:v1",
   version: 1,
   // The old last-created model was implicit history, not an explicit preference.
-  migrate: (stored) => ({ longTextConfirmation: (stored as Partial<ComposerPreferences> | null)?.longTextConfirmation === true, showUserMessageRail: true, defaultModel: null, defaultReasoning: null }),
-  partialize: ({ longTextConfirmation, showUserMessageRail, defaultModel, defaultReasoning }) => ({ longTextConfirmation, showUserMessageRail, defaultModel, defaultReasoning }),
+  migrate: (stored) => ({ longTextConfirmation: (stored as Partial<ComposerPreferences> | null)?.longTextConfirmation === true, showUserMessageRail: true, defaultBackend: "codex" as const, askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null }),
+  partialize: ({ longTextConfirmation, showUserMessageRail, defaultBackend, askBackendOnNewSession, defaultModel, defaultReasoning }) => ({ longTextConfirmation, showUserMessageRail, defaultBackend, askBackendOnNewSession, defaultModel, defaultReasoning }),
 }));
 
 export function sessionCreationDefaults(preferences: Pick<ComposerPreferences, "defaultModel" | "defaultReasoning">, models: ModelOption[]): { model?: string; reasoning?: string } {

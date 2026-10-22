@@ -1,3 +1,5 @@
+import { NewSessionDialog } from "./components/NewSessionDialog";
+import { sessionBackend, type BackendId, type BackendOption, type ModelOption } from "@codex-web/shared-types";
 import { removeSessionHistory } from "./session-history-cache";
 import { MachineMonitor } from "./components/MachineMonitor";
 import { sessionCreationDefaults, useComposerPreferences } from "./composer-preferences";
@@ -89,6 +91,7 @@ export function App() {
   const [projectRemovePending, setProjectRemovePending] = useState(false);
   const [projectRemoveError, setProjectRemoveError] = useState<string | null>(null);
   const [sideCloseError, setSideCloseError] = useState<string | null>(null);
+  const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [sessionCreateError, setSessionCreateError] = useState<string | null>(null);
   const [turnNotificationsEnabled, setTurnNotificationsEnabled] = useState(readTurnCompletionNotificationsEnabled);
   const [notificationPermission, setNotificationPermission] = useState<BrowserNotificationPermission>(currentBrowserNotificationPermission);
@@ -124,6 +127,9 @@ export function App() {
   const filteredSessionsQuery = useQuery({ queryKey: ["sessions", search, preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions(search, preferences?.sortDirection ?? "desc", signal), enabled: !!bootstrapData?.authReady && !!search.trim() });
   const consume = useAppStore((state) => state.consume); const initialize = useAppStore((state) => state.initialize); const markDisconnected = useAppStore((state) => state.markDisconnected); const sideChats = useAppStore((state) => state.sideChats);
   const projects = projectsQuery.data ?? bootstrapData?.projects ?? []; const allSessions = allSessionsQuery.data ?? []; const sessions = search.trim() ? (filteredSessionsQuery.data ?? []) : allSessions;
+  useEffect(() => {
+    if (bootstrapData?.backends) useAppStore.setState({ codexConnectionState: bootstrapData.backends.find((backend) => backend.id === "codex")?.available ? "connected" : "disconnected" });
+  }, [bootstrapData]);
   const bootstrapReady = !!bootstrapData;
   const selected = allSessions.find((session) => session.threadId === selectedThreadId); const selectedProject = projects.find((project) => project.id === selected?.projectId) ?? null;
   const sideChat = useMemo(() => Object.values(sideChats).find((item) => item.parentThreadId === selectedThreadId), [sideChats, selectedThreadId]);
@@ -158,6 +164,7 @@ export function App() {
       const eventConnectionState = event.type === "connection.changed" ? (event.payload as { state?: string }).state : undefined;
       if (eventConnectionState !== "connected") consume(event);
       if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
+      if (event.type === "backend.connection.changed") void client.invalidateQueries({ queryKey: ["bootstrap"] });
       if (event.type === "session.summary.updated" && event.threadId) {
         const summaryPayload = typeof event.payload === "object" && event.payload !== null
           ? event.payload as { reason?: string; name?: string | null; pinned?: boolean; scheduledPollingEnabled?: boolean; prefill?: unknown; summary?: SessionSummary }
@@ -366,19 +373,40 @@ export function App() {
     if (discovered[0]) navigate(`/sessions/${discovered[0].threadId}`);
     else navigate("/", { replace: true });
   };
-  const createSession = async (projectId?: string) => {
+  const requestNewSession = (projectId?: string) => {
+    const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects);
+    if (!target) { addProject(); return; }
+    if (sessionCreationInFlight.current) return;
+    const { defaultBackend, askBackendOnNewSession } = useComposerPreferences.getState();
+    setSessionCreateError(null);
+    if (askBackendOnNewSession) { setNewSessionProjectId(target); return; }
+    void createSession(target, defaultBackend).catch((error) => {
+      setSessionCreateError(error instanceof Error ? error.message : "创建失败，请重试。");
+    });
+  };
+  const createSession = async (projectId: string, backend: BackendId, models?: ModelOption[]) => {
     if (sessionCreationInFlight.current) return;
     sessionCreationInFlight.current = true;
     setSessionCreateError(null);
     try {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
-      const defaults = sessionCreationDefaults(useComposerPreferences.getState(), bootstrapData?.models ?? []);
-      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, clientRequestId: crypto.randomUUID() }) });
+      if (!models) {
+        const backends = await client.fetchQuery({ queryKey: ["backends"], queryFn: () => api<BackendOption[]>("/api/backends"), staleTime: 0 });
+        const option = backends.find((item) => item.id === backend);
+        if (!option?.available) throw new Error(`${backend === "pi" ? "pi" : "Codex"} 后端当前不可用${option?.message ? `：${option.message.replace(/[。.!！]+$/, "")}` : ""}。请重试，或在设置中更改默认后端。`);
+        models = option.models;
+      }
+      const piModel = models.find((model) => model.isDefault) ?? models[0];
+      const defaults = backend === "pi"
+        ? { model: piModel?.model ?? null, reasoning: piModel?.defaultReasoning ?? "off", accessMode: "fullAccess", serviceTier: null }
+        : sessionCreationDefaults(useComposerPreferences.getState(), models);
+      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, backend, clientRequestId: crypto.randomUUID() }) });
       upsertCachedSessionSummary(client, result.summary);
       navigate(`/sessions/${result.thread.id}`);
+      void client.invalidateQueries({ queryKey: ["bootstrap"] });
     } catch (error) {
       await refreshProjectAvailabilityAfterError(error, (queryKey) => client.invalidateQueries({ queryKey }));
-      setSessionCreateError(error instanceof Error ? error.message : "新建 Session 失败，请检查当前 Session 列表后重试。");
+      throw error;
     } finally {
       sessionCreationInFlight.current = false;
     }
@@ -475,7 +503,7 @@ export function App() {
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
   if (!projects.length) return <><EmptyWorkspace onAdd={addProject} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /></>;
-  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar models={bootstrapData.models} projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={(id) => void createSession(id)} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={requestRemoveProject} onPin={pinSession} onArchive={archiveFromSidebar} />
+  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}><button className="mobile-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? "关闭侧边栏" : "打开侧边栏"}>{sidebarOpen ? <X size={18} /> : <List size={19} />}</button><button className="sidebar-scrim" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} /><Sidebar models={bootstrapData.models} projects={projects} sessions={sessions} activeThreadId={selectedThreadId} preferences={preferences!} notificationState={notificationState} search={search} onSearch={setSearch} onMode={(sidebarMode) => updatePreferences.mutate({ sidebarMode })} onSort={(sortDirection) => updatePreferences.mutate({ sortDirection })} onToggleNotifications={() => void toggleTurnNotifications()} onReorder={(source, target) => void reorder(source, target)} onOpen={(id) => { navigate(`/sessions/${id}`); setSidebarOpen(false); }} onNew={requestNewSession} onAddProject={() => void addProject()} onRescan={(id) => void api(`/api/projects/${id}/rescan`, { method: "POST", body: JSON.stringify({ clientRequestId: newClientRequestId() }) }).then(() => refreshProjectAvailability((queryKey) => client.invalidateQueries({ queryKey })))} onRenameProject={setSettingsProject} onRemoveProject={requestRemoveProject} onPin={pinSession} onArchive={archiveFromSidebar} />
     <SidebarResizer />
     <main ref={workspaceRef} className="workspace">
       {(sessionCreateError || sideCloseError) && <div className="workspace-error-stack">
@@ -484,9 +512,9 @@ export function App() {
       </div>}
       <div className={`workspace-layout ${sideThreadId ? "with-side-chat" : ""} ${parallelWriteWarning ? "has-parallel-warning" : ""}`} style={sideThreadId ? { "--side-width": `${preferences?.sideChatWidth ?? 42}%` } as CSSProperties : undefined}>
         {sideThreadId && <div className="compact-workspace-header"><div className="mobile-pane-tabs" role="group" aria-label="选择聊天面板"><button type="button" aria-pressed={mobilePane === "main"} aria-controls="main-session-pane" className={mobilePane === "main" ? "active" : ""} onClick={() => setMobilePane("main")}>Main Session</button><button type="button" aria-pressed={mobilePane === "side"} aria-controls="side-chat-pane" className={mobilePane === "side" ? "active" : ""} onClick={() => setMobilePane("side")}>Side Chat</button></div>{parallelWriteWarning && <div className="compact-parallel-warning"><WarningCircle size={14} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}</div>}
-        <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane key={selectedThreadId} threadId={selectedThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => void createSession()}>新建 Session</button>}</div>}</div>
+        <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane key={selectedThreadId} threadId={selectedThreadId} project={selectedProject} projects={projects} models={sessionBackend(selectedThreadId) === "pi" ? bootstrapData.backends?.find((backend) => backend.id === "pi")?.models ?? [] : bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => requestNewSession()}>新建 Session</button>}</div>}</div>
         {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div id="side-chat-pane" className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane key={sideThreadId} threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
-    </main><MachineMonitor /><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /><ConfirmationDialog open={!!removingProject} title="移除 Project" description={removingProject ? `从侧边栏移除“${removingProject.name}”？目录和 Codex Session 不会被删除。` : ""} icon={<Trash size={18} weight="fill" />} pending={projectRemovePending} error={projectRemoveError} confirmLabel="确认移除" onOpenChange={(open) => { if (!open) { setRemovingProject(null); setProjectRemoveError(null); } }} onConfirm={() => void removeProject()} />
+    </main>{newSessionProjectId && <NewSessionDialog projectName={projects.find((project) => project.id === newSessionProjectId)?.name ?? "Project"} onClose={() => setNewSessionProjectId(null)} onCreate={async (backend, models) => { await createSession(newSessionProjectId, backend, models); }} />}<MachineMonitor /><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /><ConfirmationDialog open={!!removingProject} title="移除 Project" description={removingProject ? `从侧边栏移除“${removingProject.name}”？目录和 Codex Session 不会被删除。` : ""} icon={<Trash size={18} weight="fill" />} pending={projectRemovePending} error={projectRemoveError} confirmLabel="确认移除" onOpenChange={(open) => { if (!open) { setRemovingProject(null); setProjectRemoveError(null); } }} onConfirm={() => void removeProject()} />
   </div>;
 }

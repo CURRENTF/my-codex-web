@@ -1,13 +1,13 @@
 # Codex Web
 
-本地、单用户、面向 Project 的 Codex Web 客户端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并通过当前 Codex Home 访问 Session。
+本地、单用户、面向 Project 的 Web 客户端，支持按对话选择 Codex 或 pi 后端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并通过当前 Codex Home 访问 Session。
 
 ## 环境要求
 
 - macOS 13 或更高版本
 - Node.js 22.22 或更高版本
-- 已安装 Codex CLI `0.149.0` 或更高版本
-- 已在 Codex 中登录
+- 使用 Codex 时：已安装 Codex CLI `0.149.0` 或更高版本，并完成登录
+- 使用 pi 时：为运行 Web 服务的用户配置 pi 模型凭证；pi 随项目依赖安装
 
 ## 安装和启动
 
@@ -68,6 +68,16 @@ Code View 使用按需加载的 CodeMirror，支持目录浏览、当前目录�
 HTML 文件（`.html` / `.htm`，大小写均可）默认渲染预览，可在顶部切换“预览 / 源码”；带行号的链接仍直接定位源码。预览使用当前编辑内容，不要求先保存，切换视图保留修改与撤销历史。沙箱支持内联 CSS、JavaScript 和 HTTPS 外部脚本、样式、图片等资源，禁止访问父页面、登录状态、网络 API、嵌套页面、弹窗及表单提交。本地相对路径资源暂不支持，适合资源内嵌的单文件 HTML；需要后端接口的应用仍须启动自己的开发服务器。沿用 1 MiB UTF-8 文件限制。
 
 所有普通文件均可通过 Code View 顶部的下载图标下载，包括超过预览大小限制的文件和二进制文件。无法预览时页面会显示下载入口；下载以流式传输提供，不受 1 MiB 文本预览限制，不将整个文件加载到编辑器。下载的是磁盘上的原始文件，不含尚未保存的编辑。对话中的 `.nsys-rep`、`.qdrep`、`.ncu-rep` 和压缩包链接会直接下载，文本链接继续打开 Code View。下载沿用 Web 登录及服务用户的文件读取权限。下载前会检查文件是否可读，失败时在页面显示原因。路径属于 Web 服务所在机器；SSH 远端文件须先复制到该机器，下载接口不会自动连接 SSH。
+
+## 按对话选择 Codex / pi
+
+点击「新建」直接使用默认后端（初始为 Codex）。在左上角「设置 → 新 Session 默认设置」中可切换默认后端，也可开启「每次新建时询问后端」以逐次选择；这些偏好保存在当前浏览器，立即生效。同一 Project 中可以同时运行 Codex 和 pi 对话，不需要切换全局配置或重启 Web。后端绑定到创建的对话，历史 Codex 对话仍由 Codex 管理。侧边栏的 pi 标识和会话标题旁的后端名称用于区分。
+
+pi 随 `npm run setup` 安装（固定版本 `@earendil-works/pi-coding-agent@1.4.0`）。在服务所在机器、以服务运行用户执行 `npx --no-install pi`，通过 `/login` 配置所需提供商，或配置该提供商支持的 API Key 环境变量及 pi 的 `models.json`。pi 默认使用 `~/.pi/agent`；可通过 `PI_CODING_AGENT_DIR` 指定独立配置目录。Web 不共享 Codex 凭证，也不在浏览器里接收提供商密钥。配置完成后，在新建弹窗点击「刷新状态」即可重新检测模型；已启动进程的环境变量变化仍需要由服务管理器重新加载。
+
+每个活动 pi 对话运行独立 RPC 子进程。原生历史与 Web 展示元数据位于 `CODEX_WEB_DATA_DIR/pi`，重启后继续使用同一原生历史；不会把压缩后的 UI 文本重新拼成模型上下文。现有 pi CLI 历史不会自动导入。可用 `CODEX_WEB_PI_BIN=/absolute/path/to/pi` 覆盖执行文件，但必须提供与内置 1.4.0 一致的 RPC 接口（包括 `agent_settled`）。
+
+pi 支持流式文本、思考与工具结果、模型选择、Steer、中断、上下文压缩、重命名、归档、附件、定时轮询和标准扩展输入弹窗。目前仅提供 Full Access，不宣称具备 Codex 的只读／工作区沙箱；Goal、原生 Review、Fork、Side Chat、子代理面板和 Web Skill 选择暂不开放。pi 自身的技能命令与扩展仍由 pi 加载。Codex 重连不会中断 pi 对话；单个 pi 进程退出会将对应对话标为失败，后续可重新发送。
 
 ## 启用更新按钮
 

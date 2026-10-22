@@ -3,6 +3,7 @@ import type { AccessMode, PendingRequestSummary, SideChatRuntime, SubagentRuntim
 import type { QueuedTurnBarrier } from "./queued-turn-barrier";
 
 interface AppStore {
+  codexConnectionState: "connected" | "connecting" | "disconnected";
   connectionState: "connected" | "connecting" | "disconnected";
   lastEventSeq: number;
   runtimes: Record<string, ThreadRuntime>;
@@ -239,7 +240,7 @@ function withoutOptimisticMessages(
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, subagents: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSubmissions: initialQueuedSubmissions, queuedEffectiveSettings: initialQueuedEffectiveSettings, queuedTurnBarriers: initialQueuedTurnBarriers,
+  codexConnectionState: "connected", connectionState: "connecting", lastEventSeq: 0, runtimes: {}, sideChats: {}, subagents: {}, deltas: {}, pendingRequests: {}, drafts: {}, pendingSubmissions: {}, optimisticUserMessages: initialQueuedOptimisticMessages, injectedPrefills: {}, queuedSubmissions: initialQueuedSubmissions, queuedEffectiveSettings: initialQueuedEffectiveSettings, queuedTurnBarriers: initialQueuedTurnBarriers,
   setDraft: (threadId, text) => set((state) => {
     const injectedPrefills = { ...state.injectedPrefills };
     delete injectedPrefills[threadId];
@@ -451,6 +452,10 @@ export const useAppStore = create<AppStore>((set) => ({
   consume: (event) => set((state) => {
     if (event.seq <= state.lastEventSeq) return state;
     const sequenced = { lastEventSeq: event.seq };
+    if (event.type === "backend.connection.changed") {
+      const payload = event.payload as { backend: string; state: AppStore["connectionState"] };
+      return payload.backend === "codex" ? { ...sequenced, codexConnectionState: payload.state } : sequenced;
+    }
     if (event.type === "connection.changed") {
       const connectionState = (event.payload as { state?: AppStore["connectionState"] }).state;
       return connectionState ? { ...sequenced, connectionState } : sequenced;

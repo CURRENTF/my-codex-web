@@ -1,4 +1,13 @@
 export type AccessMode = "fullAccess" | "workspaceWrite" | "readOnly";
+export type BackendId = "codex" | "pi";
+export interface BackendOption {
+  id: BackendId;
+  name: string;
+  available: boolean;
+  message?: string;
+  models: ModelOption[];
+}
+export function sessionBackend(threadId: string): BackendId { return threadId.startsWith("pi:") ? "pi" : "codex"; }
 export type RuntimeState =
   | "idle"
   | "running"
@@ -23,6 +32,7 @@ export interface Project {
 }
 
 export interface SessionSummary {
+  backend?: BackendId;
   threadId: string;
   projectId: string;
   title: string;
@@ -84,7 +94,7 @@ export interface SubagentRuntime extends ThreadRuntime, SubagentDescriptor {
 export interface SessionCost {
   threadId: string;
   status: "available" | "unavailable" | "unsupported";
-  source?: "codex" | "tokens";
+  source?: "codex" | "tokens" | "pi";
   notes?: string[];
   pricingDate?: string;
   unavailableReason?: "noUsage" | "missingPricing" | "incompleteUsage";
@@ -284,6 +294,7 @@ export interface Preferences {
 }
 
 export interface BootstrapPayload {
+  backends?: BackendOption[];
   eventSeq: number;
   connection: { state: "connected" | "connecting" | "disconnected"; codexVersion: string | null };
   authReady: boolean;

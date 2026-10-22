@@ -42,8 +42,8 @@ function SessionCostContent({ threadId, revision }: { threadId: string; revision
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="session-cost-detail menu-content" sideOffset={8} align="end" collisionPadding={12} aria-label="Session API 费用明细">
       <div className="session-cost-heading"><h2>{data?.partial ? "部分 API 费用" : "累计 API 费用"}</h2><Popover.Close asChild><button className="icon-button" aria-label="关闭费用明细"><X size={16} /></button></Popover.Close></div>
-      <p className="session-cost-amount">{amount != null ? formatSessionCostUsd(amount) : sessionCostLabel(data)}<small>{data?.source === "tokens" ? "USD · 按 token 估算" : "USD · Codex 提供"}{query.isError && amount != null ? "，上次成功读取" : ""}</small></p>
-      <p className="session-cost-note">{data?.source === "tokens" ? `按 token 用量估算，价格表更新于 ${data.pricingDate}。` : "Codex 提供的会话费用，可能延迟更新。"} 不代表实际账单。</p>
+      <p className="session-cost-amount">{amount != null ? formatSessionCostUsd(amount) : sessionCostLabel(data)}<small>{data?.source === "tokens" ? "USD · 按 token 估算" : data?.source === "pi" ? "USD · pi 提供" : "USD · Codex 提供"}{query.isError && amount != null ? "，上次成功读取" : ""}</small></p>
+      <p className="session-cost-note">{data?.source === "tokens" ? `按 token 用量估算，价格表更新于 ${data.pricingDate}。` : data?.source === "pi" ? "pi 提供的会话费用估算。" : "Codex 提供的会话费用，可能延迟更新。"} 不代表实际账单。</p>
       {data?.notes?.map((note) => <p className="session-cost-note" key={note}>{note}</p>)}
       {query.isPending && <p role="status">正在读取累计用量…</p>}
       {query.isError && <p role="status">费用读取失败，请重试。</p>}

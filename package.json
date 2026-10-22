@@ -26,6 +26,7 @@
   },
   "files": [".release/server.mjs", "apps/web/dist", "bin", "README.md", "THIRD_PARTY_NOTICES.md"],
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "@fastify/cookie": "^11.0.0",
     "@fastify/multipart": "^9.2.1",
     "@fastify/static": "^10.1.2",

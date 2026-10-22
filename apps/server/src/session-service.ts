@@ -9,6 +9,9 @@ import { ThreadRuntimeRegistry } from "./runtime-registry.js";
 import { KeyedOperationLock } from "./keyed-operation-lock.js";
 import type { AttachmentStore } from "./attachment-store.js";
 
+import type { AgentBackend } from "./agent-backend.js";
+import { sessionBackend, type BackendId } from "@codex-web/shared-types";
+
 export class SteerConflictError extends Error {
   constructor() { super("The active turn finished before the steer message could be sent"); }
 }
@@ -73,7 +76,7 @@ function sessionSummaryMatchesSearch(summary: Pick<SessionSummary, "title" | "pr
   return `${summary.title}\n${summary.preview}`.toLocaleLowerCase().includes(term);
 }
 
-interface TurnSettings { model?: string | null; reasoning?: string | null; serviceTier?: string | null; accessMode?: AccessMode }
+interface TurnSettings { backend?: BackendId; model?: string | null; reasoning?: string | null; serviceTier?: string | null; accessMode?: AccessMode }
 interface ProjectSettings { defaultModel: string | null; defaultReasoning: string | null; defaultAccessMode: AccessMode }
 type SessionSnapshot = Awaited<ReturnType<CodexAdapter["readSession"]>>;
 type SnapshotTurn = SessionSnapshot["turns"][number];
@@ -382,7 +385,7 @@ export class SessionService extends EventEmitter {
 
   constructor(
     private readonly repositories: Repositories,
-    private readonly adapter: CodexAdapter,
+    private readonly adapter: AgentBackend,
     private readonly indexer: ProjectIndexer,
     private readonly runtimes: ThreadRuntimeRegistry,
     private readonly projectLocks = new KeyedOperationLock(),
@@ -414,6 +417,7 @@ export class SessionService extends EventEmitter {
     const preview = snapshot?.preview ?? mapping.summary_preview ?? "";
     return {
       threadId: mapping.thread_id,
+      backend: sessionBackend(mapping.thread_id),
       projectId: mapping.project_id,
       title: snapshot?.name || snapshot?.preview || mapping.summary_title || preview || "Untitled session",
       preview,
@@ -444,11 +448,12 @@ export class SessionService extends EventEmitter {
     const forkTurnIndex = metadata.forkTurnId ? boundaryTurns.findIndex((turn) => turn.id === metadata.forkTurnId) : -1;
     return {
       threadId: snapshot.id,
+      backend: sessionBackend(snapshot.id),
       projectId: metadata.projectId,
       title: snapshot.name || snapshot.preview || "Untitled session",
       preview: snapshot.preview,
       cwd: snapshot.cwd,
-      sourceKind: "appServer",
+      sourceKind: sessionBackend(snapshot.id) === "pi" ? "pi" : "appServer",
       createdAt: snapshot.createdAt * 1_000,
       updatedAt: snapshot.updatedAt * 1_000,
       origin: metadata.origin,
@@ -482,7 +487,7 @@ export class SessionService extends EventEmitter {
   async readSessionCost(threadId: string) {
     if (!this.runtimes.getSideChat(threadId)) this.requireMapping(threadId);
     const native = await this.adapter.readSessionCost(threadId).catch(() => null);
-    return chooseSessionCost(native, this.repositories.getCostLedger(threadId), threadId);
+    return sessionBackend(threadId) === "pi" && native ? native : chooseSessionCost(native, this.repositories.getCostLedger(threadId), threadId);
   }
 
   private async readSessionUnlocked(threadId: string) {
@@ -523,6 +528,7 @@ export class SessionService extends EventEmitter {
   }
 
   async setAccessModeOverride(threadId: string, accessMode: AccessMode): Promise<SessionSettings> {
+    if (sessionBackend(threadId) === "pi" && accessMode !== "fullAccess") throw Object.assign(new Error("pi 当前仅支持 Full Access"), { statusCode: 400 });
     return this.withLock(threadId, async () => {
       const sideChat = this.runtimes.getSideChat(threadId);
       if (sideChat) {
@@ -633,7 +639,9 @@ export class SessionService extends EventEmitter {
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
     return this.idempotent(`project:${projectId}:create`, clientRequestId, () => this.projectLocks.withKey(projectId, () => this.withRecoveryCriticalOperation(async () => {
       const project = this.requireAvailableProject(projectId);
-      const settings = this.resolveSettings(projectId, input);
+      const settings: SessionSettings = input.backend === "pi"
+        ? { backend: "pi", model: input.model ?? null, reasoning: input.reasoning ?? null, serviceTier: input.serviceTier ?? null, accessMode: input.accessMode ?? "fullAccess" }
+        : this.resolveSettings(projectId, input);
       const recovery: PendingSessionRecovery = {
         threadSource: recoveryThreadSource("session", projectId, clientRequestId),
         projectId,
@@ -643,6 +651,7 @@ export class SessionService extends EventEmitter {
       this.indexer.markThreadSourcePending?.(recovery.threadSource);
       try {
         const response = await this.adapter.startSession(project.canonicalPath, settings, false, recovery.threadSource);
+        if (input.backend === "pi") recovery.settings = (await this.adapter.resumeSession(response.thread.id)).settings;
         this.observedSessions.set(recovery.threadSource, response.thread);
         const result = await this.finalizeCreatedSession(response.thread, recovery, true);
         this.uncertainSessions.delete(recovery.threadSource);
@@ -698,7 +707,7 @@ export class SessionService extends EventEmitter {
       const now = Date.now();
       this.repositories.upsertProjectSession({
         thread_id: thread.id, project_id: recovery.projectId, cwd_snapshot: thread.cwd,
-        source_kind: "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
+        source_kind: sessionBackend(thread.id) === "pi" ? "pi" : "appServer", origin: "created", parent_thread_id: null, fork_turn_id: null,
         summary_title: thread.name || thread.preview || "Untitled session",
         summary_preview: thread.preview,
         summary_created_at: thread.createdAt * 1_000,
@@ -770,7 +779,8 @@ export class SessionService extends EventEmitter {
       this.settings.set(threadId, settings);
       response = { ...response, turn: this.attachments?.decorateTurn(response.turn, threadId) ?? response.turn };
       this.upsertSnapshotTurn(threadId, response.turn);
-      this.runtimes.setActiveTurn(threadId, response.turn.id);
+      if (response.turn.status === "inProgress") this.runtimes.setActiveTurn(threadId, response.turn.id);
+      else this.runtimes.handleEvent({ type: "turnCompleted", threadId, turn: response.turn });
       this.sessionPrefills.delete(threadId);
       return response;
     }));
@@ -852,6 +862,7 @@ export class SessionService extends EventEmitter {
   }
 
   async fork(threadId: string, lastTurnId: string | null, inheritGoal: boolean, clientRequestId: string, empty = false, prefill?: string) {
+    if (sessionBackend(threadId) === "pi") throw Object.assign(new Error("pi 暂不支持 Fork"), { statusCode: 400 });
     this.assertPersistentSession(threadId, "Fork");
     const sourceProjectId = this.requireMapping(threadId).project_id;
     return this.idempotent(`thread:${threadId}:fork`, clientRequestId, () => this.projectLocks.withKey(sourceProjectId, () => this.withLock(threadId, () => this.withRecoveryCriticalOperation(async () => {
@@ -1356,6 +1367,7 @@ export class SessionService extends EventEmitter {
   }
 
   async createSideChat(parentThreadId: string, anchorTurnId: string | null) {
+    if (sessionBackend(parentThreadId) === "pi") throw Object.assign(new Error("pi 暂不支持 Side Chat"), { statusCode: 400 });
     this.assertPersistentSession(parentThreadId, "nested Side Chat");
     return this.withLocks([parentThreadId, `side-chat:${parentThreadId}`], () => this.withRecoveryCriticalOperation(async () => {
       this.assertSessionReconciled(parentThreadId, "Side Chat");
@@ -1587,7 +1599,7 @@ export class SessionService extends EventEmitter {
     const current = this.settings.get(threadId);
     const mapping = this.requireMapping(threadId);
     const project = this.requireProject(mapping.project_id);
-    const coldAccessMode = mapping.access_mode_override ?? project.defaultAccessMode;
+    const coldAccessMode = sessionBackend(threadId) === "pi" ? "fullAccess" : mapping.access_mode_override ?? project.defaultAccessMode;
     const persistedTurnSettings = {
       ...(mapping.last_model ? { model: mapping.last_model } : {}),
       ...(mapping.last_reasoning ? { reasoning: mapping.last_reasoning } : {}),
@@ -1849,7 +1861,7 @@ export class SessionService extends EventEmitter {
     cwd: string,
     context: { userRequest: string; assistantOutcome: string },
   ): Promise<void> {
-    const title = await this.adapter.generateSessionTitle(cwd, context.userRequest, context.assistantOutcome);
+    const title = await this.adapter.generateSessionTitle(cwd, context.userRequest, context.assistantOutcome, threadId);
     if (!title) return;
     await this.withLock(threadId, async () => {
       if (!this.repositories.getProjectSession(threadId)) return;

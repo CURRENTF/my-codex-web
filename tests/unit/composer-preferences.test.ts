@@ -8,7 +8,25 @@ vi.hoisted(() => {
 });
 
 describe("composer preferences", () => {
-  beforeEach(() => useComposerPreferences.setState({ longTextConfirmation: false, showUserMessageRail: true, defaultModel: null, defaultReasoning: null }));
+  beforeEach(() => useComposerPreferences.setState({ longTextConfirmation: false, showUserMessageRail: true, defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null }));
+  it("defaults to direct Codex creation for existing browser settings", async () => {
+    localStorage.setItem("codex-web:composer-preferences:v1", JSON.stringify({ version: 1, state: { defaultModel: "model-a", defaultReasoning: "high" } }));
+    await useComposerPreferences.persist.rehydrate();
+    expect(useComposerPreferences.getState()).toMatchObject({ defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: "model-a", defaultReasoning: "high" });
+  });
+  it("persists backend and optional prompting independently of model defaults", async () => {
+    const prefs = useComposerPreferences.getState();
+    prefs.setSessionDefaults("model-a", "high");
+    prefs.setDefaultBackend("pi");
+    prefs.setAskBackendOnNewSession(true);
+    const saved = localStorage.getItem("codex-web:composer-preferences:v1")!;
+    useComposerPreferences.setState({ defaultBackend: "codex", askBackendOnNewSession: false });
+    localStorage.setItem("codex-web:composer-preferences:v1", saved);
+    await useComposerPreferences.persist.rehydrate();
+    expect(useComposerPreferences.getState()).toMatchObject({ defaultBackend: "pi", askBackendOnNewSession: true, defaultModel: "model-a", defaultReasoning: "high" });
+    useComposerPreferences.getState().setAskBackendOnNewSession(false);
+    expect(useComposerPreferences.getState().defaultBackend).toBe("pi");
+  });
   it("counts Chinese characters, English words and mixed text without punctuation", () => {
     expect(composerWordCount("你好 world! Let's test，中文。")).toBe(7);
     expect(composerWordCount("中".repeat(50))).toBe(50);
@@ -51,7 +69,7 @@ describe("composer preferences", () => {
   });
   it("discards implicit model history during migration but preserves the text preference", () => {
     const migrate = useComposerPreferences.persist.getOptions().migrate!;
-    expect(migrate({ longTextConfirmation: true, lastCreatedThreadId: "old", lastCreatedModel: "model-a" }, 0)).toEqual({ longTextConfirmation: true, showUserMessageRail: true, defaultModel: null, defaultReasoning: null });
+    expect(migrate({ longTextConfirmation: true, lastCreatedThreadId: "old", lastCreatedModel: "model-a" }, 0)).toEqual({ longTextConfirmation: true, showUserMessageRail: true, defaultBackend: "codex", askBackendOnNewSession: false, defaultModel: null, defaultReasoning: null });
   });
 });
 

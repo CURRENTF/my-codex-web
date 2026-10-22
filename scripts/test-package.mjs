@@ -15,7 +15,7 @@ assert.equal(install.status, 0, install.stderr || install.stdout);
 const port = 7385;
 const child = spawn(path.join(temp, "node_modules/.bin/codex-web"), [], {
   cwd: temp,
-  env: { ...process.env, CODEX_WEB_PORT: String(port), CODEX_WEB_OPEN_BROWSER: "0", CODEX_WEB_DATA_DIR: path.join(temp, "data"), CODEX_WEB_CODEX_HOME: path.join(temp, "codex-home") },
+  env: { ...process.env, CODEX_WEB_PORT: String(port), CODEX_WEB_OPEN_BROWSER: "0", CODEX_WEB_DATA_DIR: path.join(temp, "data"), CODEX_WEB_CODEX_HOME: path.join(temp, "codex-home"), PI_CODING_AGENT_DIR: path.join(temp, "pi-agent") },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let output = "";
@@ -31,7 +31,11 @@ try {
   }
   assert.equal(health?.ok, true, `installed codex-web did not start:\n${output}`);
   assert.equal(path.resolve(health.codexHome), path.join(temp, "codex-home"));
-  process.stdout.write(`${JSON.stringify({ package: filename, installedCommand: true, health }, null, 2)}\n`);
+  const bootstrap = await fetch(`http://127.0.0.1:${port}/api/bootstrap`).then((response) => response.json());
+  const pi = bootstrap.backends?.find((backend) => backend.id === "pi");
+  assert.ok(pi && Array.isArray(pi.models), "installed package did not expose Pi");
+  assert.ok(pi.available || pi.message?.includes("尚无可用模型"), `bundled Pi failed to start: ${pi.message}`);
+  process.stdout.write(`${JSON.stringify({ package: filename, installedCommand: true, bundledPiRpc: true, health }, null, 2)}\n`);
 } finally {
   child.kill("SIGTERM");
   await Promise.race([

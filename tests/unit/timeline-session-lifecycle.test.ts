@@ -13,7 +13,7 @@ describe("Timeline Session lifecycle", () => {
   });
 
   it("uses the shared Project and connection guard for every Fork and Side Chat surface", () => {
-    expect(sessionPane).toContain("branchActionsAvailable = canBranchSession(project.available, state)");
+    expect(sessionPane).toContain("branchActionsAvailable = !isPi && canBranchSession(project.available, state)");
     expect(sessionPane).toContain("side.isPending || !branchActionsAvailable");
     expect(sessionPane).toContain("canFork={!sideChat && branchActionsAvailable}");
     expect(sessionPane).toContain("!pendingFork || !branchActionsAvailable");

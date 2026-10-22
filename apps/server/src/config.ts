@@ -28,6 +28,7 @@ export const config = {
   cookieSecure: process.env.CODEX_WEB_COOKIE_SECURE === "1" || publicOrigins.some((origin) => origin.startsWith("https://")),
   trustProxy: process.env.CODEX_WEB_TRUST_PROXY === "1",
   codexCommand: process.env.CODEX_WEB_CODEX_BIN ?? "codex",
+  piCommand: process.env.CODEX_WEB_PI_BIN || undefined,
   updateRepository: process.env.CODEX_WEB_UPDATE_REPOSITORY ?? projectRoot,
   updateRemote: process.env.CODEX_WEB_UPDATE_REMOTE ?? "origin",
   updateBranch: process.env.CODEX_WEB_UPDATE_BRANCH ?? "main",
