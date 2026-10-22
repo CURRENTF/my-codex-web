@@ -40,6 +40,7 @@ it("creates and continues Pi through HTTP with Codex unavailable, without inheri
   expect(response.statusCode, response.body).toBe(200);
   const id = response.json().thread.id;
   expect(id).toMatch(/^pi:/); expect(response.json().settings).toMatchObject({ model: "test/local", reasoning: "off", accessMode: "fullAccess" });
+  expect(response.json()).toMatchObject({ goal: null, runtime: { threadId: id, state: "idle", pendingRequestIds: [] }, thread: { turns: [] } });
   const read = await server.app.inject({ url: `/api/sessions/${id}`, headers: headers() });
   expect(read.statusCode, read.body).toBe(200); expect(read.json().settings.accessMode).toBe("fullAccess");
   const prompt = await server.app.inject({ method: "POST", url: `/api/sessions/${id}/turns`, headers: headers(), payload: { text: "handled", clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
@@ -58,6 +59,7 @@ it("creates agy with isolated defaults and supports HTTP streaming lifecycle whi
   expect(response.statusCode, response.body).toBe(200);
   const id = response.json().thread.id;
   expect(id).toMatch(/^agy:/); expect(response.json().settings).toMatchObject({ model: "fixture-model", reasoning: "default", accessMode: "fullAccess" });
+  expect(response.json()).toMatchObject({ goal: null, runtime: { threadId: id, state: "idle", pendingRequestIds: [] }, thread: { turns: [] } });
   const prompt = await server.app.inject({ method: "POST", url: `/api/sessions/${id}/turns`, headers: headers(), payload: { text: "hello", clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
   expect(prompt.statusCode, prompt.body).toBe(200);
   await vi.waitFor(async () => {

@@ -544,7 +544,10 @@ export async function createServer() {
   app.post("/api/projects/:projectId/sessions", async (request) => {
     const projectId = idSchema.parse((request.params as { projectId: string }).projectId);
     const body = settingsSchema.extend({ backend: z.enum(BACKEND_IDS).default("codex"), clientRequestId: requestIdSchema }).parse(request.body);
-    return once(request, body.clientRequestId, () => sessions.createSession(projectId, body, body.clientRequestId));
+    return once(request, body.clientRequestId, async () => {
+      const created = await sessions.createSession(projectId, body, body.clientRequestId);
+      return { ...created, runtime: runtimes.get(created.thread.id), goal: null };
+    });
   });
   app.post("/api/sessions/:threadId/turns", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);

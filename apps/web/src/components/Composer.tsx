@@ -60,13 +60,13 @@ function normalizeAccessMode(value: string): AccessMode | null {
   return null;
 }
 
-export function Composer({ errorTarget, threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
+export function Composer({ errorTarget, threadId, project, models, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, disabledReason, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
   errorTarget?: HTMLElement | null;
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
   initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode };
   goal?: Goal | null; contextUsage?: ContextUsage; latestCompletedTurnId?: string | null; latestTurnId?: string | null; latestTurnStatus?: SessionTurn["status"] | null;
-  compact?: boolean; disabled?: boolean; onTextareaReady?(element: HTMLTextAreaElement | null): void;
+  compact?: boolean; disabled?: boolean; disabledReason?: string; onTextareaReady?(element: HTMLTextAreaElement | null): void;
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
 }) {
   const backend = sessionBackend(threadId);
@@ -119,7 +119,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [queuedCommandPendingId, setQueuedCommandPendingId] = useState<string | null>(null);
   const running = runtimeState === "running" || runtimeState === "waitingForInput"; const disconnected = runtimeState === "disconnected"; const blocked = (disabled || disconnected) && !running;
-  const blockedMessage = disabled ? "Project 目录不可用；恢复该目录后重新扫描即可继续。" : "Session 尚未完成重同步；请等待状态恢复后继续。";
+  const blockedMessage = disabled ? disabledReason ?? "Project 目录不可用；恢复该目录后重新扫描即可继续。" : "Session 尚未完成重同步；请等待状态恢复后继续。";
   const skills = useQuery({ queryKey: ["skills", project.id, backend], queryFn: ({ signal }) => endpoints.skills(project.id, signal), enabled: codexFeatures && project.available && !disconnected, staleTime: 60_000 });
 
   useEffect(() => {
@@ -573,7 +573,7 @@ export function Composer({ errorTarget, threadId, project, models, runtimeState,
         </div>}
         {uploadError && <p className="dialog-error" role="alert">{uploadError}</p>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
-        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : !codexFeatures ? (backend === "agy" ? "输入消息；可添加文件，/ 执行命令" : "输入消息；可添加图片或文件，/ 执行命令") : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
+        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? disabledReason ?? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : !codexFeatures ? (backend === "agy" ? "输入消息；可添加文件，/ 执行命令" : "输入消息；可添加图片或文件，/ 执行命令") : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
           {!codexFeatures ? <span className="access-control" data-tooltip={backend === "agy" ? "agy accept-edits：自动接受文件编辑，命令遵循原生权限。无 Codex 沙箱，不支持 Web 审批。" : "pi 当前使用 Full Access，无工作区沙箱"}>{backend === "agy" ? "agy 权限" : "Full Access"}</span> : <AccessModeSelect className="access-control" value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />}
           <div className="composer-controls">

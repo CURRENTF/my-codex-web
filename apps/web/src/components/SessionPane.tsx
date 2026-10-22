@@ -1,6 +1,6 @@
-import { sessionBackend, backendCapabilities, BACKEND_LABELS } from "@codex-web/shared-types";
+import { sessionBackend, backendCapabilities, BACKEND_IDS, BACKEND_LABELS, type BackendId } from "@codex-web/shared-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DotsThree, GitFork, PencilSimple, ShieldWarning, SidebarSimple, Target, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
+import { DotsThree, GitFork, PencilSimple, ShieldWarning, SidebarSimple, SpinnerGap, Target, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ import { canBranchSession } from "../session-selection";
 import { optimisticallyRenameSession, patchCachedSessionSummary, removeCachedSessionSummary, upsertCachedSessionSummary } from "../session-summary-cache";
 import { fetchMergedSession } from "../session-query";
 import { useAppStore } from "../store";
+import { useAttachmentDrafts } from "../attachment-drafts";
 import { canReconcileOptimisticUserMessages, confirmedClientUserMessageIds } from "../timeline-presentation";
 import { Composer } from "./Composer";
 import { AsyncQuestionDock } from "./AsyncQuestionDock";
@@ -39,10 +40,11 @@ type PendingFork = Omit<ForkRequest, "inheritGoal"> & {
   settle(completed: boolean): void;
 };
 
-export function SessionPane({ threadId, project, projects, models, sideChat = false, parallelWriteWarning = false, linkedSideChatActive = false, fullAccessNoticeSeen = true, onAcknowledgeFullAccess, onComposerReady, onOpenThread, onOpenSideChat, onCloseSideChat, onArchived }: {
+export function SessionPane({ threadId, project, projects, models, sideChat = false, parallelWriteWarning = false, linkedSideChatActive = false, fullAccessNoticeSeen = true, onAcknowledgeFullAccess, onComposerReady, onOpenThread, onChangeBackend, onOpenSideChat, onCloseSideChat, onArchived }: {
   threadId: string; project: Project; projects: Project[]; models: ModelOption[]; sideChat?: boolean;
   parallelWriteWarning?: boolean; linkedSideChatActive?: boolean; fullAccessNoticeSeen?: boolean; onAcknowledgeFullAccess?(): void;
   onComposerReady?(element: HTMLTextAreaElement | null): void;
+  onChangeBackend?(backend: BackendId): Promise<void>;
   onOpenThread(threadId: string): void; onOpenSideChat(threadId: string): void; onCloseSideChat?(): void; onArchived?(threadId: string): void;
 }) {
   const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
@@ -63,6 +65,8 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
   const [composerAccessMode, setComposerAccessMode] = useState<AccessMode | null>(null);
+  const uploading = useAttachmentDrafts((state) => !!state.drafts[threadId]?.pending.length);
+  const changeBackend = useMutation({ mutationFn: async (next: BackendId) => { await onChangeBackend?.(next); } });
   const pendingForkRef = useRef<PendingFork | null>(null);
   const mountedForThread = useRef(true);
   useEffect(() => { pendingForkRef.current = pendingFork; }, [pendingFork]);
@@ -168,9 +172,16 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
       {backend !== "agy" && shouldShowFullAccessNotice(payload.settings.accessMode, composerAccessMode, fullAccessNoticeSeen) && <div className="full-access-notice"><ShieldWarning size={16} weight="fill" /><span><strong>此 Project 已启用 Full Access</strong>{BACKEND_LABELS[backend]} 可以修改工作区外的文件并执行不经逐次审批的命令。</span><button onClick={onAcknowledgeFullAccess}>知道了</button></div>}
       {parallelWriteWarning && <div className="parallel-write-warning"><WarningCircle size={15} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}
     </div>
-    <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} cwd={payload.thread.cwd} onFork={(turnId, position, sourceTurnId) => void requestFork(turnId, position, sourceTurnId)} onSideChat={(turnId) => void requestSideChat(turnId)} /></div>
+    <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} emptyActions={!sideChat && onChangeBackend && <div className="empty-session-backends">
+      <div className="backend-segmented" role="group" aria-label="对话后端" aria-busy={changeBackend.isPending}>
+        {BACKEND_IDS.map((id) => <button key={id} type="button" aria-pressed={backend === id} aria-label={`使用 ${BACKEND_LABELS[id]} 后端`} disabled={changeBackend.isPending || uploading || hasActiveTurn || !project.available || connectionState !== "connected"} onClick={() => { if (id !== backend) changeBackend.mutate(id); }}>
+          {changeBackend.isPending && changeBackend.variables === id && <SpinnerGap size={13} className="spinning" aria-hidden="true" />}{BACKEND_LABELS[id]}
+        </button>)}
+      </div>
+      {changeBackend.isError && <p className="backend-switch-error" role="alert">{changeBackend.error.message}</p>}
+    </div>} cwd={payload.thread.cwd} onFork={(turnId, position, sourceTurnId) => void requestFork(turnId, position, sourceTurnId)} onSideChat={(turnId) => void requestSideChat(turnId)} /></div>
     <AsyncQuestionDock key={threadId} threadId={threadId} turns={turns} onReplyAdded={() => composerTextarea.current?.focus()} />
-    <Composer errorTarget={errorTarget} threadId={threadId} project={project} models={models} runtimeState={state} activeTurnId={runtime?.activeTurnId} uncertainTurnStart={runtime?.uncertainTurnStart} initialSettings={payload.settings} goal={payload.goal} contextUsage={runtime?.contextUsage} latestCompletedTurnId={latestCompletedTurnId} latestTurnId={latestTurn?.id ?? null} latestTurnStatus={latestTurn?.status ?? null} compact={sideChat} disabled={!project.available} onTextareaReady={bindComposerTextarea} onAccessModeChange={setComposerAccessMode} onForkLatest={codexFeatures && !sideChat && latestCompletedTurnId ? (clientRequestId) => requestFork(latestCompletedTurnId, "after", latestCompletedTurnId, clientRequestId) : undefined} onOpenSideChat={codexFeatures && !sideChat ? (clientRequestId) => requestSideChat(latestCompletedTurnId, clientRequestId) : undefined} />
+    <Composer errorTarget={errorTarget} threadId={threadId} project={project} models={models} runtimeState={state} activeTurnId={runtime?.activeTurnId} uncertainTurnStart={runtime?.uncertainTurnStart} initialSettings={payload.settings} goal={payload.goal} contextUsage={runtime?.contextUsage} latestCompletedTurnId={latestCompletedTurnId} latestTurnId={latestTurn?.id ?? null} latestTurnStatus={latestTurn?.status ?? null} compact={sideChat} disabled={!project.available || changeBackend.isPending} disabledReason={changeBackend.isPending ? "正在切换后端" : undefined} onTextareaReady={bindComposerTextarea} onAccessModeChange={setComposerAccessMode} onForkLatest={codexFeatures && !sideChat && latestCompletedTurnId ? (clientRequestId) => requestFork(latestCompletedTurnId, "after", latestCompletedTurnId, clientRequestId) : undefined} onOpenSideChat={codexFeatures && !sideChat ? (clientRequestId) => requestSideChat(latestCompletedTurnId, clientRequestId) : undefined} />
     {!sideChat && <TextInputDialog open={renameOpen} title="重命名 Session" description="设置一个便于在侧边栏识别的名称。" icon={<PencilSimple size={18} weight="fill" />} label="Session 名称" value={renameName} maxLength={200} pending={rename.isPending} error={rename.isError ? rename.error.message : null} submitLabel="保存名称" onValueChange={setRenameName} onOpenChange={(open) => { setRenameOpen(open); if (!open) rename.reset(); }} onSubmit={() => rename.mutate(renameName.trim())} />}
     <Dialog.Root open={!!pendingFork} onOpenChange={(open) => { if (!open && !fork.isPending) { pendingFork?.settle(false); setPendingFork(null); setInheritGoal(false); } }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content fork-dialog" aria-describedby="fork-dialog-description" onEscapeKeyDown={(event) => { if (fork.isPending) event.preventDefault(); }} onPointerDownOutside={(event) => { if (fork.isPending) event.preventDefault(); }}><div className="dialog-heading"><GitFork size={18} weight="fill" /><Dialog.Title>创建 Fork</Dialog.Title></div><Dialog.Description className="dialog-description" id="fork-dialog-description">新 Session 会复制到所选 Turn 边界，并继承当前模型、Reasoning、Fast 模式和权限；父 Session 的排队内容不会带入。</Dialog.Description><label className="goal-inherit-option"><input type="checkbox" checked={inheritGoal} disabled={fork.isPending} onChange={(event) => setInheritGoal(event.target.checked)} /><span><Target size={16} weight="fill" /><span><strong>继承父 Session 的 Goal</strong><small>默认关闭，避免分叉任务意外推进原目标。</small></span></span></label>{fork.isError && <p className="dialog-error">{fork.error.message}</p>}<div className="dialog-actions"><Dialog.Close asChild><button className="button secondary" disabled={fork.isPending}>取消</button></Dialog.Close><button className="button primary" disabled={fork.isPending || !pendingFork || !branchActionsAvailable} onClick={() => { const request = pendingFork; if (!request) return; void fork.mutateAsync({ ...request, inheritGoal }).then((result) => { request.settle(true); finishFork(result, request); }, () => undefined); }}><GitFork size={14} />创建 Fork</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </section>;

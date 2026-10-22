@@ -1,5 +1,6 @@
 import { NewSessionDialog } from "./components/NewSessionDialog";
-import { sessionBackend, BACKEND_LABELS, type BackendId, type BackendOption, type ModelOption } from "@codex-web/shared-types";
+import { sessionBackend, type BackendId, type ModelOption } from "@codex-web/shared-types";
+import { useAttachmentDrafts } from "./attachment-drafts";
 import { removeSessionHistory } from "./session-history-cache";
 import { MachineMonitor } from "./components/MachineMonitor";
 import { sessionCreationDefaults, useComposerPreferences } from "./composer-preferences";
@@ -384,26 +385,30 @@ export function App() {
       setSessionCreateError(error instanceof Error ? error.message : "创建失败，请重试。");
     });
   };
-  const createSession = async (projectId: string, backend: BackendId, models?: ModelOption[]) => {
+  const createSession = async (projectId: string, backend: BackendId, models?: ModelOption[], sourceThreadId?: string) => {
     if (sessionCreationInFlight.current) return;
     sessionCreationInFlight.current = true;
     setSessionCreateError(null);
     try {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
-      if (!models) {
-        const backends = await client.fetchQuery({ queryKey: ["backends"], queryFn: () => api<BackendOption[]>("/api/backends"), staleTime: 0 });
-        const option = backends.find((item) => item.id === backend);
-        if (!option?.available) throw new Error(`${BACKEND_LABELS[backend]} 后端当前不可用${option?.message ? `：${option.message.replace(/[。.!！]+$/, "")}` : ""}。请重试，或在设置中更改默认后端。`);
-        models = option.models;
-      }
-      const nativeModel = models.find((model) => model.isDefault) ?? models[0];
+      // The selected backend validates its own configuration. Probing every CLI
+      // here made even Codex creation wait for unrelated backend processes.
       const defaults = backend !== "codex"
-        ? { model: nativeModel?.model ?? null, reasoning: nativeModel?.defaultReasoning ?? "off", accessMode: "fullAccess", serviceTier: null }
-        : sessionCreationDefaults(useComposerPreferences.getState(), models);
-      const result = await api<{ thread: { id: string }; summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, backend, clientRequestId: crypto.randomUUID() }) });
+        ? { model: null, reasoning: null, accessMode: "fullAccess", serviceTier: null }
+        : sessionCreationDefaults(useComposerPreferences.getState(), models ?? bootstrapData?.models ?? []);
+      const result = await api<SessionPayload & { summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, backend, clientRequestId: crypto.randomUUID() }) });
+      // The creation response already contains the empty session. Render it
+      // immediately while the regular history query synchronizes in background.
+      client.setQueryData<SessionPayload>(["session", result.thread.id], { thread: result.thread, settings: result.settings, runtime: result.runtime, goal: result.goal });
+      if (sourceThreadId) {
+        const store = useAppStore.getState();
+        store.setDraft(result.thread.id, store.drafts[sourceThreadId] ?? "");
+        const attachments = useAttachmentDrafts.getState();
+        attachments.setAttachments(result.thread.id, attachments.drafts[sourceThreadId]?.attachments ?? []);
+        attachments.setAttachments(sourceThreadId, []);
+      }
       upsertCachedSessionSummary(client, result.summary);
       navigate(`/sessions/${result.thread.id}`);
-      void client.invalidateQueries({ queryKey: ["bootstrap"] });
     } catch (error) {
       await refreshProjectAvailabilityAfterError(error, (queryKey) => client.invalidateQueries({ queryKey }));
       throw error;
@@ -512,7 +517,7 @@ export function App() {
       </div>}
       <div className={`workspace-layout ${sideThreadId ? "with-side-chat" : ""} ${parallelWriteWarning ? "has-parallel-warning" : ""}`} style={sideThreadId ? { "--side-width": `${preferences?.sideChatWidth ?? 42}%` } as CSSProperties : undefined}>
         {sideThreadId && <div className="compact-workspace-header"><div className="mobile-pane-tabs" role="group" aria-label="选择聊天面板"><button type="button" aria-pressed={mobilePane === "main"} aria-controls="main-session-pane" className={mobilePane === "main" ? "active" : ""} onClick={() => setMobilePane("main")}>Main Session</button><button type="button" aria-pressed={mobilePane === "side"} aria-controls="side-chat-pane" className={mobilePane === "side" ? "active" : ""} onClick={() => setMobilePane("side")}>Side Chat</button></div>{parallelWriteWarning && <div className="compact-parallel-warning"><WarningCircle size={14} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}</div>}
-        <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane key={selectedThreadId} threadId={selectedThreadId} project={selectedProject} projects={projects} models={sessionBackend(selectedThreadId) !== "codex" ? bootstrapData.backends?.find((backend) => backend.id === sessionBackend(selectedThreadId))?.models ?? [] : bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => requestNewSession()}>新建 Session</button>}</div>}</div>
+        <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane key={selectedThreadId} threadId={selectedThreadId} project={selectedProject} projects={projects} models={sessionBackend(selectedThreadId) !== "codex" ? bootstrapData.backends?.find((backend) => backend.id === sessionBackend(selectedThreadId))?.models ?? [] : bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onChangeBackend={(backend) => createSession(selectedProject.id, backend, undefined, selectedThreadId)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => requestNewSession()}>新建 Session</button>}</div>}</div>
         {sideThreadId && selectedProject && <><div className="resizable-divider" onPointerDown={(event) => { const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div id="side-chat-pane" className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane key={sideThreadId} threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
     </main>{newSessionProjectId && <NewSessionDialog projectName={projects.find((project) => project.id === newSessionProjectId)?.name ?? "Project"} onClose={() => setNewSessionProjectId(null)} onCreate={async (backend, models) => { await createSession(newSessionProjectId, backend, models); }} />}<MachineMonitor /><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /><ConfirmationDialog open={!!removingProject} title="移除 Project" description={removingProject ? `从侧边栏移除“${removingProject.name}”？目录和 Codex Session 不会被删除。` : ""} icon={<Trash size={18} weight="fill" />} pending={projectRemovePending} error={projectRemoveError} confirmLabel="确认移除" onOpenChange={(open) => { if (!open) { setRemovingProject(null); setProjectRemoveError(null); } }} onConfirm={() => void removeProject()} />

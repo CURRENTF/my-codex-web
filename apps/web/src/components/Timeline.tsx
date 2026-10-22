@@ -182,7 +182,7 @@ function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDi
   </section>;
 }
 
-export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideChat }: { threadId: string; turns: CodexTurn[]; canFork?: boolean; cwd: string; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void }) {
+export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideChat, emptyActions }: { threadId: string; turns: CodexTurn[]; canFork?: boolean; cwd: string; onFork(turnId: string | null, position: "before" | "after", sourceTurnId: string): void; onSideChat(turnId: string): void; emptyActions?: ReactNode }) {
   const showUserMessageRail = useComposerPreferences((state) => state.showUserMessageRail);
   const staticTimeline = useRef<HTMLDivElement>(null);
   const virtualTimeline = useRef<VirtuosoHandle>(null);
@@ -265,7 +265,7 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
     else virtualTimeline.current?.scrollToIndex({ index: target.turnIndex, align: "start", behavior: "auto" });
     navigationFrame.current = requestAnimationFrame(() => findRenderedMessage(32));
   };
-  if (!turns.length && !visibleOptimisticMessages.length) return <div className="timeline-empty"><div className="empty-mark"><TerminalWindow size={26} /></div><h2>准备开始</h2><p>描述要在这个 Project 中完成的任务。</p></div>;
+  if (!turns.length && !visibleOptimisticMessages.length) return <div className="timeline-empty"><div className="empty-mark"><TerminalWindow size={26} /></div><h2>准备开始</h2><p>描述要在这个 Project 中完成的任务。</p>{emptyActions}</div>;
   const optimistic = <OptimisticMessages messages={visibleOptimisticMessages} cwd={cwd} />;
   const timeline = useStaticTimeline
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
