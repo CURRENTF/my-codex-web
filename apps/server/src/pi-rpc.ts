@@ -13,7 +13,11 @@ export class PiRpc extends EventEmitter {
   constructor(private readonly cwd: string, private readonly args: string[], private readonly command?: string) { super(); }
   start(): void {
     const cli = this.command ? "" : path.join(path.dirname(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url)!), "dist/bundle/cli.js");
-    this.child = spawn(this.command || process.execPath, [...(this.command ? [] : [cli]), "--mode", "rpc", ...this.args], {
+    // Explicit extensions precede discovered extensions. Use the locked package
+    // for Web sessions without changing the user's global Pi configuration.
+    const extensions = this.args.includes("--no-extensions") ? [] : ["--extension",
+      path.join(path.dirname(findPackageJSON("pi-unified-exec", import.meta.url)!), "src/index.ts")];
+    this.child = spawn(this.command || process.execPath, [...(this.command ? [] : [cli]), "--mode", "rpc", ...extensions, ...this.args], {
       cwd: this.cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stdout.setEncoding("utf8");

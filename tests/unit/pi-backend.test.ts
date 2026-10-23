@@ -92,4 +92,26 @@ describe("per-session Pi backend", () => {
     expect(registry.get("codex-test").state).toBe("disconnected");
     expect(publish).toHaveBeenCalledWith("backend.connection.changed", { backend: "codex", state: "disconnected" });
   });
+  it("keeps an extension follow-up within the active turn", async () => {
+    const { pi, directory } = await setup();
+    const { thread } = await pi.startSession(directory, settings);
+    await pi.startTurn(thread.id, directory, "wake-active", settings, "user");
+    await vi.waitFor(async () => expect((await pi.readSession(thread.id)).turns[0]?.status).toBe("completed"));
+    const result = await pi.readSession(thread.id);
+    expect(result.turns).toHaveLength(1);
+    expect(result.turns[0]?.items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "Background job resumed" }));
+    expect(result.turns[0]?.items.filter((item) => item.type === "genericToolCall" && item.title === "pi · unified-exec-completed")).toHaveLength(1);
+  });
+  it("can interrupt a plugin-initiated turn without affecting another session", async () => {
+    const { pi, directory } = await setup();
+    const a = await pi.startSession(directory, settings), b = await pi.startSession(directory, settings);
+    await pi.startTurn(b.thread.id, directory, "hold", settings, "b");
+    await pi.startTurn(a.thread.id, directory, "wake-abort", settings, "a");
+    await vi.waitFor(async () => expect((await pi.readSession(a.thread.id)).turns).toHaveLength(2));
+    const result = await pi.readSession(a.thread.id);
+    expect(result.turns[1]?.status).toBe("inProgress");
+    await pi.interruptTurn(a.thread.id, result.turns[1]!.id);
+    expect((await pi.readSession(a.thread.id)).turns[1]?.status).toBe("interrupted");
+    expect((await pi.readSession(b.thread.id)).turns[0]?.status).toBe("inProgress");
+  });
 });

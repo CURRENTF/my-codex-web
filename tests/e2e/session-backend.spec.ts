@@ -35,6 +35,14 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(selector.getByRole("button", { name: "使用 pi 后端" })).toHaveAttribute("aria-pressed", "true");
     await expect(selector.getByRole("button", { name: "使用 Codex 后端" })).toBeVisible();
     await expect(page.getByRole("dialog", { name: "新建对话" })).toHaveCount(0);
+    const permission = page.getByRole("button", { name: "权限", exact: true });
+    await expect(permission).toHaveClass(/settings-select-trigger access/);
+    await expect(permission).toHaveText("Full Access");
+    await expect(permission.locator("svg")).toBeVisible();
+    await permission.click();
+    await expect(page.getByRole("menuitemradio")).toHaveCount(1);
+    await page.screenshot({ path: test.info().outputPath("pi-permissions.png") });
+    await page.keyboard.press("Escape");
     const creationMs = Date.now() - start;
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("keep my draft");
     await page.locator(".attachment-input").setInputFiles({ name: "draft.txt", mimeType: "text/plain", buffer: Buffer.from("draft attachment") });
@@ -43,6 +51,13 @@ test("switches empty-session backends and creates without waiting for catalog or
     await selector.getByRole("button", { name: "使用 agy 后端" }).click();
     await expect(page).toHaveURL(/\/sessions\/agy:/, { timeout: 5_000 });
     await expect(selector.getByRole("button", { name: "使用 agy 后端" })).toHaveAttribute("aria-pressed", "true");
+    await expect(permission).toHaveText("Accept Edits");
+    await permission.click();
+    await expect(page.getByRole("menuitemradio")).toHaveCount(1);
+    await expect(page.getByRole("menuitemradio")).toContainText("Accept Edits");
+    await page.screenshot({ path: test.info().outputPath("agy-permissions.png") });
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep my draft");
     await expect(page.locator(".attachment-chip")).toContainText("draft.txt");
     const switchingMs = Date.now() - switching;
@@ -78,6 +93,7 @@ test("switches empty-session backends and creates without waiting for catalog or
     await defaultBackend.click();
     await page.getByRole("menuitemradio", { name: "agy", exact: true }).click();
     await expect(defaultModel).toHaveText("使用 agy 默认");
+    await expect(page.getByRole("button", { name: "新 Session 默认 effort", exact: true })).toHaveCount(0);
     await defaultModel.click();
     await page.getByRole("menuitemradio", { name: /Agy alternate/ }).click();
     await defaultBackend.click();
@@ -127,6 +143,20 @@ test("switches empty-session backends and creates without waiting for catalog or
       const session = await fetch(`/api/sessions/${id}`).then((response) => response.json());
       return session.thread.turns[0]?.status;
     }, threadId)).toBe("completed");
+
+    // A plugin-initiated run is visible through the same live UI as user turns.
+    await page.locator(".sidebar").getByRole("button", { name: "新建 Session", exact: true }).click();
+    await expect(page).toHaveURL(/\/sessions\/pi:/);
+    await page.getByRole("textbox", { name: "消息", exact: true }).fill("wake");
+    await page.getByRole("button", { name: "发送或执行命令", exact: true }).click();
+    await expect(page.getByText("Background job resumed", { exact: true })).toBeVisible();
+    await page.locator(".activity-group").filter({ hasText: "pi · unified-exec-completed" }).locator(":scope > summary").click();
+    await expect(page.getByText("pi · unified-exec-completed", { exact: true })).toBeVisible();
+    const piId = page.url().split("/sessions/")[1]!;
+    await expect.poll(() => page.evaluate(async (id) => {
+      const session = await fetch(`/api/sessions/${id}`).then((response) => response.json());
+      return { turns: session.thread.turns.map((turn: any) => turn.status), state: session.runtime.state };
+    }, piId)).toEqual({ turns: ["completed", "completed"], state: "justFinished" });
   } finally {
     releaseReads();
     await page.unrouteAll({ behavior: "wait" });

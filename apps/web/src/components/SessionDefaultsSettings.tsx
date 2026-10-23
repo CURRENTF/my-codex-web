@@ -36,12 +36,12 @@ export function SessionDefaultsSettings({ models: codexModels }: { models: Model
       onValueChange={(next) => setDefaults(backend, next || null, null)}
       onOpen={catalog.refreshIfStale} onRefresh={() => void catalog.refetch()} refreshing={catalog.isFetching} error={catalog.error?.message ?? catalog.data?.message}
     /></label>
-    <label className="field-label">默认 effort<SettingsSelect
+    {backend !== "agy" && (!selected || selected.supportedReasoning.length > 1) && <label className="field-label">默认 effort<SettingsSelect
       className="settings-dialog-select" variant="reasoning" ariaLabel="新 Session 默认 effort" menuLabel="默认 effort"
       value={reasoning ?? ""} placeholder="模型默认" disabled={!selected}
       options={[{ value: "", label: selected ? `模型默认 (${selected.defaultReasoning})` : inheritedLabel }, ...(selected?.supportedReasoning ?? []).map((item) => ({ value: item.effort, label: item.effort, description: item.description }))]}
       onValueChange={(next) => setDefaults(backend, model, next || null)}
-    /></label>
+    /></label>}
     {(unavailable || invalidEffort) && <p role="alert" className="session-defaults-error">{unavailable ? "已保存的模型当前不可用，请重新选择。" : "已保存的 effort 当前不可用，请重新选择。"}</p>}
   </section>;
 }

@@ -18,7 +18,9 @@ interface LiveSession {
   rpc: PiRpc;
   turn?: SessionTurn;
   messageId?: string;
+  customMessageId?: string;
   stopping?: boolean;
+  closed?: boolean;
 }
 const unsupported = (feature: string): never => { throw Object.assign(new Error(`pi 暂不支持 ${feature}`), { statusCode: 400 }); };
 const textContent = (content: any): string => Array.isArray(content) ? content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n") : "";
@@ -109,6 +111,7 @@ export class PiAdapter extends EventEmitter {
       catch { rpc.stop(); this.finish(id, live, "failed", "Unable to save Pi session output"); }
     });
     rpc.on("failure", (error: Error) => {
+      live.closed = true;
       this.finish(id, live, "failed", error.message);
       if (this.live.get(id) === live) this.live.delete(id);
       this.clearQuestions(id);
@@ -116,6 +119,10 @@ export class PiAdapter extends EventEmitter {
     try {
       rpc.start();
       const state = await rpc.request("get_state");
+      const { commands } = await rpc.request("get_commands");
+      if (!commands?.some((command: { name: string }) => command.name === "unified-exec-sessions")) {
+        throw new Error("pi-unified-exec 未加载，请运行 npm run setup 安装锁定依赖，并检查 Pi 扩展兼容性。");
+      }
       // Restore the native session; never feed UI projections back as model context.
       if (!saved.settings.model && state.model) saved.settings.model = `${state.model.provider}/${state.model.id}`;
       if (!saved.settings.model) throw new Error("Pi 尚无默认模型，请先配置 pi 的模型与凭证。");
@@ -123,7 +130,7 @@ export class PiAdapter extends EventEmitter {
       await this.applySettings(saved, live, saved.settings);
       if (this.disposed) throw new Error("Pi backend stopped");
       this.live.set(id, live); return live;
-    } catch (error) { rpc.stop(); throw error; }
+    } catch (error) { live.closed = true; rpc.stop(); throw error; }
   }
   private assertSettings(settings: Partial<SessionSettings>): void {
     if (settings.accessMode && settings.accessMode !== "fullAccess") unsupported("只读或工作区沙箱；pi 当前以 Full Access 执行");
@@ -177,15 +184,14 @@ export class PiAdapter extends EventEmitter {
     if (live.turn) throw new Error("Pi session already has an active turn");
     await this.applySettings(saved, live, settings);
     const input = await this.promptInput(text, attachments);
-    const turn: SessionTurn = { id: randomUUID(), status: "inProgress", startedAt: Math.floor(Date.now() / 1000), completedAt: null, durationMs: null,
-      items: [{ type: "userMessage", id: clientId, clientId, content: [{ type: "text", text }] }] };
-    saved.thread.turns.push(turn); live.turn = turn; live.messageId = undefined; live.stopping = false;
-    saved.thread.preview ||= text.slice(0, 160); saved.thread.updatedAt = Math.floor(Date.now() / 1000); this.save(saved);
-    this.publish({ type: "turnStarted", threadId: id, turn });
+    // An extension may start a run while settings/attachments are being prepared.
+    if (live.turn) throw Object.assign(new Error("Pi session already has an active turn"), { statusCode: 409 });
+    saved.thread.preview ||= text.slice(0, 160);
+    const turn = this.beginTurn(id, live, [{ type: "userMessage", id: clientId, clientId, content: [{ type: "text", text }] }]);
     try {
       const result = await live.rpc.request("prompt", input);
-      if (result?.disposition === "handled") this.finish(id, live, "completed");
-    } catch (error) { this.finish(id, live, "failed", error instanceof Error ? error.message : "Pi prompt failed"); throw error; }
+      if (result?.disposition === "handled" && live.turn === turn) this.finish(id, live, "completed");
+    } catch (error) { if (live.turn === turn) this.finish(id, live, "failed", error instanceof Error ? error.message : "Pi prompt failed"); throw error; }
     return { turn: structuredClone(turn) };
   }
   async steerTurn(id: string, expectedTurnId: string, text: string, clientId: string, skills: readonly unknown[] = [], attachments: readonly AttachmentReference[] = []) {
@@ -201,7 +207,7 @@ export class PiAdapter extends EventEmitter {
     const live = this.live.get(id); if (!live?.turn || live.turn.id !== turnId) return;
     live.stopping = true;
     await live.rpc.request("clear_queue"); await live.rpc.request("abort");
-    this.finish(id, live, "interrupted");
+    if (live.turn?.id === turnId) this.finish(id, live, "interrupted");
   }
   async compactThread(id: string) { const live = await this.ensureLive(id); await live.rpc.request("compact", {}, 120_000); }
   async renameSession(id: string, name: string) {
@@ -210,7 +216,7 @@ export class PiAdapter extends EventEmitter {
     this.publish({ type: "nameUpdated", threadId: id, name });
   }
   async archiveSession(id: string) { const saved = this.require(id); saved.archived = true; this.save(saved); await this.unsubscribe(id); }
-  async unsubscribe(id: string) { const live = this.live.get(id); if (live?.turn) throw new Error("Cannot unload an active Pi session"); live?.rpc.stop(); this.live.delete(id); this.clearQuestions(id); }
+  async unsubscribe(id: string) { const live = this.live.get(id); if (live?.turn) throw new Error("Cannot unload an active Pi session"); if (live) { live.closed = true; live.rpc.stop(); } this.live.delete(id); this.clearQuestions(id); }
   async getGoal(_id: string) { return null; }
   async readSessionCost(id: string): Promise<import("@codex-web/shared-types").SessionCost> {
     const live = await this.ensureLive(id);
@@ -221,6 +227,14 @@ export class PiAdapter extends EventEmitter {
   }
   async generateSessionTitle(_cwd: string, userRequest: string, _outcome?: string) { return userRequest.trim().slice(0, 48) || null; }
   stop() { this.disposed = true; for (const [id, live] of this.live) { this.finish(id, live, "interrupted"); live.rpc.stop(); } this.live.clear(); }
+  private beginTurn(id: string, live: LiveSession, items: SessionItem[] = []): SessionTurn {
+    const turn: SessionTurn = { id: randomUUID(), status: "inProgress", startedAt: Math.floor(Date.now() / 1000), completedAt: null, durationMs: null, items };
+    const saved = this.require(id);
+    saved.thread.turns.push(turn); saved.thread.updatedAt = Math.floor(Date.now() / 1000);
+    live.turn = turn; live.messageId = undefined; live.customMessageId = undefined; live.stopping = false;
+    this.save(saved); this.publish({ type: "turnStarted", threadId: id, turn });
+    return turn;
+  }
   private upsert(id: string, live: LiveSession, item: SessionItem, completed: boolean) {
     if (!live.turn) return;
     const index = live.turn.items.findIndex((existing) => existing.id === item.id);
@@ -238,7 +252,7 @@ export class PiAdapter extends EventEmitter {
     turn.completedAt = Math.floor(Date.now() / 1000); turn.durationMs = (turn.completedAt - (turn.startedAt ?? turn.completedAt)) * 1000;
     for (const item of turn.items) if ("status" in item && item.status === "inProgress") item.status = turn.status;
     const saved = this.require(id); saved.thread.updatedAt = Math.floor(Date.now() / 1000); this.save(saved);
-    live.turn = undefined; live.messageId = undefined; this.clearQuestions(id);
+    live.turn = undefined; live.messageId = undefined; live.customMessageId = undefined; this.clearQuestions(id);
     this.publish({ type: "turnCompleted", threadId: id, turn });
     if (!this.disposed) void live.rpc.request("get_session_stats").then((stats) => {
       if (stats.contextUsage) this.publish({ type: "tokenUsageUpdated", threadId: id,
@@ -258,6 +272,10 @@ export class PiAdapter extends EventEmitter {
     this.questions.delete(id); this.publish({ type: "serverRequestResolved", requestId: id });
   }
   private handleRecord(id: string, live: LiveSession, event: any) {
+    if (this.disposed || live.closed) return;
+    // Pi extensions can start a new native run without a Web prompt. Repeated
+    // agent_start events within retries/follow-ups belong to the existing turn.
+    if (event.type === "agent_start" && !live.turn) this.beginTurn(id, live);
     if (event.type === "extension_ui_request") {
       if (!["confirm", "select", "input", "editor"].includes(event.method)) return;
       const requestId = `pi-request:${randomUUID()}`;
@@ -271,7 +289,15 @@ export class PiAdapter extends EventEmitter {
       this.emit("pendingRequest", request); return;
     }
     if (!live.turn) return;
-    if (event.type === "agent_settled") { this.finish(id, live, "completed"); return; }
+    if (event.type === "agent_settled") { this.finish(id, live, event.aborted ? "interrupted" : "completed"); return; }
+    if (["message_start", "message_end"].includes(event.type) && event.message?.role === "custom" && event.message.display === true) {
+      const message = event.message;
+      const itemId = live.customMessageId ??= randomUUID();
+      // Keep extension metadata distinct from human instructions and assistant output.
+      this.upsert(id, live, { type: "genericToolCall", id: itemId, title: `pi · ${message.customType ?? "extension"}`,
+        status: "completed", details: typeof message.content === "string" ? message.content : textContent(message.content) }, event.type === "message_end");
+      if (event.type === "message_end") live.customMessageId = undefined;
+    }
     if (event.type === "message_start" && event.message?.role === "assistant") live.messageId = randomUUID();
     if (["message_update", "message_end"].includes(event.type) && event.message?.role === "assistant") {
       const messageId = live.messageId ??= randomUUID();
