@@ -52,6 +52,36 @@ it("creates native sessions with the explicit model chosen in Web defaults", asy
     expect(response.json().settings).toMatchObject({ backend, model, reasoning });
   }
 });
+it("replaces an empty backend without accumulating sessions, preserves metadata, and rejects switching history", async () => {
+  const project = (await server.app.inject({ method: "POST", url: "/api/projects", headers: headers(), payload: { path: state.directory, clientRequestId: randomUUID() } })).json();
+  const original = (await server.app.inject({ method: "POST", url: `/api/projects/${project.id}/sessions`, headers: headers(), payload: { backend: "pi", clientRequestId: randomUUID() } })).json().thread.id;
+  await server.app.inject({ method: "PATCH", url: `/api/sessions/${original}/name`, headers: headers(), payload: { name: "My draft", clientRequestId: randomUUID() } });
+  await server.app.inject({ method: "PATCH", url: `/api/sessions/${original}/pin`, headers: headers(), payload: { pinned: true, clientRequestId: randomUUID() } });
+  const before = (await server.app.inject({ url: "/api/sessions", headers: headers() })).json();
+  const payload = { backend: "agy", clientRequestId: randomUUID() };
+  const switchRequest = () => server.app.inject({ method: "PATCH", url: `/api/sessions/${original}/backend`, headers: headers(), payload });
+  const response = await switchRequest();
+  expect(response.statusCode, response.body).toBe(200);
+  const replacement = response.json();
+  expect(replacement.thread.id).toMatch(/^agy:/);
+  expect(replacement).toMatchObject({ thread: { name: "My draft", turns: [] }, summary: { pinned: true, title: "My draft" } });
+  expect((await switchRequest()).json().thread.id).toBe(replacement.thread.id);
+  const after = (await server.app.inject({ url: "/api/sessions", headers: headers() })).json();
+  expect(after).toHaveLength(before.length);
+  expect(after.some((session: any) => session.threadId === original)).toBe(false);
+  expect(after.some((session: any) => session.threadId === replacement.thread.id)).toBe(true);
+  const failing = vi.spyOn(server.adapter.pi, "startSession").mockRejectedValueOnce(new Error("pi cannot start"));
+  try {
+    const failure = await server.app.inject({ method: "PATCH", url: `/api/sessions/${replacement.thread.id}/backend`, headers: headers(), payload: { backend: "pi", clientRequestId: randomUUID() } });
+    expect(failure.statusCode).toBe(500);
+    expect((await server.app.inject({ url: `/api/sessions/${replacement.thread.id}`, headers: headers() })).statusCode).toBe(200);
+  } finally { failing.mockRestore(); }
+  await server.app.inject({ method: "POST", url: `/api/sessions/${replacement.thread.id}/turns`, headers: headers(), payload: { text: "hello", clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
+  await vi.waitFor(async () => expect((await server.app.inject({ url: `/api/sessions/${replacement.thread.id}`, headers: headers() })).json().thread.turns[0]?.status).toBe("completed"));
+  const rejected = await server.app.inject({ method: "PATCH", url: `/api/sessions/${replacement.thread.id}/backend`, headers: headers(), payload: { backend: "pi", clientRequestId: randomUUID() } });
+  expect(rejected.statusCode).toBe(409);
+  expect(rejected.json().error).toContain("空白对话");
+});
 it("creates and continues Pi through HTTP with Codex unavailable, without inheriting Codex project defaults", async () => {
   const catalog = await server.app.inject({ url: "/api/backends", headers: headers() });
   expect(catalog.json().map((item: any) => [item.id, item.available])).toEqual([["codex", false], ["pi", true], ["agy", true]]);

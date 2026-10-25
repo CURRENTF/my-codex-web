@@ -555,6 +555,14 @@ export async function createServer() {
       return { ...created, runtime: runtimes.get(created.thread.id), goal: null };
     });
   });
+  app.patch("/api/sessions/:threadId/backend", async (request) => {
+    const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
+    const body = settingsSchema.extend({ backend: z.enum(BACKEND_IDS), clientRequestId: requestIdSchema }).parse(request.body);
+    return once(request, body.clientRequestId, async () => {
+      const switched = await sessions.switchBackend(threadId, body, body.clientRequestId);
+      return { ...switched, runtime: runtimes.get(switched.thread.id), goal: null };
+    });
+  });
   app.post("/api/sessions/:threadId/turns", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
     const body = settingsSchema.extend({ text: z.string().trim().max(100_000).default(""), skillNames: skillNamesSchema, attachmentIds: attachmentIdsSchema, clientRequestId: requestIdSchema, clientUserMessageId: requestIdSchema })

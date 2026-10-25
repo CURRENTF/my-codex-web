@@ -172,7 +172,7 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
       {backend !== "agy" && shouldShowFullAccessNotice(payload.settings.accessMode, composerAccessMode, fullAccessNoticeSeen) && <div className="full-access-notice"><ShieldWarning size={16} weight="fill" /><span><strong>此 Project 已启用 Full Access</strong>{BACKEND_LABELS[backend]} 可以修改工作区外的文件并执行不经逐次审批的命令。</span><button onClick={onAcknowledgeFullAccess}>知道了</button></div>}
       {parallelWriteWarning && <div className="parallel-write-warning"><WarningCircle size={15} weight="fill" /><span>主 Session 和 Side Chat 可能同时修改同一工作区</span></div>}
     </div>
-    <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} emptyActions={!sideChat && onChangeBackend && <div className="empty-session-backends">
+    <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} emptyActions={!sideChat && !payload.goal && onChangeBackend && <div className="empty-session-backends">
       <div className="backend-segmented" role="group" aria-label="对话后端" aria-busy={changeBackend.isPending}>
         {BACKEND_IDS.map((id) => <button key={id} type="button" aria-pressed={backend === id} aria-label={`使用 ${BACKEND_LABELS[id]} 后端`} disabled={changeBackend.isPending || uploading || hasActiveTurn || !project.available || connectionState !== "connected"} onClick={() => { if (id !== backend) changeBackend.mutate(id); }}>
           {changeBackend.isPending && changeBackend.variables === id && <SpinnerGap size={13} className="spinning" aria-hidden="true" />}{BACKEND_LABELS[id]}

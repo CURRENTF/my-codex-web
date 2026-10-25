@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
@@ -9,9 +10,16 @@ import type { AdapterEvent } from "@codex-web/codex-adapter";
 
 // Real installed Pi, with an isolated agent directory and a local deterministic provider.
 // This verifies the shipped wire protocol and native context restoration without API credentials.
-it("runs the bundled Pi RPC and restores native model context after Web restart", async () => {
+it("deduplicates an installed unified-exec, keeps other extensions, and restores native model context after restart", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pi-native-rpc-"));
   const agentDir = path.join(root, "agent"); await mkdir(agentDir);
+  const plugin = path.join(agentDir, "npm/node_modules/pi-unified-exec");
+  const bundled = path.dirname(findPackageJSON("pi-unified-exec", import.meta.url)!);
+  await mkdir(plugin, { recursive: true });
+  await cp(path.join(bundled, "src"), path.join(plugin, "src"), { recursive: true });
+  await cp(path.join(bundled, "package.json"), path.join(plugin, "package.json"));
+  await writeFile(path.join(agentDir, "other.ts"), `export default function(pi) { pi.registerTool({ name: "other_extension_tool", label: "Other", description: "Other extension survives", parameters: { type: "object", properties: {} }, async execute() { return { content: [{ type: "text", text: "ok" }] }; } }); }`);
+  await writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-unified-exec"], extensions: ["./other.ts"] }));
   const requests: any[] = [];
   const http = createServer(async (request, response) => {
     let body = ""; for await (const chunk of request) body += chunk;
@@ -37,6 +45,9 @@ it("runs the bundled Pi RPC and restores native model context after Web restart"
     await pi.startTurn(thread.id, root, "Remember native-context-marker", settings, "first-user");
     await vi.waitFor(async () => expect((await pi.readSession(thread.id)).turns[0]?.status).toBe("completed"), { timeout: 10_000 });
     expect((await pi.readSession(thread.id)).turns[0]?.items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "PI_NATIVE_OK" }));
+    const tools = requests[0].tools.map((tool: any) => tool.function.name);
+    expect(tools.filter((name: string) => name === "exec_command")).toHaveLength(1);
+    expect(tools).toContain("other_extension_tool");
     await pi.unsubscribe(thread.id); pi.stop();
     pi = new PiAdapter(path.join(root, "sessions"));
     await pi.resumeSession(thread.id);

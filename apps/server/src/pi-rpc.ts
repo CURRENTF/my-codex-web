@@ -1,7 +1,24 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { findPackageJSON } from "node:module";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
+
+function unifiedExecExtension(cwd: string): string {
+  const bundled = path.dirname(findPackageJSON("pi-unified-exec", import.meta.url)!);
+  const version = JSON.parse(readFileSync(path.join(bundled, "package.json"), "utf8")).version;
+  const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(homedir(), ".pi", "agent");
+  // Pi deduplicates canonical paths, not tool names. Reuse an installed copy
+  // only at the locked version so discovery cannot register the same tools twice.
+  for (const root of [path.join(cwd, ".pi", "npm", "node_modules", "pi-unified-exec"), path.join(agentDir, "npm", "node_modules", "pi-unified-exec")]) {
+    try {
+      if (JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version === version
+        && existsSync(path.join(root, "src/index.ts"))) return path.join(root, "src/index.ts");
+    } catch { /* No matching Pi-managed installation; use the bundled dependency. */ }
+  }
+  return path.join(bundled, "src/index.ts");
+}
 
 /** Pi uses JSONL records, not Codex JSON-RPC. Keep each conversation in its own process. */
 export class PiRpc extends EventEmitter {
@@ -13,10 +30,7 @@ export class PiRpc extends EventEmitter {
   constructor(private readonly cwd: string, private readonly args: string[], private readonly command?: string) { super(); }
   start(): void {
     const cli = this.command ? "" : path.join(path.dirname(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url)!), "dist/bundle/cli.js");
-    // Explicit extensions precede discovered extensions. Use the locked package
-    // for Web sessions without changing the user's global Pi configuration.
-    const extensions = this.args.includes("--no-extensions") ? [] : ["--extension",
-      path.join(path.dirname(findPackageJSON("pi-unified-exec", import.meta.url)!), "src/index.ts")];
+    const extensions = this.args.includes("--no-extensions") ? [] : ["--extension", unifiedExecExtension(this.cwd)];
     this.child = spawn(this.command || process.execPath, [...(this.command ? [] : [cli]), "--mode", "rpc", ...extensions, ...this.args], {
       cwd: this.cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"],
     });

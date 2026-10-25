@@ -557,36 +557,38 @@ export class SessionService extends EventEmitter {
 
   async archive(threadId: string): Promise<void> {
     this.assertPersistentSession(threadId, "archive");
-    return this.withLock(threadId, async () => {
-      this.requireMapping(threadId);
-      this.assertNoActiveTurn(threadId, "Archive");
-      const sideChat = this.runtimes.listSideChats().find((candidate) => candidate.parentThreadId === threadId);
-      if (sideChat) {
-        await this.withLock(sideChat.threadId, async () => {
-          this.assertNoActiveTurn(sideChat.threadId, "Archive");
-          await this.closeSideChatUnlocked(sideChat.threadId);
-        });
+    return this.withLock(threadId, () => this.archiveUnlocked(threadId));
+  }
+
+  private async archiveUnlocked(threadId: string): Promise<void> {
+    this.requireMapping(threadId);
+    this.assertNoActiveTurn(threadId, "Archive");
+    const sideChat = this.runtimes.listSideChats().find((candidate) => candidate.parentThreadId === threadId);
+    if (sideChat) {
+      await this.withLock(sideChat.threadId, async () => {
+        this.assertNoActiveTurn(sideChat.threadId, "Archive");
+        await this.closeSideChatUnlocked(sideChat.threadId);
+      });
+    }
+    let reason = "archived";
+    this.indexer.markSessionArchived?.(threadId);
+    try {
+      await this.adapter.archiveSession(threadId);
+    } catch (error) {
+      if (error instanceof OperationUncertainError) {
+        this.uncertainArchives.add(threadId);
+        throw error;
       }
-      let reason = "archived";
-      this.indexer.markSessionArchived?.(threadId);
-      try {
-        await this.adapter.archiveSession(threadId);
-      } catch (error) {
-        if (error instanceof OperationUncertainError) {
-          this.uncertainArchives.add(threadId);
-          throw error;
-        }
-        if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) {
-          this.indexer.restoreSessionDiscovery?.(threadId);
-          throw error;
-        }
-        reason = "archived-unmaterialized";
-        await this.adapter.unsubscribe(threadId).catch(() => undefined);
+      if (!isUnmaterializedSessionReadError(error) && (!(error instanceof JsonRpcError) || !error.message.includes("no rollout found"))) {
+        this.indexer.restoreSessionDiscovery?.(threadId);
+        throw error;
       }
-      this.repositories.removeProjectSession(threadId);
-      this.clearSessionCaches(threadId);
-      this.runtimes.notifySessionSummaryUpdated(threadId, reason);
-    });
+      reason = "archived-unmaterialized";
+      await this.adapter.unsubscribe(threadId).catch(() => undefined);
+    }
+    this.repositories.removeProjectSession(threadId);
+    this.clearSessionCaches(threadId);
+    this.runtimes.notifySessionSummaryUpdated(threadId, reason);
   }
 
   setPinned(threadId: string, pinned: boolean): { ok: true; pinned: boolean } {
@@ -638,37 +640,71 @@ export class SessionService extends EventEmitter {
 
   async createSession(projectId: string, input: TurnSettings, clientRequestId: string) {
     return this.idempotent(`project:${projectId}:create`, clientRequestId, () => this.projectLocks.withKey(projectId, () => this.withRecoveryCriticalOperation(async () => {
-      const project = this.requireAvailableProject(projectId);
-      const settings: SessionSettings = input.backend && input.backend !== "codex"
-        ? { backend: input.backend, model: input.model ?? null, reasoning: input.reasoning ?? null, serviceTier: input.serviceTier ?? null, accessMode: input.accessMode ?? "fullAccess" }
-        : this.resolveSettings(projectId, input);
-      const recovery: PendingSessionRecovery = {
-        threadSource: recoveryThreadSource("session", projectId, clientRequestId),
-        projectId,
-        settings,
-      };
-      this.uncertainSessions.set(recovery.threadSource, recovery);
-      this.indexer.markThreadSourcePending?.(recovery.threadSource);
+      return this.createSessionUnlocked(projectId, input, clientRequestId);
+    })));
+  }
+
+  async switchBackend(threadId: string, input: TurnSettings, clientRequestId: string) {
+    this.assertPersistentSession(threadId, "Switch backend");
+    const projectId = this.requireMapping(threadId).project_id;
+    return this.idempotent(`thread:${threadId}:backend`, clientRequestId, () => this.projectLocks.withKey(projectId, () => this.withLock(threadId, () => this.withRecoveryCriticalOperation(async () => {
+      const mapping = this.requireMapping(threadId);
+      this.assertNoActiveTurn(threadId, "Switch backend");
+      const current = await this.readSessionUnlocked(threadId);
+      if (current.thread.turns.length || current.goal || this.runtimes.listSideChats().some((side) => side.parentThreadId === threadId)) {
+        throw Object.assign(new Error("只有尚未开始的空白对话可以切换后端"), { statusCode: 409 });
+      }
+      if ((input.backend ?? "codex") === sessionBackend(threadId)) {
+        return { ...current, summary: this.sessionSummary(mapping) };
+      }
+      const created = await this.createSessionUnlocked(projectId, input, clientRequestId);
       try {
-        const response = await this.adapter.startSession(project.canonicalPath, settings, false, recovery.threadSource);
-        if (input.backend && input.backend !== "codex") recovery.settings = (await this.adapter.resumeSession(response.thread.id)).settings;
-        this.observedSessions.set(recovery.threadSource, response.thread);
-        const result = await this.finalizeCreatedSession(response.thread, recovery, true);
+        if (current.thread.name) {
+          await this.adapter.renameSession(created.thread.id, current.thread.name);
+          this.setSnapshotName(created.thread.id, current.thread.name);
+          created.thread.name = current.thread.name;
+        }
+        if (mapping.pinned) this.repositories.setSessionPinned(created.thread.id, true);
+        await this.archiveUnlocked(threadId);
+      } catch (error) {
+        if (!(await this.rollbackCreatedThread(created.thread.id))) throw new OperationUncertainError("switch backend cleanup", error);
+        throw error;
+      }
+      return { ...created, summary: this.sessionSummary(this.requireMapping(created.thread.id)) };
+    }))));
+  }
+
+  private async createSessionUnlocked(projectId: string, input: TurnSettings, clientRequestId: string) {
+    const project = this.requireAvailableProject(projectId);
+    const settings: SessionSettings = input.backend && input.backend !== "codex"
+      ? { backend: input.backend, model: input.model ?? null, reasoning: input.reasoning ?? null, serviceTier: input.serviceTier ?? null, accessMode: input.accessMode ?? "fullAccess" }
+      : this.resolveSettings(projectId, input);
+    const recovery: PendingSessionRecovery = {
+      threadSource: recoveryThreadSource("session", projectId, clientRequestId),
+      projectId,
+      settings,
+    };
+    this.uncertainSessions.set(recovery.threadSource, recovery);
+    this.indexer.markThreadSourcePending?.(recovery.threadSource);
+    try {
+      const response = await this.adapter.startSession(project.canonicalPath, settings, false, recovery.threadSource);
+      if (input.backend && input.backend !== "codex") recovery.settings = (await this.adapter.resumeSession(response.thread.id)).settings;
+      this.observedSessions.set(recovery.threadSource, response.thread);
+      const result = await this.finalizeCreatedSession(response.thread, recovery, true);
+      this.uncertainSessions.delete(recovery.threadSource);
+      this.observedSessions.delete(recovery.threadSource);
+      this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
+      return result;
+    } catch (error) {
+      if (error instanceof OperationUncertainError) {
+        recovery.recoveryDeadlineAt = Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
+      } else {
         this.uncertainSessions.delete(recovery.threadSource);
         this.observedSessions.delete(recovery.threadSource);
         this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
-        return result;
-      } catch (error) {
-        if (error instanceof OperationUncertainError) {
-          recovery.recoveryDeadlineAt = Date.now() + UNCERTAIN_CHILD_RECOVERY_TIMEOUT_MS;
-        } else {
-          this.uncertainSessions.delete(recovery.threadSource);
-          this.observedSessions.delete(recovery.threadSource);
-          this.indexer.restoreThreadSourceDiscovery?.(recovery.threadSource);
-        }
-        throw error;
       }
-    })));
+      throw error;
+    }
   }
 
   async listProjectSkills(projectId: string) {

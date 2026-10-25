@@ -401,19 +401,23 @@ export function App() {
         ...(backend !== "codex" ? { model: null, reasoning: null, accessMode: "fullAccess", serviceTier: null } : {}),
         ...sessionCreationDefaults(useComposerPreferences.getState(), catalogModels, backend),
       };
-      const result = await api<SessionPayload & { summary: SessionSummary }>(`/api/projects/${target}/sessions`, { method: "POST", body: JSON.stringify({ ...defaults, backend, clientRequestId: crypto.randomUUID() }) });
+      const result = await api<SessionPayload & { summary: SessionSummary }>(sourceThreadId ? `/api/sessions/${sourceThreadId}/backend` : `/api/projects/${target}/sessions`, { method: sourceThreadId ? "PATCH" : "POST", body: JSON.stringify({ ...defaults, backend, clientRequestId: crypto.randomUUID() }) });
       // The creation response already contains the empty session. Render it
       // immediately while the regular history query synchronizes in background.
       client.setQueryData<SessionPayload>(["session", result.thread.id], { thread: result.thread, settings: result.settings, runtime: result.runtime, goal: result.goal });
       if (sourceThreadId) {
         const store = useAppStore.getState();
         store.setDraft(result.thread.id, store.drafts[sourceThreadId] ?? "");
+        store.setDraft(sourceThreadId, "");
         const attachments = useAttachmentDrafts.getState();
         attachments.setAttachments(result.thread.id, attachments.drafts[sourceThreadId]?.attachments ?? []);
         attachments.setAttachments(sourceThreadId, []);
+        removeCachedSessionSummary(client, sourceThreadId);
+        client.removeQueries({ queryKey: ["session", sourceThreadId], exact: true });
+        void removeSessionHistory(sourceThreadId);
       }
       upsertCachedSessionSummary(client, result.summary);
-      navigate(`/sessions/${result.thread.id}`);
+      navigate(`/sessions/${result.thread.id}`, { replace: !!sourceThreadId });
     } catch (error) {
       await refreshProjectAvailabilityAfterError(error, (queryKey) => client.invalidateQueries({ queryKey }));
       throw error;

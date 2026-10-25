@@ -47,6 +47,7 @@ test("switches empty-session backends and creates without waiting for catalog or
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("keep my draft");
     await page.locator(".attachment-input").setInputFiles({ name: "draft.txt", mimeType: "text/plain", buffer: Buffer.from("draft attachment") });
     await expect(page.locator(".attachment-chip")).toContainText("draft.txt");
+    const sessionCount = await page.evaluate(async () => (await fetch("/api/sessions").then((response) => response.json())).length);
     const switching = Date.now();
     await selector.getByRole("button", { name: "使用 agy 后端" }).click();
     await expect(page).toHaveURL(/\/sessions\/agy:/, { timeout: 5_000 });
@@ -62,9 +63,10 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(page.locator(".attachment-chip")).toContainText("draft.txt");
     const switchingMs = Date.now() - switching;
     const agyUrl = page.url();
+    expect(await page.evaluate(async () => (await fetch("/api/sessions").then((response) => response.json())).length)).toBe(sessionCount);
 
-    await page.route("**/api/projects/*/sessions", async (route) => {
-      if (route.request().postDataJSON().backend === "pi") await route.fulfill({ status: 503, json: { message: "pi 尚未登录" } });
+    await page.route("**/api/sessions/*/backend", async (route) => {
+      if (route.request().postDataJSON().backend === "pi") await route.fulfill({ status: 503, json: { error: "pi 尚未登录" } });
       else await route.continue();
     });
     await selector.getByRole("button", { name: "使用 pi 后端" }).click();
@@ -72,7 +74,7 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(page).toHaveURL(agyUrl);
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep my draft");
     await expect(page.locator(".attachment-chip")).toContainText("draft.txt");
-    await page.unroute("**/api/projects/*/sessions");
+    await page.unroute("**/api/sessions/*/backend");
 
     // A one-off switch does not change the saved default or enable the dialog.
     await page.locator(".sidebar").getByRole("button", { name: "新建 Session", exact: true }).click();
