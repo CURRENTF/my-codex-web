@@ -45,6 +45,30 @@ describe("Agent message Markdown rendering", () => {
     expect(html).toContain('<pre><code class="language-bash">git merge --ff-only codex/chain-prefix-cache');
   });
 
+  it("renders Mermaid fences as diagram containers and preserves Chinese labels and line breaks", () => {
+    const source = 'flowchart TD\n    A["暂存区：最多 32GiB"] --> B["单个存储工作线程<br/>导入、淘汰"]';
+    const html = render(`之前\n\n\`\`\`mermaid\n${source}\n\`\`\`\n\n之后`);
+    expect(html).toContain('<figure class="mermaid-diagram" aria-busy="true">');
+    expect(html).toContain('class="language-mermaid"');
+    expect(html).toContain("暂存区：最多 32GiB");
+    expect(html).toContain("&lt;br/&gt;");
+    expect(html).toContain("<p>之前</p>");
+    expect(html).toContain("<p>之后</p>");
+    expect(html).not.toContain("<pre><figure");
+  });
+
+  it.each(["flowchart TD", "graph LR;"])("recognizes a standalone pasted %s diagram", (header) => {
+    const html = render(`${header}\n    A[归档] --> B[检查]\n    B --> A`);
+    expect(html).toContain('class="mermaid-diagram"');
+    expect(html).toContain("A[归档] --&gt; B[检查]");
+  });
+
+  it("leaves explicitly fenced plain text and mentions of flowchart syntax as ordinary Markdown", () => {
+    const html = render('使用 `flowchart TD` 声明方向。\n\n```text\nflowchart TD\nA --> B\n```');
+    expect(html).not.toContain('class="mermaid-diagram"');
+    expect(html).toContain('<pre><code class="language-text">flowchart TD');
+  });
+
   it("renders inline and display math with KaTeX", () => {
     const html = render("行内公式 $H_2O$。\n\n$$\n\\operatorname{score}(q,k)=\\frac{q^\\top k}{\\sqrt{d}}\n$$");
     expect(html).toContain("katex");

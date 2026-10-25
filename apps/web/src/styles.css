@@ -392,6 +392,14 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .agent-message-text th { background: var(--surface-strong); }
 .agent-message-text hr { height: 1px; margin: 1em 0; border: 0; background: var(--line); }
 .agent-message-text .katex-display { max-width: 100%; margin: .9em 0; overflow-x: auto; overflow-y: hidden; padding: .15em 0; }
+.mermaid-diagram { min-width: 0; max-width: 100%; margin: .8em 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-strong); padding: 12px; }
+.mermaid-svg { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.mermaid-svg > svg { display: block; margin: 0 auto; }
+.mermaid-source { margin-top: 10px; }
+.mermaid-source summary { width: fit-content; cursor: pointer; color: var(--text-soft); font-size: 12px; }
+.mermaid-diagram pre { margin-bottom: 0; }
+.mermaid-diagram > pre:first-child { margin-top: 0; }
+.mermaid-error { color: var(--text-soft); font-size: 12px; }
 .agent-image-link { display: block; width: fit-content; max-width: 100%; margin: .8em 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-strong); }
 .agent-image-link img { display: block; max-width: 100%; max-height: min(560px, 70dvh); object-fit: contain; }
 .agent-inline-link { display: inline-flex; align-items: center; gap: 3px; border-radius: 5px; padding: 0 3px; color: var(--accent); text-decoration: none; }

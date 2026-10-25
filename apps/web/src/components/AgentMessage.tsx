@@ -1,18 +1,30 @@
 import { ArrowSquareOut, CheckCircle, DownloadSimple, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { normalizeLooseDisplayMath, parseAgentMessage, type CodeCommentBlock, type GitReceiptBlock } from "../agent-message-format";
 import { codeViewUrl, fileDownloadUrl, isDownloadOnlyFile } from "../code-view-url";
+import { normalizeStandaloneMermaid } from "../mermaid-renderer";
 import { DownloadLink } from "./DownloadLink";
+import { MermaidDiagram } from "./MermaidDiagram";
+
+const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {
+  const code = node?.children[0];
+  if (code?.type === "element" && code.tagName === "code" && Array.isArray(code.properties.className) && code.properties.className.includes("language-mermaid")) {
+    const source = code.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "");
+    return <MermaidDiagram source={source} />;
+  }
+  return <pre {...props}>{children}</pre>;
+};
 
 export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls = {}, localPathKinds = {} }: { text: string; cwd: string; localImageUrls?: Record<string, string>; localPathUrls?: Record<string, string>; localPathKinds?: Record<string, "file" | "directory"> }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[rehypeKatex]}
     components={{
+      pre: MarkdownPre,
       a({ href, children }) {
         // ReactMarkdown URI-encodes destinations. Code View expects a filesystem
         // path and will encode it as a query parameter, so decode exactly once here.
@@ -43,7 +55,7 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
         return <a className="agent-image-link" href={displaySrc} target="_blank" rel="noreferrer"><img src={displaySrc} alt={alt ?? "回复中的图片"} loading="lazy" referrerPolicy="no-referrer" /></a>;
       },
     }}
-  >{normalizeLooseDisplayMath(text)}</ReactMarkdown>;
+  >{normalizeLooseDisplayMath(normalizeStandaloneMermaid(text))}</ReactMarkdown>;
 }
 
 function CodeCommentCard({ comment, cwd }: { comment: CodeCommentBlock; cwd: string }) {
