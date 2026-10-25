@@ -213,7 +213,7 @@ describe("Codex Adapter initialization", () => {
     expect(request).toHaveBeenCalledWith("thread/resume", expect.objectContaining({ threadId: "thread-1", excludeTurns: true }));
   });
 
-  it("keeps a just-started empty paginated Thread usable before Codex materializes its rollout", async () => {
+  it.each(["no rollout found for thread id thread-1", "invalid paginated history lineage for thread-1: missing source rollout"])("keeps a just-started empty paginated Thread usable before Codex materializes its rollout: %s", async (resumeError) => {
     const metadata = protocolThread();
     const started = {
       thread: metadata,
@@ -230,7 +230,7 @@ describe("Codex Adapter initialization", () => {
     const request = vi.fn(async (method: string) => {
       if (method === "thread/start") return started;
       if (method === "thread/read") return { thread: metadata };
-      if (method === "thread/resume") throw new JsonRpcError("no rollout found for thread id thread-1", -32_600);
+      if (method === "thread/resume") throw new JsonRpcError(resumeError, -32_600);
       if (method === "thread/turns/list") {
         throw new JsonRpcError("thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message", -32_600);
       }
@@ -274,11 +274,11 @@ describe("Codex Adapter initialization", () => {
     await expect(adapter.readSession("thread-1")).rejects.toMatchObject({ code: -32_600 });
   });
 
-  it("does not hide turn pagination failures for a non-empty Thread", async () => {
+  it.each(["list_turns is not supported yet", "invalid paginated history lineage for thread-1: missing source rollout"])("does not hide turn pagination failures for a non-empty Thread: %s", async (message) => {
     const metadata = protocolThread({ preview: "existing conversation" });
     const request = vi.fn(async (method: string) => {
       if (method === "thread/read") return { thread: metadata };
-      if (method === "thread/turns/list") throw new JsonRpcError("list_turns is not supported yet", -32_601);
+      if (method === "thread/turns/list") throw new JsonRpcError(message, -32_601);
       return {};
     });
     const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });

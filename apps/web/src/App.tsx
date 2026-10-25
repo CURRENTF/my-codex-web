@@ -87,6 +87,8 @@ function EmptyWorkspace({ onAdd }: { onAdd(): void }) {
 export function App() {
   const navigate = useNavigate(); const location = useLocation(); const client = useQueryClient();
   const selectedThreadId = threadIdFromPath(location.pathname); const [search, setSearch] = useState(""); const [mobilePane, setMobilePane] = useState<"main" | "side">("main"); const [sidebarOpen, setSidebarOpen] = useState(false); const [autoOpenSuppressed, setAutoOpenSuppressed] = useState(false);
+  const currentPath = useRef(location.pathname);
+  currentPath.current = location.pathname;
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [removingProject, setRemovingProject] = useState<Project | null>(null);
@@ -389,9 +391,13 @@ export function App() {
   const createSession = async (projectId: string, backend: BackendId, models?: ModelOption[], sourceThreadId?: string) => {
     if (sessionCreationInFlight.current) return;
     sessionCreationInFlight.current = true;
+    const startingPath = currentPath.current;
     setSessionCreateError(null);
     try {
       const target = sessionCreationProjectId(projectId, selected?.projectId, preferences?.lastProjectId, projects); if (!target) { addProject(); return; }
+      if (sourceThreadId && backend === "agy" && useAttachmentDrafts.getState().drafts[sourceThreadId]?.attachments.some((attachment) => attachment.kind === "image")) {
+        throw new Error("agy 暂不支持图片附件，请先移除图片后再切换。");
+      }
       // The selected backend validates its own configuration. Probing every CLI
       // here made even Codex creation wait for unrelated backend processes.
       const catalogModels = models ?? client.getQueryData<BackendOption>(backendCatalogKey(backend))?.models
@@ -417,7 +423,7 @@ export function App() {
         void removeSessionHistory(sourceThreadId);
       }
       upsertCachedSessionSummary(client, result.summary);
-      navigate(`/sessions/${result.thread.id}`, { replace: !!sourceThreadId });
+      if (!sourceThreadId || currentPath.current === startingPath) navigate(`/sessions/${result.thread.id}`, { replace: !!sourceThreadId });
     } catch (error) {
       await refreshProjectAvailabilityAfterError(error, (queryKey) => client.invalidateQueries({ queryKey }));
       throw error;

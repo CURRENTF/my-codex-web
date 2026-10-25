@@ -230,7 +230,7 @@ function promptInput(text: string, skills: readonly SkillReference[], attachment
 
 export function isThreadMaterializationRace(error: unknown): boolean {
   return error instanceof JsonRpcError
-    && /no rollout found|not materialized yet|rollout\b.*\bis empty\b/i.test(error.message);
+    && /no rollout found|not materialized yet|rollout\b.*\bis empty\b|invalid paginated history lineage\b.*\bmissing source rollout\b/i.test(error.message);
 }
 
 export function isTurnPaginationUnsupported(error: unknown): boolean {

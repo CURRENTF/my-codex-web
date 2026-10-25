@@ -48,6 +48,17 @@ test("switches empty-session backends and creates without waiting for catalog or
     await page.locator(".attachment-input").setInputFiles({ name: "draft.txt", mimeType: "text/plain", buffer: Buffer.from("draft attachment") });
     await expect(page.locator(".attachment-chip")).toContainText("draft.txt");
     const sessionCount = await page.evaluate(async () => (await fetch("/api/sessions").then((response) => response.json())).length);
+    const beforeImageSwitch = page.url();
+    await page.locator(".attachment-input").setInputFiles({ name: "draft.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64") });
+    await expect(page.locator(".attachment-chip")).toHaveCount(2);
+    await selector.getByRole("button", { name: "使用 agy 后端" }).click();
+    await expect(page.getByRole("alert")).toContainText("请先移除图片后再切换");
+    await expect(page).toHaveURL(beforeImageSwitch);
+    await selector.getByRole("button", { name: "使用 pi 后端" }).click();
+    await expect(page.locator(".backend-switch-error")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep my draft");
+    await page.getByRole("button", { name: "移除附件 draft.png", exact: true }).click();
+    await expect(page.locator(".attachment-chip")).toHaveCount(1);
     const switching = Date.now();
     await selector.getByRole("button", { name: "使用 agy 后端" }).click();
     await expect(page).toHaveURL(/\/sessions\/agy:/, { timeout: 5_000 });
@@ -74,6 +85,8 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(page).toHaveURL(agyUrl);
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep my draft");
     await expect(page.locator(".attachment-chip")).toContainText("draft.txt");
+    await selector.getByRole("button", { name: "使用 agy 后端" }).click();
+    await expect(page.locator(".backend-switch-error")).toHaveCount(0);
     await page.unroute("**/api/sessions/*/backend");
 
     // A one-off switch does not change the saved default or enable the dialog.
@@ -161,6 +174,62 @@ test("switches empty-session backends and creates without waiting for catalog or
     }, piId)).toEqual({ turns: ["completed", "completed"], state: "justFinished" });
   } finally {
     releaseReads();
+    await page.unrouteAll({ behavior: "wait" });
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("finishes a backend switch in the sidebar without navigating away from the user's newer selection", async ({ page }) => {
+  test.skip(process.env.CODEX_WEB_E2E_FIXTURE_BACKENDS !== "1", "Requires isolated pi and agy CLI fixtures");
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "web-switch-navigation-")));
+  let releaseSwitch = () => {};
+  const switchGate = new Promise<void>((resolve) => { releaseSwitch = resolve; });
+  let switchCompleted = () => {};
+  const completed = new Promise<void>((resolve) => { switchCompleted = resolve; });
+  let replacementId = "";
+  await page.addInitScript(() => {
+    localStorage.setItem("codex-web:composer-preferences:v1", JSON.stringify({ version: 1, state: { defaultBackend: "pi", askBackendOnNewSession: false } }));
+  });
+  try {
+    await page.goto("/");
+    await expect(page.locator(".empty-workspace").or(page.locator(".sidebar"))).toBeVisible();
+    const project = await page.evaluate(async (projectPath) => {
+      const bootstrap = await fetch("/api/bootstrap").then((response) => response.json());
+      return fetch("/api/projects", { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": bootstrap.csrfToken }, body: JSON.stringify({ path: projectPath, clientRequestId: crypto.randomUUID() }) }).then((response) => response.json());
+    }, directory);
+    await page.reload();
+    await page.getByRole("button", { name: "项目", exact: true }).click();
+    const newSession = page.getByRole("button", { name: `在 ${project.name} 新建 Session`, exact: true });
+    await newSession.click();
+    await expect(page).toHaveURL(/\/sessions\/pi:/);
+    await expect(page.locator(".session-header .breadcrumb-project")).toHaveText(project.name);
+    const sourceUrl = page.url(), sourceId = sourceUrl.split("/sessions/")[1]!;
+    await page.getByRole("textbox", { name: "消息", exact: true }).fill("draft stays with the replacement");
+    await newSession.click();
+    await expect(page).not.toHaveURL(sourceUrl);
+    const targetUrl = page.url(), targetId = targetUrl.split("/sessions/")[1]!;
+    await page.locator(`.session-row-shell[data-thread-id="${sourceId}"] .session-row`).click();
+    await expect(page).toHaveURL(sourceUrl);
+    await page.route("**/api/sessions/*/backend", async (route) => {
+      const response = await route.fetch();
+      replacementId = (await response.json()).thread.id;
+      await switchGate;
+      await route.fulfill({ response });
+      switchCompleted();
+    });
+    await page.getByRole("button", { name: "使用 agy 后端", exact: true }).click();
+    await page.locator(`.session-row-shell[data-thread-id="${targetId}"] .session-row`).click();
+    await expect(page).toHaveURL(targetUrl);
+    releaseSwitch();
+    await completed;
+    await expect.poll(() => page.evaluate((id) => {
+      return !!document.querySelector(`.session-row-shell[data-thread-id="${id}"]`);
+    }, replacementId)).toBe(true);
+    await expect(page).toHaveURL(targetUrl);
+    await page.locator(`.session-row-shell[data-thread-id="${replacementId}"] .session-row`).click();
+    await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("draft stays with the replacement");
+  } finally {
+    releaseSwitch();
     await page.unrouteAll({ behavior: "wait" });
     await rm(directory, { recursive: true, force: true });
   }

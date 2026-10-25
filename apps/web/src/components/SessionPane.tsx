@@ -174,7 +174,7 @@ export function SessionPane({ threadId, project, projects, models, sideChat = fa
     </div>
     <div className="timeline-area"><Timeline key={threadId} threadId={threadId} turns={turns} canFork={!sideChat && branchActionsAvailable} emptyActions={!sideChat && !payload.goal && onChangeBackend && <div className="empty-session-backends">
       <div className="backend-segmented" role="group" aria-label="对话后端" aria-busy={changeBackend.isPending}>
-        {BACKEND_IDS.map((id) => <button key={id} type="button" aria-pressed={backend === id} aria-label={`使用 ${BACKEND_LABELS[id]} 后端`} disabled={changeBackend.isPending || uploading || hasActiveTurn || !project.available || connectionState !== "connected"} onClick={() => { if (id !== backend) changeBackend.mutate(id); }}>
+        {BACKEND_IDS.map((id) => <button key={id} type="button" aria-pressed={backend === id} aria-label={`使用 ${BACKEND_LABELS[id]} 后端`} disabled={changeBackend.isPending || uploading || hasActiveTurn || !project.available || connectionState !== "connected"} onClick={() => { if (id === backend) changeBackend.reset(); else changeBackend.mutate(id); }}>
           {changeBackend.isPending && changeBackend.variables === id && <SpinnerGap size={13} className="spinning" aria-hidden="true" />}{BACKEND_LABELS[id]}
         </button>)}
       </div>

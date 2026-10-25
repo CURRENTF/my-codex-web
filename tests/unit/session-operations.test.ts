@@ -36,6 +36,7 @@ describe("session operation rules", () => {
     expect(isUnmaterializedSessionReadError(new JsonRpcError("no rollout found for thread id redacted", -32600))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not materialized yet"))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("failed to read rollout /tmp/test.jsonl: rollout at /tmp/test.jsonl is empty"))).toBe(true);
+    expect(isUnmaterializedSessionReadError(new JsonRpcError("invalid paginated history lineage for thread-1: missing source rollout"))).toBe(true);
     expect(isUnmaterializedSessionReadError(new JsonRpcError("thread not found"))).toBe(false);
   });
   it("distinguishes a finished-Turn Steer conflict from unrelated protocol failures", () => {
