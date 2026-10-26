@@ -1,4 +1,9 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { WebSocketServer } from "ws";
 import { describe, expect, it, vi } from "vitest";
 import { isRetryableRequestError, JsonRpcError, JsonRpcMutationResponseTimeoutError, JsonRpcTransport, retryDelayMs } from "../../packages/codex-adapter/src/json-rpc-transport.js";
 
@@ -178,6 +183,57 @@ describe("JSON-RPC retry policy", () => {
       expect(write).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+
+describe("shared Codex App Server transport", () => {
+  it("exchanges RPC over a Unix WebSocket and reconnects without stopping the shared server", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "web-rpc-"));
+    const socketPath = path.join(root, "server.sock");
+    const server = createServer(); const wss = new WebSocketServer({ server });
+    wss.on("connection", (socket) => socket.on("message", (data) => {
+      const message = JSON.parse(data.toString());
+      if (message.method === "thread/resume") {
+        socket.send(JSON.stringify({ id: message.id, result: { thread: { id: "shared" } } }));
+        socket.send(JSON.stringify({ method: "thread/started", params: { threadId: "shared" } }));
+      }
+      if (message.method === "turn/start") socket.send(JSON.stringify({ id: message.id, error: { code: -32000, message: "test failure" } }));
+    }));
+    server.listen(socketPath); await once(server, "listening");
+    let transport: JsonRpcTransport | undefined;
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        transport = new JsonRpcTransport({ cwd: root, codexHome: root, socketPath });
+        transport.start(); const notification = once(transport, "notification");
+        await expect(transport.request("thread/resume", {})).resolves.toEqual({ thread: { id: "shared" } });
+        expect((await notification)[0].method).toBe("thread/started");
+        await expect(transport.request("turn/start", {})).rejects.toMatchObject({ name: "JsonRpcError", message: "test failure" });
+        const exit = once(transport, "exit"); transport.stop(); await exit;
+        expect(server.listening).toBe(true);
+      }
+    } finally {
+      transport?.stop();
+      for (const socket of wss.clients) socket.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it("rejects pending mutations as uncertain if the shared connection drops", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "web-rpc-"));
+    const server = createServer(); const wss = new WebSocketServer({ server });
+    wss.on("connection", (socket) => socket.on("message", () => socket.terminate()));
+    const socketPath = path.join(root, "server.sock"); server.listen(socketPath); await once(server, "listening");
+    const transport = new JsonRpcTransport({ cwd: root, codexHome: root, socketPath });
+    try {
+      transport.start();
+      await expect(transport.request("turn/start", {}, { timeoutMs: 1000, operationUncertainOnDisconnect: true })).rejects.toMatchObject({ name: "JsonRpcMutationConnectionLostError", method: "turn/start" });
+      expect(transport.connected).toBe(false);
+    } finally {
+      transport.stop(); await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve())); await rm(root, { recursive: true, force: true });
     }
   });
 });

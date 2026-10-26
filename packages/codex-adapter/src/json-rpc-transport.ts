@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createInterface } from "node:readline";
+import WebSocket from "ws";
 
 interface PendingRequest {
   method: string;
@@ -12,6 +13,7 @@ interface PendingRequest {
 
 export interface JsonRpcTransportOptions {
   command?: string;
+  socketPath?: string;
   args?: string[];
   cwd: string;
   codexHome: string;
@@ -84,6 +86,7 @@ export function retryDelayMs(attempt: number, random = Math.random()): number {
 
 export class JsonRpcTransport extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private socket: WebSocket | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private closed = true;
@@ -93,11 +96,23 @@ export class JsonRpcTransport extends EventEmitter {
   }
 
   get connected(): boolean {
-    return !this.closed && this.child !== null;
+    return !this.closed && (this.child !== null || this.socket !== null);
   }
 
   start(): void {
-    if (this.child) return;
+    if (this.child || this.socket) return;
+    if (this.options.socketPath) {
+      this.closed = false;
+      const socket = new WebSocket(`ws+unix://${this.options.socketPath}:/`, { handshakeTimeout: 10_000 });
+      this.socket = socket;
+      socket.on("message", (data) => this.handleLine(data.toString()));
+      socket.once("error", (error) => this.closeWithError(error));
+      socket.once("close", (code) => {
+        this.closeWithError(new Error(`Codex App Server socket closed (${code})`));
+        this.emit("exit", { code });
+      });
+      return;
+    }
     const command = this.options.command ?? "codex";
     const args = this.options.args ?? ["app-server", "--stdio"];
     this.closed = false;
@@ -129,8 +144,10 @@ export class JsonRpcTransport extends EventEmitter {
     }
   }
 
-  private requestOnce<TResult>(method: string, params?: unknown, timeoutPolicy?: JsonRpcRequestTimeoutPolicy): Promise<TResult> {
-    if (!this.child || this.closed) throw new Error("codex app-server is not connected");
+  private async requestOnce<TResult>(method: string, params?: unknown, timeoutPolicy?: JsonRpcRequestTimeoutPolicy): Promise<TResult> {
+    const socket = this.socket;
+    if (socket?.readyState === WebSocket.CONNECTING) await once(socket, "open");
+    if (!this.connected) throw new Error("codex app-server is not connected");
     const id = this.nextId++;
     const payload = params === undefined ? { method, id } : { method, id, params };
     return new Promise<TResult>((resolve, reject) => {
@@ -181,17 +198,21 @@ export class JsonRpcTransport extends EventEmitter {
 
   stop(): void {
     const child = this.child;
-    const wasConnected = !this.closed && child !== null;
+    const socket = this.socket;
+    const wasConnected = this.connected;
     this.child = null;
+    this.socket = null;
     this.closed = true;
     if (wasConnected) this.emit("disconnecting", { reason: "stopped" });
     if (child) this.terminateChild(child);
+    socket?.terminate();
     this.rejectAll(new Error("codex app-server stopped"));
   }
 
   private write(payload: unknown): void {
-    if (!this.child || this.closed) throw new Error("codex app-server is not connected");
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    if (!this.connected) throw new Error("codex app-server is not connected");
+    if (this.socket) this.socket.send(JSON.stringify(payload));
+    else this.child!.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
   private watchStdinErrors(child: ChildProcessWithoutNullStreams): void {
@@ -247,17 +268,21 @@ export class JsonRpcTransport extends EventEmitter {
     if (this.closed) return;
     this.closed = true;
     this.child = null;
+    this.socket = null;
     this.rejectAll(error);
   }
 
   private disconnectWithError(error: Error): void {
     if (this.closed) return;
     const child = this.child;
+    const socket = this.socket;
     this.closed = true;
     this.child = null;
+    this.socket = null;
     this.emit("disconnecting", { error });
     this.rejectAll(error);
     if (child) this.terminateChild(child);
+    socket?.terminate();
   }
 
   private terminateChild(child: ChildProcessWithoutNullStreams): void {

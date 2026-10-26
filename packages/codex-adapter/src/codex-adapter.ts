@@ -34,6 +34,7 @@ export interface AdapterOptions {
   cwd: string;
   codexHome: string;
   codexCommand?: string;
+  socketPath?: string;
   version: string;
 }
 
@@ -304,6 +305,7 @@ export class CodexAdapter extends EventEmitter {
     super();
     this.supervisor = new CodexProcessSupervisor({
       command: options.codexCommand,
+      socketPath: options.socketPath,
       cwd: options.cwd,
       codexHome: options.codexHome,
     });
@@ -364,8 +366,8 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async initialize(): Promise<void> {
-    // A supervisor restart destroys every ephemeral Thread from the old process.
-    // It also invalidates the in-process proof that an empty persistent Thread is loaded.
+    // A reconnect invalidates local proof that a Thread is loaded/subscribed.
+    // In stdio mode the old process and its ephemeral Threads are also gone.
     this.justStartedThreads.clear();
     this.clearFailedSideChatCleanups();
     this.cancelInternalTitleTurns(new Error("Codex App Server restarted during title generation"));

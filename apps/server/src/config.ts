@@ -12,6 +12,9 @@ const publicOrigins = (process.env.CODEX_WEB_PUBLIC_ORIGINS ?? process.env.CODEX
 const sessionCookieName = process.env.CODEX_WEB_SESSION_COOKIE_NAME?.trim() || "my_codex_web_session";
 if (!/^[A-Za-z0-9_-]{1,64}$/.test(sessionCookieName)) throw new Error("CODEX_WEB_SESSION_COOKIE_NAME is invalid");
 
+const codexSocketPath = process.env.CODEX_WEB_CODEX_SOCKET || undefined;
+if (codexSocketPath && !path.isAbsolute(codexSocketPath)) throw new Error("CODEX_WEB_CODEX_SOCKET must be an absolute Unix socket path");
+
 export const config = {
   host: "127.0.0.1",
   port: Number(process.env.CODEX_WEB_PORT ?? 7373),
@@ -28,6 +31,7 @@ export const config = {
   cookieSecure: process.env.CODEX_WEB_COOKIE_SECURE === "1" || publicOrigins.some((origin) => origin.startsWith("https://")),
   trustProxy: process.env.CODEX_WEB_TRUST_PROXY === "1",
   codexCommand: process.env.CODEX_WEB_CODEX_BIN ?? "codex",
+  codexSocketPath,
   agyCommand: process.env.CODEX_WEB_AGY_BIN || "agy",
   piCommand: process.env.CODEX_WEB_PI_BIN || undefined,
   updateRepository: process.env.CODEX_WEB_UPDATE_REPOSITORY ?? projectRoot,

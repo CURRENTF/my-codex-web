@@ -16,7 +16,7 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { CodexAdapter, OperationUncertainError, type ReviewTarget } from "@codex-web/codex-adapter";
+import { CodexAdapter, JsonRpcError, OperationUncertainError, type ReviewTarget } from "@codex-web/codex-adapter";
 import { config } from "./config.js";
 import { Repositories } from "./database.js";
 import { DirectoryBrowserError, listDirectories } from "./directory-browser.js";
@@ -96,6 +96,7 @@ export async function createServer() {
     cwd: config.projectRoot,
     codexHome: config.codexHome,
     codexCommand: config.codexCommand,
+    socketPath: config.codexSocketPath,
     version: config.version,
   }), new PiAdapter(path.join(config.dataDir, "pi"), config.piCommand), new AgyAdapter(path.join(config.dataDir, "agy"), config.agyCommand));
   const authenticateSocket = (request: IncomingMessage) => {
@@ -270,6 +271,9 @@ export async function createServer() {
     if (error instanceof ServiceRestartConflictError) return reply.code(409).send({ error: "restart_unavailable", message: error.message });
     if (error instanceof SelfUpdateUnavailableError) return reply.code(409).send({ error: "update_unavailable", message: error.message });
     if (error instanceof SelfUpdateConflictError) return reply.code(409).send({ error: "update_in_progress", message: error.message });
+    if (error instanceof JsonRpcError && /already has an active writer/i.test(error.message)) return reply.code(409).send({
+      error: "session_writer_conflict", message: "此对话正被另一个 Codex App Server 占用；请使用共享连接，或在另一端关闭该对话后重试。",
+    });
     if (error instanceof OperationUncertainError) {
       return reply.code(503).send({
         error: "operation_uncertain",

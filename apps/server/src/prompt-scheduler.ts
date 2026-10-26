@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { JsonRpcError } from "@codex-web/codex-adapter";
 import type { PromptSchedule, SessionTurn } from "@codex-web/shared-types";
 import type { Repositories } from "./database.js";
 import { ActiveTurnConflictError, SessionDisconnectedError, type SessionService } from "./session-service.js";
@@ -31,7 +32,8 @@ export class PromptScheduler {
   set(threadId: string, input: Pick<PromptSchedule, "intervalMinutes" | "prompt" | "enabled"> & { autoStop?: boolean }): PromptSchedule {
     const mapping = this.repositories.getProjectSession(threadId);
     if (!mapping || mapping.hidden) throw new Error("任务不存在或已归档");
-    const value: PromptSchedule = { threadId, ...input, autoStop: input.autoStop ?? false, scheduleId: randomUUID(), pendingAutoStopTurnId: null, nextRunAt: input.enabled ? Date.now() + input.intervalMinutes * 60_000 : null, lastRunAt: this.get(threadId)?.lastRunAt ?? null, lastResult: null };
+    const previous = this.get(threadId);
+    const value: PromptSchedule = { threadId, ...input, autoStop: input.autoStop ?? false, scheduleId: randomUUID(), pendingAutoStopTurnId: null, nextRunAt: input.enabled ? Date.now() + input.intervalMinutes * 60_000 : null, lastRunAt: previous?.lastRunAt ?? null, lastResult: previous?.lastResult ?? null };
     this.write(value);
     this.onEnabledChange?.(threadId, value.enabled);
     return value;
@@ -112,7 +114,9 @@ export class PromptScheduler {
       }
     } catch (error) {
       result = error instanceof ActiveTurnConflictError ? "任务仍在运行，本次已跳过"
-        : error instanceof SessionDisconnectedError ? "任务暂不可用，本次已跳过" : "发送失败，下个周期重试；请检查任务状态";
+        : error instanceof SessionDisconnectedError ? "任务暂不可用，本次已跳过" : error instanceof JsonRpcError && /already has an active writer/i.test(error.message)
+          ? "发送失败：此对话正被另一个 Codex App Server 占用；请使用共享连接或在另一端关闭该对话"
+          : "发送失败，下个周期重试；请检查任务状态";
       const current = this.get(schedule.threadId);
       if (current && current.scheduleId === schedule.scheduleId && current.lastRunAt === schedule.lastRunAt) this.write({ ...current, lastResult: result });
     }

@@ -1,6 +1,6 @@
 # Codex Web
 
-本地、单用户、面向 Project 的 Web 客户端，支持按对话选择 Codex、pi 或 agy 后端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端长期运行 `codex app-server --stdio`，并通过当前 Codex Home 访问 Session。
+本地、单用户、面向 Project 的 Web 客户端，支持按对话选择 Codex、pi 或 agy 后端。浏览器只连接绑定在 `127.0.0.1` 的本地 Fastify 服务；服务端默认运行 `codex app-server --stdio`，也可连接现有本机 App Server，并通过当前 Codex Home 访问 Session。
 
 ## 环境要求
 
@@ -40,6 +40,8 @@ codex-web
 
 产品默认使用启动环境中的 `CODEX_HOME`，未设置时使用 `~/.codex`，因此可以发现现有 CLI、VS Code 和 App Server Session。本产品自己的 Project 与 UI 元数据仍只写入 `~/.codex-web/app.db`。
 
+同一个 Codex Home 中，一个对话只能由一个 App Server 持有写锁。若桌面端已经打开该对话，独立 Web App Server 恢复它会遇到 `already has an active writer`，定时轮询也无法发送。可配置 `CODEX_WEB_CODEX_SOCKET=/absolute/path/to/app-server.sock`，让 Web 通过 Unix WebSocket 连接桌面端正在使用的 App Server（见 [官方协议](https://learn.chatgpt.com/docs/app-server#protocol)）。socket 必须属于同一服务用户且可访问；共享模式下 Web 重连和重启只断开自身连接，共享 App Server 的启动、升级和重启由原宿主管理。不要删除 Codex 的 writer lock 文件或直接修改其内部数据库来解锁。轮询遇到占用会显示原因并在下个周期重试，保存轮询设置保留上次发送结果。
+
 Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也不保存凭证。
 
 可用环境变量：
@@ -50,6 +52,7 @@ Web UI 只调用 `account/read` 检查登录状态，不发起登录流程，也
 | `CODEX_WEB_CODEX_HOME` | `$CODEX_HOME` 或 `~/.codex` | 覆盖 App Server 使用的 Codex Home；测试时应设为隔离目录 |
 | `CODEX_WEB_PORT` | `7373` | 本地端口 |
 | `CODEX_WEB_CODEX_BIN` | `codex` | Codex CLI 路径 |
+| `CODEX_WEB_CODEX_SOCKET` | 未设置 | 连接现有本机 App Server 的绝对 Unix socket 路径，共享桌面端会话；不设置时启动独立 stdio App Server |
 | `CODEX_WEB_OPEN_BROWSER` | `0`（`codex-web` 命令中为 `1`） | 启动后是否打开浏览器 |
 | `CODEX_WEB_PASSWORD_HASH` | 未设置 | 启用 Web UI 密码登录；值为 `scrypt-v1:<salt>:<hash>`，不要把明文密码写入仓库 |
 | `CODEX_WEB_PUBLIC_ORIGIN(S)` | 未设置 | 反向代理公开 Origin；多个 Origin 用逗号分隔 |

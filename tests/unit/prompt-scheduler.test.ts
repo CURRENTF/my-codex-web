@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Repositories } from "../../apps/server/src/database";
 import { PromptScheduler } from "../../apps/server/src/prompt-scheduler";
+import { JsonRpcError } from "@codex-web/codex-adapter";
 import { ActiveTurnConflictError, type SessionService } from "../../apps/server/src/session-service";
 import type { SessionTurn } from "@codex-web/shared-types";
 
@@ -59,6 +60,17 @@ describe("server prompt scheduler", () => {
     await vi.advanceTimersByTimeAsync(120000);
     expect(scheduler.get("t")?.lastResult).toContain("跳过");
     await vi.advanceTimersByTimeAsync(120000); expect(startTurn).toHaveBeenCalledTimes(2);
+  });
+  it("explains writer conflicts, preserves the failed attempt when settings are saved, and retries next period", async () => {
+    enable(); startTurn.mockRejectedValueOnce(new JsonRpcError("thread t already has an active writer", -32_600));
+    scheduler.start(); await vi.advanceTimersByTimeAsync(120000);
+    const failed = scheduler.get("t")!;
+    expect(failed.lastResult).toContain("另一个 Codex App Server");
+    scheduler.set("t", { intervalMinutes: 2, prompt: "检查进展", enabled: true });
+    expect(scheduler.get("t")).toMatchObject({ lastRunAt: failed.lastRunAt, lastResult: failed.lastResult });
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(startTurn).toHaveBeenCalledTimes(2);
+    expect(scheduler.get("t")?.lastResult).toBe("已发送");
   });
   it("does not send while disconnected or paused", async () => {
     enable(); connected = false; scheduler.start();
