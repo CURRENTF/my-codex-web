@@ -33,8 +33,7 @@ describe("Composer submission intent", () => {
   });
 
   it("does not start a stale Session-detail refetch immediately after an accepted submission", () => {
-    const mutations = composerSource.split(/const \w+ = useMutation/);
-    const successBlocks = mutations.flatMap((mutation) => [...mutation.matchAll(/onSuccess:\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\},\s*onError/g)].map((match) => match[0]));
+    const successBlocks = [...composerSource.matchAll(/onSuccess:\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\},\s*onError/g)].map((match) => match[0]);
     const submissionBlocks = successBlocks.filter((block) => block.includes("acceptSubmission(threadId)"));
     expect(submissionBlocks).toHaveLength(2);
     expect(submissionBlocks.every((block) => !block.includes('queryKey: ["session", threadId]'))).toBe(true);

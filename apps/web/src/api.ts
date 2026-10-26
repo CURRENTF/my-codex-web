@@ -73,7 +73,7 @@ export interface SessionPayload {
   thread: CodexThread;
   goal: Goal | null;
   runtime: import("@codex-web/shared-types").ThreadRuntime;
-  settings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: import("@codex-web/shared-types").AccessMode; agyFullAccess?: boolean };
+  settings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: import("@codex-web/shared-types").AccessMode };
 }
 
 export type { Goal };

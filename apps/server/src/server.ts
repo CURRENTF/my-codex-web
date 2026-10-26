@@ -520,14 +520,11 @@ export async function createServer() {
   });
   app.patch("/api/sessions/:threadId/settings", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);
-    const { accessMode, agyFullAccess, clientRequestId } = z.object({
-      accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]).optional(),
-      agyFullAccess: z.boolean().optional(),
+    const { accessMode, clientRequestId } = z.object({
+      accessMode: z.enum(["fullAccess", "workspaceWrite", "readOnly"]),
       clientRequestId: requestIdSchema,
-    }).refine((body) => (body.accessMode !== undefined) !== (body.agyFullAccess !== undefined), { message: "请选择一项权限设置" }).parse(request.body);
-    return once(request, clientRequestId, () => agyFullAccess !== undefined
-      ? sessions.setAgyFullAccess(threadId, agyFullAccess)
-      : sessions.setAccessModeOverride(threadId, accessMode!));
+    }).parse(request.body);
+    return once(request, clientRequestId, () => sessions.setAccessModeOverride(threadId, accessMode));
   });
   app.patch("/api/sessions/:threadId/name", async (request) => {
     const threadId = idSchema.parse((request.params as { threadId: string }).threadId);

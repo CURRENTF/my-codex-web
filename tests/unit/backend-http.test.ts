@@ -113,46 +113,14 @@ it("creates agy with isolated defaults and supports HTTP streaming lifecycle whi
   const id = response.json().thread.id;
   expect(id).toMatch(/^agy:/); expect(response.json().settings).toMatchObject({ model: "fixture-model", reasoning: "default", accessMode: "fullAccess" });
   expect(response.json()).toMatchObject({ goal: null, runtime: { threadId: id, state: "idle", pendingRequestIds: [] }, thread: { turns: [] } });
-  const prompt = await server.app.inject({ method: "POST", url: `/api/sessions/${id}/turns`, headers: headers(), payload: { text: "hello", clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
+  const prompt = await server.app.inject({ method: "POST", url: `/api/sessions/${id}/turns`, headers: headers(), payload: { text: "permission-mode", clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
   expect(prompt.statusCode, prompt.body).toBe(200);
   await vi.waitFor(async () => {
     const after = await server.app.inject({ url: `/api/sessions/${id}`, headers: headers() });
     expect(after.json().thread.turns[0].status).toBe("completed");
     expect(after.json().runtime.state).not.toBe("running");
+    expect(after.json().thread.turns[0].items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "FULL_ACCESS\n" }));
   });
   const permissions = await server.app.inject({ method: "PATCH", url: `/api/sessions/${id}/settings`, headers: headers(), payload: { accessMode: "readOnly", clientRequestId: randomUUID() } });
   expect(permissions.statusCode).toBe(400);
-});
-
-it("persists agy Full Access through HTTP and restart, passes native flags, and rejects changes during a turn", async () => {
-  const project = (await server.app.inject({ method: "POST", url: "/api/projects", headers: headers(), payload: { path: state.directory, clientRequestId: randomUUID() } })).json();
-  const created = (await server.app.inject({ method: "POST", url: `/api/projects/${project.id}/sessions`, headers: headers(), payload: { backend: "agy", clientRequestId: randomUUID() } })).json();
-  const id = created.thread.id;
-  expect(created.settings.agyFullAccess).toBe(false);
-  const change = (agyFullAccess: boolean) => server.app.inject({ method: "PATCH", url: `/api/sessions/${id}/settings`, headers: headers(), payload: { agyFullAccess, clientRequestId: randomUUID() } });
-  expect((await change(true)).json().agyFullAccess).toBe(true);
-  await server.close();
-  const { createServer } = await import("../../apps/server/src/server.js"); server = await createServer();
-  const bootstrap = await server.app.inject({ url: "/api/bootstrap", headers: { host: "127.0.0.1:7373" } });
-  cookie = `${bootstrap.cookies[0]!.name}=${bootstrap.cookies[0]!.value}`; csrf = bootstrap.json().csrfToken;
-  expect((await server.app.inject({ url: `/api/sessions/${id}`, headers: headers() })).json().settings.agyFullAccess).toBe(true);
-  const send = (text: string) => server.app.inject({ method: "POST", url: `/api/sessions/${id}/turns`, headers: headers(), payload: { text, clientRequestId: randomUUID(), clientUserMessageId: randomUUID() } });
-  for (const [enabled, reply] of [[true, "FULL_ACCESS"], [false, "ACCEPT_EDITS"]] as const) {
-    expect((await change(enabled)).statusCode).toBe(200);
-    expect((await send("permission-mode")).statusCode).toBe(200);
-    await vi.waitFor(async () => {
-      const session = (await server.app.inject({ url: `/api/sessions/${id}`, headers: headers() })).json();
-      expect(session.thread.turns.at(-1).status).toBe("completed");
-      expect(session.thread.turns.at(-1).items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: `${reply}\n` }));
-      expect(session.settings.agyFullAccess).toBe(enabled);
-    });
-  }
-  expect((await send("hold")).statusCode).toBe(200);
-  expect((await change(true)).statusCode).toBe(409);
-  const active = (await server.app.inject({ url: `/api/sessions/${id}`, headers: headers() })).json();
-  await server.adapter.interruptTurn(id, active.thread.turns.at(-1).id);
-  for (const backend of ["pi", "codex"]) {
-    const rejected = await server.app.inject({ method: "PATCH", url: `/api/sessions/${backend}:not-agy/settings`, headers: headers(), payload: { agyFullAccess: true, clientRequestId: randomUUID() } });
-    expect(rejected.statusCode).toBe(backend === "codex" ? 503 : 400);
-  }
 });
