@@ -48,6 +48,7 @@ export interface ListSessionsInput {
 
 export interface SessionSettings {
   backend?: "codex" | "pi" | "agy";
+  agyFullAccess?: boolean;
   model: string | null;
   reasoning: string | null;
   serviceTier?: string | null;

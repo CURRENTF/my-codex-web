@@ -38,6 +38,22 @@ describe("agy backend", () => {
     await restored.startTurn(id, directory, "recall", settings, "user-2");
     expect((await settled(restored, id)).items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "ORCHID\n" }));
   });
+  it("defaults to Accept Edits and persists explicit Full Access across restart and back to Accept Edits", async () => {
+    const { agy, directory, id } = await setup();
+    expect((await agy.resumeSession(id)).settings.agyFullAccess).toBe(false);
+    await agy.startTurn(id, directory, "permission-mode", settings, "default");
+    expect((await settled(agy, id)).items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "ACCEPT_EDITS\n" }));
+    await agy.resumeSession(id, { ...settings, agyFullAccess: true });
+    await agy.stop();
+    const restored = new AgyAdapter(directory, fixture); cleanups.push(() => restored.stop());
+    const persisted = (await restored.resumeSession(id)).settings;
+    expect(persisted.agyFullAccess).toBe(true);
+    await restored.startTurn(id, directory, "permission-mode", persisted, "enabled");
+    expect((await settled(restored, id)).items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "FULL_ACCESS\n" }));
+    const reset = (await restored.resumeSession(id, { ...persisted, agyFullAccess: false })).settings;
+    await restored.startTurn(id, directory, "permission-mode", reset, "disabled");
+    expect((await settled(restored, id)).items).toContainEqual(expect.objectContaining({ type: "agentMessage", text: "ACCEPT_EDITS\n" }));
+  });
   it("interrupts only its own process and can continue afterwards", async () => {
     const { agy, directory, id } = await setup();
     const b = (await agy.startSession(directory, settings)).thread.id;

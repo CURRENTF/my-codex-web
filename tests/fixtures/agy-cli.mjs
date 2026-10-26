@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 const arg = name => args[args.indexOf(name) + 1];
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
-if (args.includes('--continue') || args.includes('--dangerously-skip-permissions')) process.exit(9);
+if (args.includes('--continue')) process.exit(9);
 if (args.includes('models')) {
   send({ status: 'SUCCESS', command: { data: { models: [{ id: 'fixture-model', label: 'Fixture model' }, { id: 'fixture-alternate', label: 'Agy alternate' }] } } });
   process.exit(0);
@@ -38,7 +38,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     send({ event: 'result', result: { conversation_id: id, status: 'SUCCESS', response: text === 'recovered-tool-error' ? 'Explained the denied operation.' : '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } });
     break;
   }
-  const reply = text === 'recall' ? history[0] : 'hello 世界\u2028agy';
+  const reply = text === 'permission-mode' ? (args.includes('--dangerously-skip-permissions') ? 'FULL_ACCESS' : 'ACCEPT_EDITS') : text === 'recall' ? history[0] : 'hello 世界\u2028agy';
   send({ event: 'step_update', step_update: { conversation_id: id, step_index: 1, step_type: 'tool', state: 'ACTIVE', tool_info: { name: 'read_file', parameters: { Path: 'README.md' } } } });
   send({ event: 'step_update', step_update: { conversation_id: id, step_index: 1, step_type: 'tool', state: 'DONE', tool_info: { name: 'read_file', output: 'file contents' } } });
   send({ event: 'step_update', step_update: { conversation_id: id, step_index: 2, step_type: 'agent_response', state: 'ACTIVE', text_delta: reply } });

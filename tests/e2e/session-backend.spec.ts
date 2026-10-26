@@ -78,8 +78,8 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(permission.locator("svg")).toBeVisible();
     await page.setViewportSize({ width: 1280, height: 720 });
     await permission.click();
-    await expect(page.getByRole("menuitemradio")).toHaveCount(1);
-    await expect(page.getByRole("menuitemradio")).toContainText("Accept Edits");
+    await expect(page.getByRole("menuitemradio")).toHaveCount(2);
+    await expect(page.getByRole("menuitemradio", { name: /Accept Edits/ })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("agy-permissions.png") });
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toHaveCount(0);
@@ -160,6 +160,21 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep model and draft");
     expect(refreshes).toBe(1);
     await page.unrouteAll({ behavior: "wait" });
+
+    // Native permissions save without resetting the selected model or draft.
+    await permission.click();
+    await page.getByRole("menuitemradio", { name: /Full Access/ }).click();
+    await expect(permission).toHaveText("Full Access");
+    await expect(modelButton).toContainText("Fixture model");
+    await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("keep model and draft");
+    const permissionId = page.url().split("/sessions/")[1]!;
+    expect(await page.evaluate(async (id) => (await fetch(`/api/sessions/${id}`).then((response) => response.json())).settings.agyFullAccess, permissionId)).toBe(true);
+    await page.reload();
+    await expect(permission).toHaveText("Full Access");
+    await permission.click();
+    await page.getByRole("menuitemradio", { name: /Accept Edits/ }).click();
+    await expect(permission).toHaveText("Accept Edits");
+    expect(await page.evaluate(async (id) => (await fetch(`/api/sessions/${id}`).then((response) => response.json())).settings.agyFullAccess, permissionId)).toBe(false);
 
     // Once a conversation has history, the empty-state switch disappears.
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("hello");

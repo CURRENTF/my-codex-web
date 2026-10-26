@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ArrowUp, ClockCounterClockwise, Command, Cube, File as FileIcon, Lightning, Paperclip, SpinnerGap, Square, WarningCircle, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccessMode, ContextUsage, Goal, ModelOption, Project, RuntimeState, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
-import { ApiError, api, endpoints, newClientRequestId } from "../api";
+import { ApiError, api, endpoints, newClientRequestId, type SessionPayload } from "../api";
 import { emptyAttachmentDraft, MAX_ATTACHMENTS, useAttachmentDrafts } from "../attachment-drafts";
 import { commandArgumentSuggestions, composerTrigger, isCompletedSkillTrigger, isSupportedSlashCommand, parseSlashCommand, referencedSkillNames, slashArgumentTrigger, slashCommands, type CompletedSkillMention, type SlashCommandName } from "../composer-commands";
 import { expectedSteerTurnId, isTurnFinishedConflict } from "../composer-intent";
@@ -65,7 +65,7 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
   errorTarget?: HTMLElement | null;
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
-  initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode };
+  initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode; agyFullAccess?: boolean };
   goal?: Goal | null; contextUsage?: ContextUsage; latestCompletedTurnId?: string | null; latestTurnId?: string | null; latestTurnStatus?: SessionTurn["status"] | null;
   compact?: boolean; disabled?: boolean; disabledReason?: string; onTextareaReady?(element: HTMLTextAreaElement | null): void;
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
@@ -105,6 +105,8 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
   const [reasoning, setReasoning] = useState(queuedEffectiveSettings?.reasoning ?? initialSettings.reasoning ?? (codexFeatures ? project.defaultReasoning : null) ?? preferredReasoningForModel(selectedModel));
   const [serviceTier, setServiceTier] = useState<string | null>(queuedEffectiveSettings ? queuedEffectiveSettings.serviceTier : serviceTierForModel(selectedModel, initialSettings.serviceTier));
   const [accessMode, setAccessMode] = useState<AccessMode>(queuedEffectiveSettings?.accessMode ?? initialSettings.accessMode ?? project.defaultAccessMode);
+  const [agyFullAccess, setAgyFullAccess] = useState(initialSettings.agyFullAccess ?? false);
+  useEffect(() => { setAgyFullAccess(initialSettings.agyFullAccess ?? false); }, [threadId, initialSettings.agyFullAccess]);
   const effectiveSettings = useRef<QueuedMessageSettings>({ model, reasoning, serviceTier, accessMode });
   effectiveSettings.current = { model, reasoning, serviceTier, accessMode };
   const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
@@ -243,6 +245,17 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
     method: "PATCH",
     body: JSON.stringify({ accessMode: next, clientRequestId: requestId() }),
   }) });
+
+  const persistAgyFullAccess = useMutation({
+    mutationFn: (next: boolean) => api(`/api/sessions/${threadId}/settings`, {
+      method: "PATCH", body: JSON.stringify({ agyFullAccess: next, clientRequestId: requestId() }),
+    }),
+    onSuccess: (_result, next) => {
+      setAgyFullAccess(next);
+      queryClient.setQueryData<SessionPayload>(["session", threadId], (current) => current
+        ? { ...current, settings: { ...current.settings, agyFullAccess: next } } : current);
+    },
+  });
 
   const executeSlashCommand = useCallback(async (raw: string, clientRequestId = newClientRequestId()): Promise<SlashCommandExecutionResult> => {
     const parsed = parseSlashCommand(raw);
@@ -587,7 +600,7 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
         <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? "Session 正在重新同步" : blocked ? disabledReason ?? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : !codexFeatures ? (backend === "agy" ? "输入消息；可添加文件，/ 执行命令" : "输入消息；可添加图片或文件，/ 执行命令") : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
-          <AccessModeSelect className="access-control" backend={backend} value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />
+          <AccessModeSelect className="access-control" backend={backend} value={accessMode} agyFullAccess={agyFullAccess} onAgyFullAccessChange={(next) => persistAgyFullAccess.mutate(next)} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked || persistAgyFullAccess.isPending} />
           <div className="composer-controls">
             <div className="composer-settings" role="group" aria-label="模型设置">
               <SettingsSelect className="model-select" variant="model" ariaLabel="模型" menuLabel="选择模型" value={model} options={modelSelectOptions} placeholder="模型" disabled={running || blocked} onOpen={catalog.refreshIfStale} onRefresh={() => void catalog.refetch()} refreshing={catalog.isFetching} error={catalog.error?.message ?? catalog.data?.message} onValueChange={(next) => { const option = models.find((item) => item.model === next || item.id === next); const nextReasoning = preferredReasoningForModel(option); const nextServiceTier = serviceTierForModel(option, effectiveSettings.current.serviceTier); effectiveSettings.current = { ...effectiveSettings.current, model: next, reasoning: nextReasoning, serviceTier: nextServiceTier }; setModel(next); setReasoning(nextReasoning); setServiceTier(nextServiceTier); }} />
@@ -615,6 +628,7 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
       {resolutionMessage?.startsWith("无法") && <ErrorNotice key={`resolution-${resolutionMessage}`} message={resolutionMessage} onDismiss={() => setResolutionMessage(null)} />}
       {feedback?.tone === "error" && <ErrorNotice key={`feedback-${feedback.text}`} message={feedback.text} onDismiss={() => setFeedback(null)} />}
       {skills.isError && trigger?.kind === "skill" && <ErrorNotice key={`skills-${skills.errorUpdatedAt}`} message={`Skills 加载失败：${skills.error.message}`} timestamp={skills.errorUpdatedAt} />}
+      {persistAgyFullAccess.error && <ErrorNotice key={`agy-access-${persistAgyFullAccess.submittedAt}`} message={`权限设置保存失败：${persistAgyFullAccess.error.message}`} onDismiss={() => persistAgyFullAccess.reset()} />}
       {persistAccessMode.error && <ErrorNotice key={`access-${persistAccessMode.submittedAt}`} message={`权限设置保存失败：${persistAccessMode.error.message}`} onDismiss={() => persistAccessMode.reset()} />}
       {send.error && !uncertainTurnStart && !resolutionMessage && <ErrorNotice key={`send-${send.submittedAt}`} message={`发送失败：${send.error.message}`} onDismiss={() => send.reset()} />}
       {interrupt.error && <ErrorNotice key={`interrupt-${interrupt.submittedAt}`} message={`停止失败：${interrupt.error.message}`} onDismiss={() => interrupt.reset()} />}

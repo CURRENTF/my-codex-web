@@ -31,8 +31,8 @@ export class AgyProcess extends EventEmitter {
   constructor(private readonly command: string, private readonly cwd: string) {
     super(); this.done = new Promise((resolve) => { this.resolveDone = resolve; });
   }
-  start(args: string[], content: string): void {
-    this.child = spawn(this.command, ["--mode", "accept-edits", "--input-format", "stream-json", "--output-format", "stream-json", ...args], {
+  start(args: string[], content: string, fullAccess = false): void {
+    this.child = spawn(this.command, ["--mode", "accept-edits", ...(fullAccess ? ["--dangerously-skip-permissions"] : []), "--input-format", "stream-json", "--output-format", "stream-json", ...args], {
       cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32",
     });
     const child = this.child;

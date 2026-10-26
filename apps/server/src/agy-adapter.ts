@@ -26,6 +26,7 @@ export class AgyAdapter extends EventEmitter {
     for (const file of readdirSync(directory).filter((name) => name.endsWith(".web.json"))) {
       const saved = JSON.parse(readFileSync(path.join(directory, file), "utf8")) as SavedSession;
       if (!/^agy:[0-9a-f-]{36}$/.test(saved.thread?.id)) throw new Error(`Invalid agy metadata: ${file}`);
+      saved.settings.agyFullAccess ??= false;
       for (const turn of saved.thread.turns) if (turn.status === "inProgress") {
         turn.status = "interrupted"; turn.completedAt = Math.floor(Date.now() / 1000);
         for (const item of turn.items) if ("status" in item && item.status === "inProgress") item.status = "interrupted";
@@ -77,7 +78,7 @@ export class AgyAdapter extends EventEmitter {
     if (!catalog.models.some((m) => m.model === model)) throw new Error("agy 模型不可用，请重新选择。");
     const now = Math.floor(Date.now() / 1000), id = `agy:${randomUUID()}`;
     const saved: SavedSession = { thread: { id, cwd, name: null, preview: "", createdAt: now, updatedAt: now, ephemeral: false, forkedFromId: null, turns: [] },
-      settings: { backend: "agy", model: model!, reasoning: "default", serviceTier: null, accessMode: "fullAccess" }, threadSource, archived: false };
+      settings: { backend: "agy", model: model!, reasoning: "default", serviceTier: null, accessMode: "fullAccess", agyFullAccess: settings.agyFullAccess ?? false }, threadSource, archived: false };
     this.save(saved); this.records.set(id, saved);
     this.publish({ type: "threadStarted", threadId: id, thread: saved.thread, threadSource });
     return { thread: structuredClone(saved.thread) };
@@ -118,7 +119,7 @@ export class AgyAdapter extends EventEmitter {
     });
     this.publish({ type: "turnStarted", threadId: id, turn });
     const content = text + (attachments.length ? `\n\nAttached local files:\n${attachments.map((a) => `${a.name}: ${a.path}`).join("\n")}` : "");
-    process.start([...(saved.settings.model ? ["--model", saved.settings.model] : []), ...(saved.nativeId ? ["--conversation", saved.nativeId] : [])], content);
+    process.start([...(saved.settings.model ? ["--model", saved.settings.model] : []), ...(saved.nativeId ? ["--conversation", saved.nativeId] : [])], content, saved.settings.agyFullAccess === true);
     return { turn: structuredClone(turn) };
   }
   private handleRecord(saved: SavedSession, live: LiveTurn, event: any) {

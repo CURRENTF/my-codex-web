@@ -95,11 +95,11 @@ agy 需要在服务所在机器单独安装，并以服务运行用户完成登�
 
 agy 每轮运行独立 CLI 进程，通过 `--input-format stream-json` / `--output-format stream-json` 传递消息与事件，用明确的 `--conversation` ID 恢复原生上下文，不使用会续接最近对话的 `--continue`。Web 显示历史和原生 ID 映射保存在 `CODEX_WEB_DATA_DIR/agy`；原生上下文仍由 agy 管理，备份或迁移时需同时保留 agy 自身的会话数据。只展示从 Web 创建的会话，不导入已有 CLI 历史。
 
-输入框权限入口统一使用带盾牌图标的菜单：Codex 可切换权限，pi 显示 Full Access，agy 显示 Accept Edits，后两者只列出当前支持的原生模式。模型只有一个 effort（例如 agy 的 Gemini 档位已包含在模型名中）时隐藏 effort 选择；有多个档位的模型仍可选择。
+输入框权限入口统一使用带盾牌图标的菜单：Codex 可切换权限，pi 显示 Full Access，agy 可切换 Accept Edits / Full Access，各后端只列出当前支持的原生模式。模型只有一个 effort（例如 agy 的 Gemini 档位已包含在模型名中）时隐藏 effort 选择；有多个档位的模型仍可选择。
 
 目前支持流式回复、工具步骤、模型选择、续聊、停止、排队发送、重命名、归档、文件路径附件和定时轮询。停止先发送 SIGINT，等待 CLI 结束后才允许下一轮；无响应时终止该进程组并明确报告停止未确认。单个进程异常不会中断其他后端；无最终结果、异常退出或超时不会当作成功。
 
-权限采用 agy 的 `accept-edits` 模式：自动接受文件编辑，命令保留原生权限检查，**不传递 `--dangerously-skip-permissions`**。非交互模式中需要交互审批的操作可能被拒绝，Web 暂不桥接这些审批；界面显示「Accept Edits」，不代表 Codex 的只读／工作区沙箱。命令被拒绝时展示原生工具错误；即使 CLI 返回 `SUCCESS`，若没有最终回复且最后一个工具失败，Web 仍将该轮标为失败，旧版保存的同类空白完成记录也会在加载时纠正。内部通用设置中的 `fullAccess` 仅表示没有 Codex 沙箱，不能据此推断 agy 会跳过审批。暂不开放图片附件、Steer、Web 上下文压缩、Goal、Review、Fork、Side Chat、子代理面板、Web Skill 选择和美元费用估算。
+权限默认采用 agy 的 `accept-edits` 模式（Accept Edits）：自动接受文件编辑，命令保留原生权限检查。可在输入框权限菜单显式选择 Full Access，随后每轮额外传递 `--dangerously-skip-permissions`，命令与文件操作无需逐次审批；切回 Accept Edits 后不再传递该参数。选择按对话保存，刷新页面和重启 Web 后仍生效，已有对话不会自动升级权限。Accept Edits 中需要交互审批的操作可能被 headless 模式拒绝，Web 不桥接单项审批；这些原生模式不代表 Codex 的只读／工作区沙箱。命令被拒绝时展示原生工具错误；即使 CLI 返回 `SUCCESS`，若没有最终回复且最后一个工具失败，Web 仍将该轮标为失败，旧版保存的同类空白完成记录也会在加载时纠正。内部通用设置中的 `fullAccess` 仅表示没有 Codex 沙箱，不能据此推断 agy 会跳过审批。暂不开放图片附件、Steer、Web 上下文压缩、Goal、Review、Fork、Side Chat、子代理面板、Web Skill 选择和美元费用估算。
 
 可选真实 CLI 冒烟测试（会使用已登录 agy 的模型额度，仅操作临时测试目录）：`RUN_AGY_INTEGRATION=1 npx vitest run tests/integration/agy-native.test.ts`。普通 `npm test` 使用隔离的 CLI 协议 fixture，不依赖 agy 安装、凭据或网络。
 

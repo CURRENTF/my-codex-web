@@ -167,6 +167,7 @@ export function resolveSessionSettings(project: ProjectSettings, input: TurnSett
     reasoning: input.reasoning ?? current?.reasoning ?? project.defaultReasoning ?? "high",
     serviceTier: input.serviceTier !== undefined ? input.serviceTier : current?.serviceTier ?? null,
     accessMode: input.accessMode ?? current?.accessMode ?? project.defaultAccessMode,
+    ...(current?.agyFullAccess !== undefined ? { agyFullAccess: current.agyFullAccess } : {}),
   };
 }
 
@@ -543,6 +544,18 @@ export class SessionService extends EventEmitter {
       const settings = { ...current, accessMode };
       this.settings.set(threadId, settings);
       return settings;
+    });
+  }
+
+  async setAgyFullAccess(threadId: string, agyFullAccess: boolean): Promise<SessionSettings> {
+    if (sessionBackend(threadId) !== "agy") throw Object.assign(new Error("该权限选项仅适用于 agy"), { statusCode: 400 });
+    return this.withLock(threadId, async () => {
+      this.requireMapping(threadId);
+      this.assertNoActiveTurn(threadId, "Changing agy permissions");
+      const current = await this.ensureSessionSettings(threadId);
+      const resumed = await this.adapter.resumeSession(threadId, { ...current, agyFullAccess });
+      this.settings.set(threadId, resumed.settings);
+      return resumed.settings;
     });
   }
 
@@ -1657,6 +1670,7 @@ export class SessionService extends EventEmitter {
       reasoning: mapping.last_reasoning ?? resumed.settings.reasoning,
       serviceTier: mapping.has_last_service_tier === 1 ? mapping.last_service_tier : resumed.settings.serviceTier ?? null,
       accessMode: coldAccessMode,
+      ...(resumed.settings.agyFullAccess !== undefined ? { agyFullAccess: resumed.settings.agyFullAccess } : {}),
     });
     if (resumed.thread?.turns.length > 0 && (mapping.last_model == null || mapping.last_reasoning == null || mapping.has_last_service_tier !== 1)) {
       this.persistLastTurnSettings(threadId, settings);
