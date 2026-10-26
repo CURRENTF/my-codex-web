@@ -9,6 +9,12 @@ import { AgyProcess, agyQuery } from "./agy-process.js";
 interface SavedSession { thread: SessionThread; settings: SessionSettings; nativeId?: string; threadSource: string; archived: boolean }
 interface LiveTurn { process: AgyProcess; turn: SessionTurn; stopping: boolean }
 const unsupported = (feature: string): never => { throw Object.assign(new Error(`agy 暂不支持 ${feature}`), { statusCode: 400 }); };
+function unfinishedToolFailure(turn: SessionTurn, result?: any): string | undefined {
+  if (turn.items.some((item) => item.type === "agentMessage" && item.text.trim())) return;
+  if (result?.denied_actions?.length) return "agy 操作未获授权；当前 Web 暂不支持 agy 的原生权限审批。";
+  const lastTool = turn.items.findLast((item) => item.type === "genericToolCall");
+  if (lastTool?.type === "genericToolCall" && lastTool.status === "failed") return "agy 在工具执行失败后结束，未返回最终回复；请展开失败工具查看原因。";
+}
 export class AgyAdapter extends EventEmitter {
   private records = new Map<string, SavedSession>();
   private live = new Map<string, LiveTurn>();
@@ -23,6 +29,12 @@ export class AgyAdapter extends EventEmitter {
       for (const turn of saved.thread.turns) if (turn.status === "inProgress") {
         turn.status = "interrupted"; turn.completedAt = Math.floor(Date.now() / 1000);
         for (const item of turn.items) if ("status" in item && item.status === "inProgress") item.status = "interrupted";
+      }
+      // Older Web versions treated native SUCCESS + empty response as success,
+      // even when the final tool was rejected and the agent never replied.
+      for (const turn of saved.thread.turns) if (turn.status === "completed") {
+        const failure = unfinishedToolFailure(turn);
+        if (failure) { turn.status = "failed"; turn.errors = [{ message: failure, code: null, httpStatusCode: null, additionalDetails: null, willRetry: false }]; }
       }
       this.records.set(saved.thread.id, saved);
     }
@@ -99,9 +111,10 @@ export class AgyAdapter extends EventEmitter {
     process.on("record", (event) => this.handleRecord(saved, live, event));
     process.on("finished", ({ result, exitOk, failure }) => {
       const interrupted = live.stopping && !failure && result?.status !== "SUCCESS";
-      const success = !failure && exitOk && result?.status === "SUCCESS";
+      const toolFailure = result?.status === "SUCCESS" ? unfinishedToolFailure(live.turn, result) : undefined;
+      const success = !failure && !toolFailure && exitOk && result?.status === "SUCCESS";
       this.finish(saved, live, interrupted ? "interrupted" : success ? "completed" : "failed",
-        interrupted || success ? undefined : failure ?? (typeof result?.error === "string" ? result.error : "agy 未返回成功的最终结果，请检查 CLI 登录、权限或服务状态。"));
+        interrupted || success ? undefined : failure ?? toolFailure ?? (typeof result?.error === "string" ? result.error : "agy 未返回成功的最终结果，请检查 CLI 登录、权限或服务状态。"));
     });
     this.publish({ type: "turnStarted", threadId: id, turn });
     const content = text + (attachments.length ? `\n\nAttached local files:\n${attachments.map((a) => `${a.name}: ${a.path}`).join("\n")}` : "");
@@ -124,9 +137,11 @@ export class AgyAdapter extends EventEmitter {
         this.upsert(saved, live, { type: "agentMessage", id: itemId, text: (existing?.type === "agentMessage" ? existing.text : "") + step.text_delta }, done);
       } else if (step.step_type === "tool") {
         const tool = step.tool_info;
+        const error = typeof tool?.error === "string" ? tool.error : typeof tool?.error?.message === "string" ? tool.error.message : undefined;
+        const details = [tool?.parameters ? JSON.stringify(tool.parameters, null, 2) : "", typeof tool?.output === "string" ? tool.output : tool?.output ? JSON.stringify(tool.output) : ""].filter(Boolean).join("\n") || (existing?.type === "genericToolCall" ? existing.details : "");
         this.upsert(saved, live, { type: "genericToolCall", id: itemId, title: tool?.name ?? step.tool_name ?? "agy tool",
           status: step.state === "ERROR" ? "failed" : step.state === "CANCELLED" ? "interrupted" : done ? "completed" : "inProgress",
-          details: [tool?.parameters ? JSON.stringify(tool.parameters, null, 2) : "", typeof tool?.output === "string" ? tool.output : tool?.output ? JSON.stringify(tool.output) : ""].filter(Boolean).join("\n") || (existing?.type === "genericToolCall" ? existing.details : ""),
+          details: [details, error ? `错误：${error}` : ""].filter(Boolean).join("\n"),
         }, done);
       }
     }

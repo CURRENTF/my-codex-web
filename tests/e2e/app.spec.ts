@@ -511,6 +511,7 @@ test("adapts the workspace controls and navigation to the available width", asyn
     if (size.width <= 720) await expect(sidebar).not.toBeInViewport();
     await expect(page.locator(".composer")).toBeVisible();
     await expect(page.getByRole("button", { name: "权限", exact: true })).toBeVisible();
+    await expect(page.locator(".access-control .settings-select-icon")).toBeVisible();
     await expect(page.getByRole("button", { name: "模型", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reasoning effort", exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

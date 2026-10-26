@@ -33,6 +33,11 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (text === 'timeout') { process.stderr.write('print timeout 1s: turn in progress\n'); result(''); break; }
   if (text === 'no-result') break;
   if (text === 'error') { result('', 'ERROR', 'provider failure'); break; }
+  if (text === 'denied-command' || text === 'recovered-tool-error') {
+    send({ event: 'step_update', step_update: { conversation_id: id, step_index: 1, step_type: 'tool', state: 'ERROR', tool_info: { name: 'run_command', parameters: { CommandLine: 'printf probe' }, error: { type: 'TOOL_ERROR', message: 'user denied permission to run command: printf probe' } } } });
+    send({ event: 'result', result: { conversation_id: id, status: 'SUCCESS', response: text === 'recovered-tool-error' ? 'Explained the denied operation.' : '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } });
+    break;
+  }
   const reply = text === 'recall' ? history[0] : 'hello 世界\u2028agy';
   send({ event: 'step_update', step_update: { conversation_id: id, step_index: 1, step_type: 'tool', state: 'ACTIVE', tool_info: { name: 'read_file', parameters: { Path: 'README.md' } } } });
   send({ event: 'step_update', step_update: { conversation_id: id, step_index: 1, step_type: 'tool', state: 'DONE', tool_info: { name: 'read_file', output: 'file contents' } } });

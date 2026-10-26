@@ -62,6 +62,34 @@ describe("agy backend", () => {
     await expect(agy.steerTurn(id, "turn", "bad")).rejects.toThrow("Steer");
     expect((await agy.readSession(id)).turns).toEqual([]);
   });
+  it("shows native permission errors and rejects SUCCESS with no reply after a denied command", async () => {
+    const { agy, directory, id } = await setup();
+    await agy.startTurn(id, directory, "denied-command", settings, "user");
+    const turn = await settled(agy, id);
+    expect(turn.status).toBe("failed");
+    expect(turn.errors?.[0]?.message).toContain("未获授权");
+    expect(turn.items).toContainEqual(expect.objectContaining({ type: "genericToolCall", status: "failed", details: expect.stringContaining("user denied permission") }));
+    await agy.stop();
+    const restored = new AgyAdapter(directory, fixture); cleanups.push(() => restored.stop());
+    expect((await restored.readSession(id)).turns[0]?.status).toBe("failed");
+  });
+  it("keeps a completed reply after an explained tool error successful and repairs older silent failures", async () => {
+    const { agy, directory, id } = await setup();
+    await agy.startTurn(id, directory, "recovered-tool-error", settings, "first");
+    expect((await settled(agy, id)).status).toBe("completed");
+    await agy.startTurn(id, directory, "denied-command", settings, "second");
+    await settled(agy, id); await agy.stop();
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const file = path.join(directory, `${id.slice(4)}.web.json`);
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    saved.thread.turns[1].status = "completed"; delete saved.thread.turns[1].errors;
+    await writeFile(file, JSON.stringify(saved));
+    const restored = new AgyAdapter(directory, fixture); cleanups.push(() => restored.stop());
+    const turns = (await restored.readSession(id)).turns;
+    expect(turns[0]?.status).toBe("completed");
+    expect(turns[1]?.status).toBe("failed");
+    expect(turns[1]?.errors?.[0]?.message).toContain("工具执行失败");
+  });
   it("routes all three backends independently and survives Codex disconnect", async () => {
     const { agy, directory, id } = await setup();
     const codex = Object.assign(new EventEmitter(), { connected: false, startTurn: vi.fn(async () => ({ turn: { id: "codex-turn" } })) });

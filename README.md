@@ -99,7 +99,7 @@ agy 每轮运行独立 CLI 进程，通过 `--input-format stream-json` / `--out
 
 目前支持流式回复、工具步骤、模型选择、续聊、停止、排队发送、重命名、归档、文件路径附件和定时轮询。停止先发送 SIGINT，等待 CLI 结束后才允许下一轮；无响应时终止该进程组并明确报告停止未确认。单个进程异常不会中断其他后端；无最终结果、异常退出或超时不会当作成功。
 
-权限采用 agy 的 `accept-edits` 模式：自动接受文件编辑，命令保留原生权限检查，**不传递 `--dangerously-skip-permissions`**。非交互模式中需要交互审批的操作可能被拒绝，Web 暂不桥接这些审批；界面显示「agy 权限」，不代表 Codex 的只读／工作区沙箱。内部通用设置中的 `fullAccess` 仅表示没有 Codex 沙箱，不能据此推断 agy 会跳过审批。暂不开放图片附件、Steer、Web 上下文压缩、Goal、Review、Fork、Side Chat、子代理面板、Web Skill 选择和美元费用估算。
+权限采用 agy 的 `accept-edits` 模式：自动接受文件编辑，命令保留原生权限检查，**不传递 `--dangerously-skip-permissions`**。非交互模式中需要交互审批的操作可能被拒绝，Web 暂不桥接这些审批；界面显示「Accept Edits」，不代表 Codex 的只读／工作区沙箱。命令被拒绝时展示原生工具错误；即使 CLI 返回 `SUCCESS`，若没有最终回复且最后一个工具失败，Web 仍将该轮标为失败，旧版保存的同类空白完成记录也会在加载时纠正。内部通用设置中的 `fullAccess` 仅表示没有 Codex 沙箱，不能据此推断 agy 会跳过审批。暂不开放图片附件、Steer、Web 上下文压缩、Goal、Review、Fork、Side Chat、子代理面板、Web Skill 选择和美元费用估算。
 
 可选真实 CLI 冒烟测试（会使用已登录 agy 的模型额度，仅操作临时测试目录）：`RUN_AGY_INTEGRATION=1 npx vitest run tests/integration/agy-native.test.ts`。普通 `npm test` 使用隔离的 CLI 协议 fixture，不依赖 agy 安装、凭据或网络。
 

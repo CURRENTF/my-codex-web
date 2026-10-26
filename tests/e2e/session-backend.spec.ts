@@ -39,6 +39,16 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(permission).toHaveClass(/settings-select-trigger access/);
     await expect(permission).toHaveText("Full Access");
     await expect(permission.locator("svg")).toBeVisible();
+    for (const width of [320, 390, 430]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(permission.locator(".settings-select-icon")).toBeVisible();
+      const box = await permission.locator("svg").boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(14);
+      await permission.click();
+      await expect(page.getByRole("menuitemradio")).toHaveCount(1);
+      await page.keyboard.press("Escape");
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
     await permission.click();
     await expect(page.getByRole("menuitemradio")).toHaveCount(1);
     await page.screenshot({ path: test.info().outputPath("pi-permissions.png") });
@@ -64,6 +74,9 @@ test("switches empty-session backends and creates without waiting for catalog or
     await expect(page).toHaveURL(/\/sessions\/agy:/, { timeout: 5_000 });
     await expect(selector.getByRole("button", { name: "使用 agy 后端" })).toHaveAttribute("aria-pressed", "true");
     await expect(permission).toHaveText("Accept Edits");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(permission.locator("svg")).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 720 });
     await permission.click();
     await expect(page.getByRole("menuitemradio")).toHaveCount(1);
     await expect(page.getByRole("menuitemradio")).toContainText("Accept Edits");
