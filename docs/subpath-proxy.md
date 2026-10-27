@@ -33,6 +33,11 @@ preserving existing origins. Use a unique `CODEX_WEB_SESSION_COOKIE_NAME` for
 each app instance sharing the domain. Keep authentication enabled. Browser
 storage and cookies are not a security boundary between same-origin apps.
 
+Cookies are scoped by host and path, not port. When moving from a port entrance
+to a path entrance, an old root-path cookie can coexist with the new path
+cookie. HTTP and WebSocket authentication must both select the first same-name
+cookie (the browser sends the more specific path first), not the last one.
+
 Verify login, a deep session URL reload, API and WebSocket connections, Code
 View, and the original direct-port entrance. Nginx configuration validation
 alone does not verify application compatibility. Keep unsupported applications

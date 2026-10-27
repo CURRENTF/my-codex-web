@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import Fastify from "fastify";
+import cookie from "@fastify/cookie";
 import { isAllowedSocketContext, localRequestError, localSecurityAllowLists, parseCookieHeader } from "../../apps/server/src/local-security";
 
 const hosts = new Set(["127.0.0.1:7373"]);
@@ -25,6 +27,17 @@ describe("local HTTP and WebSocket boundary", () => {
   it("treats malformed WebSocket cookies as unauthenticated instead of throwing", () => {
     expect(parseCookieHeader("codex_web_session=%")).toEqual({});
     expect(parseCookieHeader("codex_web_session=valid-token")).toEqual({ codex_web_session: "valid-token" });
+  });
+
+  it("matches HTTP cookie parsing when a path cookie shadows a stale root cookie", async () => {
+    const app = Fastify();
+    await app.register(cookie);
+    await app.ready();
+    const header = "codex_web_session=current-path-token; codex_web_session=expired-root-token";
+    expect(parseCookieHeader(header)).toEqual(app.parseCookie(header));
+    expect(parseCookieHeader(header).codex_web_session).toBe("current-path-token");
+    expect(parseCookieHeader("codex_web_session=expired-path-token; codex_web_session=current-root-token").codex_web_session).toBe("expired-path-token");
+    await app.close();
   });
 
   it("trusts the Vite origin only when explicit development mode is enabled", () => {
