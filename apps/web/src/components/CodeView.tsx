@@ -1,3 +1,4 @@
+import { appUrl } from "../app-base";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowUp, DownloadSimple, FileCode, FloppyDisk, Folder, ArrowClockwise } from "@phosphor-icons/react";
 import { api, ApiError, authenticateWebUi, bootstrap } from "../api";
@@ -92,7 +93,7 @@ export default function CodeView() {
     return () => window.removeEventListener("beforeunload", prevent);
   }, [dirty]);
   return <main className="code-view">
-    <header className="code-view-header"><a className="header-button" href="/" onClick={(event) => { if (dirty) { event.preventDefault(); guard(() => { window.location.href = "/"; }); } }} aria-label="返回 Session"><ArrowLeft size={18} /></a><strong>Code View</strong><span className="code-root" data-tooltip={root}>{root}</span></header>
+    <header className="code-view-header"><a className="header-button" href={appUrl("/")} onClick={(event) => { if (dirty) { event.preventDefault(); guard(() => { window.location.href = appUrl("/"); }); } }} aria-label="返回 Session"><ArrowLeft size={18} /></a><strong>Code View</strong><span className="code-root" data-tooltip={root}>{root}</span></header>
     {needsLogin ? <form className="code-login" onSubmit={(event) => { event.preventDefault(); void run(async () => { await authenticateWebUi(password); await bootstrap(); setNeedsLogin(false); setReady(true); }); }}><h2>登录 Code View</h2><label>访问密码<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><button className="button primary" disabled={busy}>登录</button></form> :
     <div className="code-workspace"><aside className="code-files" aria-label="文件目录">
       <div className="code-directory-bar"><button className="header-button" disabled={busy || !listing?.parent} aria-label="上级目录" onClick={() => void run(() => directory(listing!.parent!))}><ArrowUp size={16} /></button><span data-tooltip={listing?.path}>{listing?.path.split("/").pop() || "文件"}</span><button className="header-button" disabled={busy || !listing} aria-label="刷新目录" onClick={() => void run(() => directory(listing!.path))}><ArrowClockwise size={16} /></button></div>

@@ -1,3 +1,4 @@
+import { appUrl } from "./app-base";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { sessionBackend, type BackendId, type BackendOption, type ModelOption } from "@codex-web/shared-types";
 import { backendCatalogKey } from "./backend-catalog";
@@ -270,7 +271,7 @@ export function App() {
     const connect = () => {
       if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const nextSocket = new WebSocket(`${protocol}://${window.location.host}/api/events`);
+      const nextSocket = new WebSocket(`${protocol}://${window.location.host}${appUrl("/api/events")}`);
       socket = nextSocket;
       nextSocket.onopen = () => {
         if (socket !== nextSocket) return;

@@ -1,4 +1,5 @@
 import { api, ApiError } from "./api";
+import { appUrl } from "./app-base";
 
 export async function downloadFile(url: string): Promise<void> {
   try {
@@ -15,7 +16,7 @@ export async function downloadFile(url: string): Promise<void> {
     throw new Error(message);
   }
   const link = document.createElement("a");
-  link.href = url;
+  link.href = appUrl(url);
   link.download = "";
   link.hidden = true;
   document.body.append(link);

@@ -1,3 +1,4 @@
+import { appUrl } from "../app-base";
 import { sessionBackend, backendCapabilities } from "@codex-web/shared-types";
 import { useBackendCatalog } from "../backend-catalog";
 import { PromptSchedule } from "./PromptSchedule";
@@ -577,7 +578,7 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
       <div className={`composer ${running ? `${deliveryMode}-mode` : ""} ${draggingFiles ? "dragging-files" : ""}`} onDragEnter={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDraggingFiles(true); } }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingFiles(false); }} onDrop={(event) => { event.preventDefault(); setDraggingFiles(false); void uploadFiles([...event.dataTransfer.files]); }}>
         {(attachments.length > 0 || uploadingCount > 0) && <div className="attachment-tray" aria-label="待发送附件">
           {attachments.map((attachment) => <div className={`attachment-chip ${attachment.kind}`} key={attachment.id}>
-            {attachment.kind === "image" ? <img src={attachment.url} alt={attachment.name} /> : <span className="attachment-file-icon"><FileIcon size={18} /></span>}
+            {attachment.kind === "image" ? <img src={appUrl(attachment.url)} alt={attachment.name} /> : <span className="attachment-file-icon"><FileIcon size={18} /></span>}
             <span className="attachment-copy"><strong>{attachment.name}</strong><small>{formatAttachmentSize(attachment.size)}</small></span>
             <button type="button" aria-label={`移除附件 ${attachment.name}`} data-tooltip="移除附件" onClick={() => void removeAttachment(attachment)}><X size={12} /></button>
           </div>)}

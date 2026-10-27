@@ -1,3 +1,5 @@
+import { appUrl } from "./app-base";
+
 export function codeViewUrl(root: string, file?: string, line?: number | null): string {
   const query = new URLSearchParams({ root });
   if (file) {
@@ -6,11 +8,11 @@ export function codeViewUrl(root: string, file?: string, line?: number | null): 
     if (line == null && location) line = Number(location[2]);
   }
   if (line != null) query.set("line", String(Math.max(1, Math.trunc(line))));
-  return `/code?${query}`;
+  return appUrl(`/code?${query}`);
 }
 
 export function fileDownloadUrl(root: string, file: string): string {
-  return `/api/code/download?${new URLSearchParams({ root, path: file.replace(/:\d+(?::\d+)?$/, "") })}`;
+  return appUrl(`/api/code/download?${new URLSearchParams({ root, path: file.replace(/:\d+(?::\d+)?$/, "") })}`);
 }
 
 export function isDownloadOnlyFile(file: string): boolean {

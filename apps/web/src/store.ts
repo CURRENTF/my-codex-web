@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { appStorageKey } from "./app-base";
 import type { AccessMode, PendingRequestSummary, SideChatRuntime, SubagentRuntime, ThreadRuntime, UiEvent, UploadedAttachment } from "@codex-web/shared-types";
 import type { QueuedTurnBarrier } from "./queued-turn-barrier";
 
@@ -64,11 +65,11 @@ export interface QueuedUserMessage {
 export type QueuedMessageSettings = Pick<QueuedUserMessage, "model" | "reasoning" | "serviceTier" | "accessMode">;
 export type QueuedSubmission = ({ kind: "command" } & QueuedSlashCommand) | ({ kind: "message" } & QueuedUserMessage);
 
-const QUEUED_SUBMISSIONS_STORAGE_KEY = "codex-web:queued-submissions:v2";
-const QUEUED_EFFECTIVE_SETTINGS_STORAGE_KEY = "codex-web:queued-effective-settings:v1";
-const QUEUED_TURN_BARRIERS_STORAGE_KEY = "codex-web:queued-turn-barriers:v1";
-const LEGACY_QUEUED_SLASH_STORAGE_KEY = "codex-web:queued-slash-commands:v1";
-const LEGACY_QUEUED_USER_MESSAGE_STORAGE_KEY = "codex-web:queued-user-messages:v1";
+const QUEUED_SUBMISSIONS_STORAGE_KEY = appStorageKey("codex-web:queued-submissions:v2");
+const QUEUED_EFFECTIVE_SETTINGS_STORAGE_KEY = appStorageKey("codex-web:queued-effective-settings:v1");
+const QUEUED_TURN_BARRIERS_STORAGE_KEY = appStorageKey("codex-web:queued-turn-barriers:v1");
+const LEGACY_QUEUED_SLASH_STORAGE_KEY = appStorageKey("codex-web:queued-slash-commands:v1");
+const LEGACY_QUEUED_USER_MESSAGE_STORAGE_KEY = appStorageKey("codex-web:queued-user-messages:v1");
 
 function parseQueuedSlashCommand(value: unknown): QueuedSlashCommand | null {
   if (!value || typeof value !== "object") return null;

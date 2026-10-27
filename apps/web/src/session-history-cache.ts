@@ -1,4 +1,5 @@
 import type { SessionPayload } from "./api";
+import { appStorageKey } from "./app-base";
 
 export interface SessionSync {
   version: 1;
@@ -19,7 +20,7 @@ function openDatabase(): Promise<IDBDatabase | null> {
     try {
       // Storage may be blocked by another tab; never hold network loading indefinitely.
       const timeout = setTimeout(() => resolve(null), 500);
-      const request = indexedDB.open("codex-web-session-history-v1", 1);
+      const request = indexedDB.open(appStorageKey("codex-web-session-history-v1"), 1);
       request.onupgradeneeded = () => {
         request.result.createObjectStore("sessions", { keyPath: "id" });
         request.result.createObjectStore("metadata", { keyPath: "id" });

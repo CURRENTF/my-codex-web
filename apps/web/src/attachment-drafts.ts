@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { appStorageKey } from "./app-base";
 import type { UploadedAttachment } from "@codex-web/shared-types";
 import { endpoints } from "./api";
 
@@ -9,7 +10,7 @@ interface AttachmentDraft {
   error: string | null;
 }
 export const emptyAttachmentDraft: AttachmentDraft = { attachments: [], pending: [], error: null };
-const STORAGE_KEY = "codex-web:attachment-drafts:v1";
+const STORAGE_KEY = appStorageKey("codex-web:attachment-drafts:v1");
 
 function readDrafts(): Record<string, AttachmentDraft> {
   try {

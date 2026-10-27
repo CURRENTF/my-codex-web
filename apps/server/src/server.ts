@@ -239,7 +239,7 @@ export async function createServer() {
       `connect-src 'self' ${socketOrigins.join(" ")}`,
       "font-src 'self' data:",
       "object-src 'none'",
-      "base-uri 'none'",
+      "base-uri 'self'",
       "frame-ancestors 'none'",
       "form-action 'self'",
     ].join("; "));

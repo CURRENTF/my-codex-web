@@ -1,3 +1,4 @@
+import { appUrl } from "../app-base";
 import { ArrowSquareOut, CheckCircle, DownloadSimple, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -34,7 +35,7 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
         }
         const localPathUrl = href ? localPathUrls[href] ?? (filePath ? localPathUrls[filePath] : undefined) : undefined;
         if (localPathUrl) {
-          return <a className="agent-inline-link external" href={localPathUrl} target="_blank" rel="noreferrer" data-tooltip={href}><ArrowSquareOut size={14} />{children}</a>;
+          return <a className="agent-inline-link external" href={appUrl(localPathUrl)} target="_blank" rel="noreferrer" data-tooltip={href}><ArrowSquareOut size={14} />{children}</a>;
         }
         if (filePath) {
           const isDirectory = (localPathKinds[href!] ?? localPathKinds[filePath]) === "directory";
@@ -51,7 +52,7 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
       },
       img({ src, alt }) {
         if (!src) return null;
-        const displaySrc = localImageUrls[src] ?? src;
+        const displaySrc = appUrl(localImageUrls[src] ?? src);
         return <a className="agent-image-link" href={displaySrc} target="_blank" rel="noreferrer"><img src={displaySrc} alt={alt ?? "回复中的图片"} loading="lazy" referrerPolicy="no-referrer" /></a>;
       },
     }}

@@ -6,7 +6,7 @@ const link = { href: "", download: "", hidden: false, click: vi.fn(), remove: vi
 const append = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal("document", { createElement: () => link, body: { append } });
+  vi.stubGlobal("document", { querySelector: () => null, createElement: () => link, body: { append } });
 });
 afterEach(() => vi.unstubAllGlobals());
 

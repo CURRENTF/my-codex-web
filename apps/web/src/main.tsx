@@ -2,6 +2,7 @@ import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
+import { appBasePath, appUrl } from "./app-base";
 import { FastTooltips } from "./components/FastTooltips";
 import { App } from "./App";
 import "./styles.css";
@@ -18,5 +19,5 @@ export const queryClient = new QueryClient({ defaultOptions: { queries: { staleT
 queryClient.setQueryDefaults(["session"], { gcTime: 30 * 60 * 1000 });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode><QueryClientProvider client={queryClient}><BrowserRouter>{window.location.pathname === "/code" ? <Suspense fallback={<div className="pane-loading">正在加载 Code View…</div>}><CodeView /></Suspense> : <App />}</BrowserRouter><FastTooltips /></QueryClientProvider></React.StrictMode>,
+  <React.StrictMode><QueryClientProvider client={queryClient}><BrowserRouter basename={appBasePath()}>{window.location.pathname === appUrl("/code") ? <Suspense fallback={<div className="pane-loading">正在加载 Code View…</div>}><CodeView /></Suspense> : <App />}</BrowserRouter><FastTooltips /></QueryClientProvider></React.StrictMode>,
 );

@@ -1,4 +1,5 @@
 import { ErrorTime } from "./ErrorNotice";
+import { appUrl } from "../app-base";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowSquareOut, CaretRight, Check, CheckCircle, Clipboard, Code, DownloadSimple, File as FileIcon, FileCode, GitFork, ImageSquare, SpinnerGap, TerminalWindow, WarningCircle, Wrench, X, XCircle } from "@phosphor-icons/react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -22,9 +23,9 @@ function AttachmentList({ attachments }: { attachments: DisplayAttachment[] }) {
   const images = attachments.filter((attachment) => attachment.kind === "image" && attachment.url);
   const files = attachments.filter((attachment) => attachment.kind === "file");
   return <>
-    {images.length > 0 && <div className="message-image-grid">{images.map((attachment) => <a href={attachment.url} target="_blank" rel="noreferrer" key={attachment.key} data-tooltip={`打开 ${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" referrerPolicy="no-referrer" /></a>)}</div>}
+    {images.length > 0 && <div className="message-image-grid">{images.map((attachment) => <a href={appUrl(attachment.url!)} target="_blank" rel="noreferrer" key={attachment.key} data-tooltip={`打开 ${attachment.name}`}><img src={appUrl(attachment.url!)} alt={attachment.name} loading="lazy" referrerPolicy="no-referrer" /></a>)}</div>}
     {files.length > 0 && <div className="message-file-list">{files.map((attachment) => attachment.url
-      ? <a href={attachment.url} download key={attachment.key}><FileIcon size={17} /><span><strong>{attachment.name}</strong>{attachment.detail && <small>{attachment.detail}</small>}</span><DownloadSimple size={15} /></a>
+      ? <a href={appUrl(attachment.url)} download key={attachment.key}><FileIcon size={17} /><span><strong>{attachment.name}</strong>{attachment.detail && <small>{attachment.detail}</small>}</span><DownloadSimple size={15} /></a>
       : <span className="message-file" key={attachment.key} data-tooltip={attachment.detail}><FileIcon size={17} /><strong>{attachment.name}</strong></span>)}</div>}
   </>;
 }
@@ -96,7 +97,8 @@ function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "i
   const path = item.type === "imageView" ? item.path : item.savedPath;
   const title = item.type === "imageView" ? "查看图片" : "生成图片";
   if (!item.displayUrl) return <ToolCard title={path ? `${title} / ${path}` : title} status={item.type === "imageView" ? "completed" : item.status} details={item.type === "imageGeneration" ? item.result : undefined} icon={<ImageSquare size={16} />} />;
-  return <figure className="tool-image-card"><a href={item.displayUrl} target="_blank" rel="noreferrer"><img src={item.displayUrl} alt={path?.split("/").at(-1) ?? title} loading="lazy" /></a><figcaption><ImageSquare size={15} /><span><strong>{title}</strong>{path && <code data-tooltip={path}>{path}</code>}</span><a href={item.displayUrl} target="_blank" rel="noreferrer" aria-label="打开原图"><ArrowSquareOut size={15} /></a></figcaption></figure>;
+  const url = appUrl(item.displayUrl);
+  return <figure className="tool-image-card"><a href={url} target="_blank" rel="noreferrer"><img src={url} alt={path?.split("/").at(-1) ?? title} loading="lazy" /></a><figcaption><ImageSquare size={15} /><span><strong>{title}</strong>{path && <code data-tooltip={path}>{path}</code>}</span><a href={url} target="_blank" rel="noreferrer" aria-label="打开原图"><ArrowSquareOut size={15} /></a></figcaption></figure>;
 }
 
 function Item({ item, turnStatus, onOpenDiff, cwd, grouped = false }: { item: CodexItem; turnStatus: CodexTurn["status"]; onOpenDiff(change: { path: string; kind: string; diff?: string }): void; cwd: string; grouped?: boolean }) {

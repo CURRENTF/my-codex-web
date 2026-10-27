@@ -1,5 +1,7 @@
 import type { BootstrapPayload, Goal, Preferences, Project, SelfUpdateStatus, ServiceRestartStatus, SessionItem, SessionSummary, SessionThread, SessionTurn, SkillOption, UploadedAttachment } from "@codex-web/shared-types";
 
+import { appUrl } from "./app-base";
+
 let csrfToken = "";
 let securityRefresh: Promise<void> | null = null;
 export function newClientRequestId(): string { return crypto.randomUUID(); }
@@ -21,7 +23,7 @@ async function request<T>(path: string, init: RequestInit, allowSecurityRefresh:
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("content-type") && !(typeof FormData !== "undefined" && init.body instanceof FormData)) headers.set("content-type", "application/json");
   if (init.method && !["GET", "HEAD"].includes(init.method) && csrfToken) headers.set("x-csrf-token", csrfToken);
-  const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
+  const response = await fetch(appUrl(path), { ...init, headers, credentials: "same-origin" });
   const isJson = response.headers.get("content-type")?.includes("application/json");
   const body = response.status === 204 || init.method === "HEAD" ? undefined : (isJson ? await response.json() : await response.text());
   const errorCode = typeof body === "object" && body !== null && "error" in body ? (body as { error?: unknown }).error : undefined;

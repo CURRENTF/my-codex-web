@@ -1,4 +1,6 @@
+import { appUrl } from "../app-base";
 import { useEffect, useState } from "react";
+import { appStorageKey } from "../app-base";
 import { ArrowClockwise, CheckCircle, GitBranch, SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -6,7 +8,7 @@ import type { SelfUpdateStatus } from "@codex-web/shared-types";
 import { endpoints, isPasswordRequiredError } from "../api";
 import { isUpdateResultState, shouldShowUpdateResultIndicator, UPDATE_RESULT_INDICATOR_MS } from "../self-update-presentation";
 
-const ACTIVE_UPDATE_RUN_KEY = "codex-web-active-update-run";
+const ACTIVE_UPDATE_RUN_KEY = appStorageKey("codex-web-active-update-run");
 let updateReloadMonitor: number | null = null;
 
 function stopUpdateReloadMonitor(removeMarker: boolean): void {
@@ -20,7 +22,7 @@ function beginUpdateReloadMonitor(runId: string): void {
   stopUpdateReloadMonitor(false);
   const startedAt = Date.now();
   updateReloadMonitor = window.setInterval(() => {
-    void fetch("/api/system/update", { cache: "no-store", credentials: "same-origin" }).then(async (response) => {
+    void fetch(appUrl("/api/system/update"), { cache: "no-store", credentials: "same-origin" }).then(async (response) => {
       if (response.status === 401) {
         stopUpdateReloadMonitor(true);
         window.location.reload();
