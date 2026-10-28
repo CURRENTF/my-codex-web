@@ -8,6 +8,9 @@
 - Node.js 22.22 或更高版本
 - 使用 Codex 时：已安装 Codex CLI `0.149.0` 或更高版本，并完成登录
 - 使用 pi 时：为运行 Web 服务的用户配置 pi 模型凭证；pi 随项目依赖安装
+- 使用 agy 时：在服务所在机器单独安装 agy CLI，并以服务运行用户完成登录；`npm run setup` 不会安装 agy
+
+推荐在部署 Web 前，先完成计划使用的各后端的登录、模型和代理配置，并各做一次最小回答测试。不使用的后端可以不安装或配置，不影响其他后端。
 
 ## 安装和启动
 
@@ -86,6 +89,8 @@ HTML 文件（`.html` / `.htm`，大小写均可）默认渲染预览，可在�
 
 在服务所在机器、以服务运行用户执行 `npx --no-install pi`，通过 `/login` 配置所需提供商，或配置该提供商支持的 API Key 环境变量及 pi 的 `models.json`。pi 默认使用 `~/.pi/agent`；可通过 `PI_CODING_AGENT_DIR` 指定独立配置目录。Web 不共享 Codex 凭证，也不在浏览器里接收提供商密钥。配置完成后，在模型菜单点击刷新图标即可重新检测模型；已启动进程的环境变量变化仍需要由服务管理器重新加载。
 
+在仓库目录执行 `npx --no-install pi --list-models` 检查模型配置；需要经常在终端使用时，可选安装与项目锁定版本一致的全局 CLI：`npm install -g @earendil-works/pi-coding-agent@1.4.0`。全局安装不是 Web 使用 pi 的前提，也不会自动提供登录凭证。模型列表可能包含当前账号无权调用的型号，应选一个已获授权的模型验证实际回答，而不是仅凭列表判定就绪。
+
 每个活动 pi 对话运行独立 RPC 子进程。原生历史与 Web 展示元数据位于 `CODEX_WEB_DATA_DIR/pi`，重启后继续使用同一原生历史；不会把压缩后的 UI 文本重新拼成模型上下文。现有 pi CLI 历史不会自动导入。可用 `CODEX_WEB_PI_BIN=/absolute/path/to/pi` 覆盖执行文件，但必须提供与内置 1.4.0 一致的 RPC 接口（包括 `agent_settled`）。
 
 `pi-unified-exec` 的 `exec_command({ cmd: "…", on_exit: "wake" })` 可在后台命令退出后自动继续任务。默认 `on_exit` 为 `"none"`；只有明确需要自动续跑时才开启。pi 空闲时的自动续跑会创建新的 Web turn，更新运行状态，并保存插件完成通知、工具输出和后续回复；当前轮仍在运行时，follow-up 继续归入当前轮。切换页面或断开浏览器连接不终止服务端 pi 进程。归档会话、停止 pi 或重启 Web 会终止原进程，插件后台命令及其唤醒计划不会跨重启恢复；已保存的对话历史保留。
@@ -95,6 +100,13 @@ pi 支持流式文本、思考与工具结果、模型选择、Steer、中断、
 ### agy CLI
 
 agy 需要在服务所在机器单独安装，并以服务运行用户完成登录；先确认 `agy models` 可用。Web 从服务进程的 `PATH` 查找 `agy`，也可通过 `CODEX_WEB_AGY_BIN=/absolute/path/to/agy` 指定执行文件。安装 CLI 和设置启动环境后需首次重新启动 Web；之后在设置里切换默认后端无需重启。模型列表来自 agy；未在 Web 指定默认模型时沿用其配置，effort 暂时使用模型默认值。成功的模型探测缓存 30 秒；未安装或未登录不影响 Codex / pi 使用。
+
+部署或迁移后，按以下顺序验收（实际回答会消耗少量模型额度）：
+
+1. 以 Web 服务用户确认 `agy --help`、`agy models` 和 `agy -p /model` 正常；CLI 需支持本文使用的 stream-json 协议。
+2. 用 `agy --model <可用模型ID> --mode plan --print-timeout 1m -p '只回复 OK，不调用工具或读取文件'` 验证实际回答；pi 在仓库目录用 `npx --no-install pi --no-session --no-tools --model <provider/model> -p '只回复 OK'` 验证。必须收到非空回答，不能只看退出码或模型数量。
+3. 检查服务的 `HOME`、`PATH`、代理环境与测试命令一致。systemd 不会自动读取交互式 shell 的配置；修改服务环境后需要重启 Web。认证错误、模型权限错误、代理出口或区域限制都可能导致“能列出模型，但不能回答”。
+4. 迁移时分别处理 CLI、登录凭证、模型设置和所需扩展；只复制 Web 仓库不会迁移用户环境。凭据通过受信任通道传输并限制文件权限，勿提交到 Git；不要覆盖目标机器已有会话或照搬源机器的绝对路径。已有会话的迁移另按下文的数据要求处理。
 
 agy 每轮运行独立 CLI 进程，通过 `--input-format stream-json` / `--output-format stream-json` 传递消息与事件，用明确的 `--conversation` ID 恢复原生上下文，不使用会续接最近对话的 `--continue`。Web 显示历史和原生 ID 映射保存在 `CODEX_WEB_DATA_DIR/agy`；原生上下文仍由 agy 管理，备份或迁移时需同时保留 agy 自身的会话数据。只展示从 Web 创建的会话，不导入已有 CLI 历史。
 
