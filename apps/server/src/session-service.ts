@@ -432,6 +432,7 @@ export class SessionService extends EventEmitter {
         ? parentSnapshot?.name || parentSnapshot?.preview || parentMapping?.summary_title || parentMapping?.summary_preview || null
         : null,
       forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
+      turnCount: snapshot?.turns.length,
       runtimeState: this.runtimes.get?.(mapping.thread_id)?.state ?? "idle",
       hasGoal: this.goalPresence.get(mapping.thread_id) ?? false,
       pinned: mapping.pinned === 1,
@@ -463,6 +464,7 @@ export class SessionService extends EventEmitter {
         ? parentSnapshot?.name || parentSnapshot?.preview || parentMapping?.summary_title || parentMapping?.summary_preview || null
         : null,
       forkTurnNumber: forkTurnIndex >= 0 ? forkTurnIndex + 1 : null,
+      turnCount: snapshot.turns.length,
       runtimeState: this.runtimes.get?.(snapshot.id)?.state ?? "idle",
       hasGoal: this.goalPresence.get(snapshot.id) ?? false,
       pinned: false,

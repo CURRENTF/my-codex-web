@@ -304,13 +304,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .timeline { height: 100%; }
 .timeline-static { overflow-y: auto; }
 .timeline-shell { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
-.timeline-content { position: relative; min-width: 0; min-height: 0; flex: 1; }
+.timeline-shell > .timeline { min-width: 0; flex: 1; }
 /* Branch topology is a data diagram; the blue path leads to the selected leaf. */
-.fork-tree-rail { display: flex; width: 108px; min-width: 0; flex: 0 0 108px; flex-direction: column; align-items: stretch; padding: 14px 0 12px 8px; }
-.fork-tree-trigger { display: flex; width: fit-content; min-height: 32px; align-items: center; gap: 7px; margin: 0 0 12px 4px; padding: 6px 8px; border-radius: var(--radius-control); background: transparent; color: var(--text-soft); cursor: pointer; }
-.fork-tree-trigger span { font-size: 11px; font-variant-numeric: tabular-nums; }
-.fork-tree-trigger:hover, .fork-tree-trigger[data-state="open"] { background: var(--surface-hover); color: var(--text); }
-.fork-tree-overview { display: flex; min-height: 0; flex: 1; align-items: center; }
 .fork-diagram-scroll { max-width: 100%; max-height: 100%; overflow: auto; padding: 2px; overscroll-behavior: contain; }
 .fork-diagram { position: relative; min-width: 0; flex: none; }
 .fork-tree-lines { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
@@ -334,17 +329,21 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .fork-tree-label strong { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .fork-tree-label small { color: var(--text-soft); font-size: 10px; }
 .fork-tree-tip.current .fork-tree-label strong { color: var(--accent); }
-@container session-pane (max-width: 880px) {
-  .fork-tree-rail { width: 40px; flex-basis: 40px; padding: 10px 0 0 4px; }
-  .fork-tree-overview, .fork-tree-trigger span { display: none; }
-  .fork-tree-trigger { margin: 0; padding: 8px; }
-}
 /* Compact message ticks stay centered; only the hovered neighborhood expands. */
-.user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: 36px; height: min(calc(var(--rail-count) * var(--rail-tick-spacing) + 4px), calc(100% - 32px)); transform: translateY(-50%); }
+.user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: var(--rail-width, 36px); height: min(calc(var(--rail-count) * var(--rail-tick-spacing) + 4px), calc(100% - 32px)); transform: translateY(-50%); }
 .user-message-rail-track { position: absolute; inset: 8px 0 8px 4px; pointer-events: none; }
 .user-message-rail-tick { position: absolute; left: 0; width: 32px; height: 2px; transform-origin: left center; background: color-mix(in srgb, var(--text) 20%, var(--surface)); transition: transform .16s cubic-bezier(.2,.8,.2,1); }
 .user-message-rail-tick.current { background: var(--text-soft); }
 .user-message-rail-tick.selected { background: var(--text); }
+.user-message-rail-tick.branched { background: var(--accent); }
+.user-message-rail-tick.leaf { height: 3px; border-radius: 2px; }
+.user-message-rail-branch { position: absolute; z-index: 1; width: 16px; margin: -8px 0 0 -4px; padding: 0; border-radius: 4px; background: transparent; cursor: pointer; color: var(--text-soft); }
+.user-message-rail-branch-tick { position: absolute; left: 4px; transform: translateY(-50%); width: 5px; height: 2px; background: color-mix(in srgb, var(--text) 30%, var(--surface)); pointer-events: none; }
+.user-message-rail-branch-tick.leaf { width: 8px; height: 3px; border-radius: 2px; background: var(--text-soft); }
+.user-message-rail-branch:hover .user-message-rail-branch-tick, .user-message-rail-branch:focus-visible .user-message-rail-branch-tick { width: 12px; background: var(--text); }
+.user-message-rail-branch:active { transform: none; }
+.user-message-rail-junction { position: absolute; height: 5px; border-top: 1px solid var(--line-strong); border-right: 1px solid var(--line-strong); border-top-right-radius: 4px; pointer-events: none; }
+
 .user-message-rail-hit { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; background: transparent; cursor: pointer; }
 .user-message-rail-hit:active { transform: none; }
 .user-message-rail-preview { position: absolute; left: calc(100% + 10px); width: 360px; max-width: calc(100vw - 90px); transform: translateY(-50%); border: 1px solid var(--line); border-radius: 14px; background: var(--surface-strong); padding: 11px 13px; color: var(--text); box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 9%, transparent), 0 2px 5px color-mix(in srgb, var(--text) 4%, transparent); pointer-events: none; }

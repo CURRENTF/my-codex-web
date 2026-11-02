@@ -12,7 +12,6 @@ import { useAppStore, type OptimisticUserMessage } from "../store";
 import { formatTurnCompletedAt, formatTurnDuration, groupTimelineItems, unconfirmedOptimisticUserMessages, type ActivityItem } from "../timeline-presentation";
 import { userMessageTargets, userMessageText, type UserMessageTarget } from "../user-message-navigation";
 import { AgentMessage, MarkdownMessage } from "./AgentMessage";
-import { ForkTreeRail } from "./ForkTreeRail";
 import { UserMessageRail } from "./UserMessageRail";
 
 function copy(text: string): void { void navigator.clipboard.writeText(text); }
@@ -273,5 +272,5 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
   const timeline = !hasContent ? empty : useStaticTimeline
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
     : <Virtuoso ref={virtualTimeline} className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
-  return <div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{sessions && onOpenThread && <ForkTreeRail sessions={sessions} threadId={threadId} onOpen={onOpenThread} />}<div className="timeline-content">{timeline}{showUserMessageRail && <UserMessageRail targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}</div>{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div>;
+  return <div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{showUserMessageRail && <UserMessageRail threadId={threadId} sessions={sessions} turns={turns} onOpenThread={onOpenThread} targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div>;
 }

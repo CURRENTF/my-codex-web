@@ -25,6 +25,7 @@ import { GoalBar } from "./GoalBar";
 import { PendingBanner } from "./PendingBanner";
 import { StatusIcon, statusText } from "./StatusIcon";
 import { SubagentStatus } from "./SubagentStatus";
+import { ForkTreeButton } from "./ForkTreeButton";
 import { Timeline } from "./Timeline";
 
 type ForkRequest = {
@@ -160,6 +161,7 @@ export function SessionPane({ threadId, project, projects, models, sessions = []
       {codexFeatures && <SubagentStatus parentThreadId={threadId} />}
       {!sideChat && codexFeatures && <button className="header-button" aria-label="打开 Side Chat" data-tooltip="打开 Side Chat" onClick={() => void requestSideChat(null)} disabled={side.isPending || !branchActionsAvailable}><SidebarSimple size={16} /></button>}
       {!sideChat && <a className="header-button" aria-label="在 Code View 中打开" href={codeViewUrl(payload.thread.cwd)} target="_blank" rel="noreferrer" data-tooltip="在 Code View 中打开"><TerminalWindow size={16} /></a>}
+      {!sideChat && <ForkTreeButton sessions={sessions} threadId={threadId} onOpen={onOpenThread} />}
       {sideChat ? <button className="icon-button" onClick={onCloseSideChat} aria-label="关闭 Side Chat"><X size={17} /></button> : <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="icon-button" aria-label="更多" data-tooltip="更多"><DotsThree size={20} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end"><DropdownMenu.Item className="menu-item" disabled={sessionDisconnected || rename.isPending} onSelect={() => { rename.reset(); setRenameName(title); setRenameOpen(true); }}>重命名</DropdownMenu.Item><DropdownMenu.Sub><DropdownMenu.SubTrigger className="menu-item" disabled={hasActiveTurn || sessionDisconnected}>移动到 Project</DropdownMenu.SubTrigger><DropdownMenu.Portal><DropdownMenu.SubContent className="menu-content" sideOffset={6}>{projects.map((candidate) => <DropdownMenu.Item key={candidate.id} className="menu-item" disabled={candidate.id === project.id || !candidate.available} onSelect={() => move.mutate(candidate.id)}>{candidate.name}</DropdownMenu.Item>)}</DropdownMenu.SubContent></DropdownMenu.Portal></DropdownMenu.Sub><DropdownMenu.Item className="menu-item" disabled={!latestCompletedTurnId || !branchActionsAvailable} onSelect={() => void requestFork(latestCompletedTurnId, "after")}><GitFork size={14} />Fork 当前最新位置</DropdownMenu.Item><DropdownMenu.Separator className="menu-separator" /><DropdownMenu.Item className="menu-item danger-item" disabled={hasActiveTurn || linkedSideChatActive || sessionDisconnected} onSelect={() => archive.mutate()}>归档</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>}
       </div>
     </header>

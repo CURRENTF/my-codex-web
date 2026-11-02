@@ -1,4 +1,6 @@
 import type { SessionSummary } from "@codex-web/shared-types";
+import type { CodexTurn } from "./api";
+import type { UserMessageTarget } from "./user-message-navigation";
 
 export interface ForkTreeNode {
   id: string;
@@ -85,4 +87,78 @@ export function layoutForkTree(root: ForkTreeNode, threadId: string): ForkTreeEn
   };
   visit(root, 0, row);
   return entries;
+}
+
+export interface MessageRailBranch {
+  node: ForkTreeNode;
+  column: number;
+  parentColumn: number | null;
+  start: number;
+  end: number;
+  sharedUntil: number;
+}
+
+export function messageRailBranches(sessions: SessionSummary[], threadId: string, turns: CodexTurn[], targets: UserMessageTarget[]): {
+  branches: MessageRailBranch[]; messageColumns: number[]; rowCount: number;
+} {
+  const tree = sessionForkTree(sessions, threadId);
+  if (!tree) return { branches: [], messageColumns: targets.map(() => 0), rowCount: targets.length };
+  const flat: { node: ForkTreeNode; parentId: string | null; boundary: number }[] = [];
+  const flatten = (node: ForkTreeNode, parentId: string | null) => {
+    const matchedTurn = node.session?.forkTurnId ? turns.findIndex((turn) => turn.id === node.session!.forkTurnId) : -1;
+    const boundary = !parentId ? 0 : matchedTurn >= 0 ? matchedTurn + 1 : node.session?.forkTurnNumber
+      ?? (!node.session?.forkTurnId && node.session?.origin === "forked" ? 0 : null);
+    // Imported sessions may have ancestry without a recorded Turn boundary.
+    // Keep those in the full tree rather than draw a guessed junction here.
+    if (boundary === null) return;
+    flat.push({ node, parentId, boundary });
+    node.children.forEach((child) => flatten(child, node.id));
+  };
+  flatten(tree, null);
+  if (flat.length < 2 || !flat.some((entry) => entry.node.id === threadId)) {
+    return { branches: [], messageColumns: targets.map(() => 0), rowCount: targets.length };
+  }
+  const byId = new Map(flat.map((entry) => [entry.node.id, entry]));
+  // Forking earlier than the parent's own fork branches from its inherited
+  // prefix. Route that junction to the ancestor that owns the prefix.
+  for (const entry of flat) {
+    let parent = entry.parentId ? byId.get(entry.parentId) : undefined;
+    while (parent?.parentId && parent.boundary > entry.boundary) parent = byId.get(parent.parentId);
+    entry.parentId = parent?.node.id ?? null;
+  }
+  const path = new Map<string, number>();
+  let current = byId.get(threadId);
+  let until = Infinity;
+  while (current && !path.has(current.node.id)) {
+    path.set(current.node.id, until);
+    until = current.boundary;
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  const turnRow = (turnIndex: number) => {
+    const index = targets.findIndex((target) => !target.optimistic && target.turnIndex >= turnIndex);
+    return index >= 0 ? index : targets.length + Math.max(0, turnIndex - turns.length);
+  };
+  const columns = new Map(flat.map((entry, index) => [entry.node.id, index]));
+  const branches = flat.map(({ node, parentId, boundary }): MessageRailBranch => {
+    const childBoundaries = flat.filter((child) => child.parentId === node.id).map((child) => child.boundary);
+    const count = node.id === threadId ? turns.length : node.session?.turnCount;
+    const knownEnd = Math.max(boundary, count ?? boundary, ...childBoundaries);
+    // Unknown tails get one session marker, never invented message ticks.
+    const end = node.id === threadId ? Math.max(0, targets.length - 1)
+      : count === undefined ? Math.max(turnRow(boundary), turnRow(knownEnd) - .25)
+      : Math.max(turnRow(boundary) - .15, turnRow(knownEnd) - 1);
+    const sharedUntil = path.has(node.id) ? path.get(node.id)! : boundary;
+    return {
+      node, column: columns.get(node.id)!, parentColumn: parentId ? columns.get(parentId)! : null,
+      start: Math.max(0, turnRow(boundary) - .5),
+      end: node.id === threadId ? end : Math.max(end, Math.max(0, turnRow(sharedUntil) - .5) + .45),
+      sharedUntil: sharedUntil === Infinity ? Infinity : turnRow(sharedUntil) - .5,
+    };
+  });
+  const messageColumns = targets.map((target) => {
+    if (target.optimistic) return columns.get(threadId) ?? 0;
+    const owner = flat.find((entry) => path.has(entry.node.id) && target.turnIndex >= entry.boundary && target.turnIndex < path.get(entry.node.id)!);
+    return owner ? columns.get(owner.node.id)! : 0;
+  });
+  return { branches, messageColumns, rowCount: Math.max(targets.length, ...branches.map((branch) => Math.ceil(branch.end) + 1)) };
 }

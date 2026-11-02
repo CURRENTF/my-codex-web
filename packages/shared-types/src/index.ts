@@ -51,6 +51,7 @@ export interface SessionSummary {
   forkTurnId: string | null;
   forkSourceTitle: string | null;
   forkTurnNumber: number | null;
+  turnCount?: number;
   runtimeState: RuntimeState;
   hasGoal: boolean;
   pinned: boolean;

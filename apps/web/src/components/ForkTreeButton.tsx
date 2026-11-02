@@ -4,16 +4,16 @@ import * as Popover from "@radix-ui/react-popover";
 import type { SessionSummary } from "@codex-web/shared-types";
 import { forkPositionLabel, layoutForkTree, sessionForkTree, type ForkTreeEntry } from "../fork-tree";
 
-function ForkDiagram({ entries, threadId, labeled = false, onOpen }: {
-  entries: ForkTreeEntry[]; threadId: string; labeled?: boolean; onOpen(id: string): void;
+function ForkDiagram({ entries, threadId, onOpen }: {
+  entries: ForkTreeEntry[]; threadId: string; onOpen(id: string): void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const height = Math.max(...entries.map((entry) => entry.end)) + 24;
-  const width = Math.max(...entries.map((entry) => entry.depth)) * 24 + (labeled ? 240 : 44);
+  const width = Math.max(...entries.map((entry) => entry.depth)) * 24 + 240;
   useEffect(() => {
     container.current?.querySelector<HTMLElement>("[aria-current=page]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [threadId]);
-  return <div className={`fork-diagram-scroll${labeled ? " labeled" : ""}`} ref={container}>
+  return <div className="fork-diagram-scroll labeled" ref={container}>
     <nav className="fork-diagram" aria-label="对话分支树" style={{ width, height }} onKeyDown={(event) => {
       if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
       const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")].sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top));
@@ -38,27 +38,24 @@ function ForkDiagram({ entries, threadId, labeled = false, onOpen }: {
           data-tooltip={`${node.title}\n${position}${current ? "\n当前 Session" : ""}`}
           onClick={() => { if (!current) onOpen(node.id); }}>
           <span className="fork-tree-tick" aria-hidden="true" />
-          {labeled && <span className="fork-tree-label"><strong>{node.title}</strong><small>{position}{current ? "，当前" : ""}</small></span>}
-        </button> : <span key={node.id} className="fork-tree-missing" style={{ left: 8 + depth * 24, top: end - 16 }} data-tooltip={`${node.title}\n原始对话不可用`}><span className="fork-tree-tick" />{labeled && <span className="fork-tree-label"><strong>{node.title}</strong><small>原始对话不可用</small></span>}</span>;
+          {<span className="fork-tree-label"><strong>{node.title}</strong><small>{position}{current ? "，当前" : ""}</small></span>}
+        </button> : <span key={node.id} className="fork-tree-missing" style={{ left: 8 + depth * 24, top: end - 16 }} data-tooltip={`${node.title}\n原始对话不可用`}><span className="fork-tree-tick" />{<span className="fork-tree-label"><strong>{node.title}</strong><small>原始对话不可用</small></span>}</span>;
       })}
     </nav>
   </div>;
 }
 
-export function ForkTreeRail({ sessions, threadId, onOpen }: { sessions: SessionSummary[]; threadId: string; onOpen(id: string): void }) {
+export function ForkTreeButton({ sessions, threadId, onOpen }: { sessions: SessionSummary[]; threadId: string; onOpen(id: string): void }) {
   const [open, setOpen] = useState(false);
   const tree = useMemo(() => sessionForkTree(sessions, threadId), [sessions, threadId]);
   const entries = useMemo(() => tree ? layoutForkTree(tree, threadId) : [], [tree, threadId]);
   if (!tree) return null;
   const count = entries.filter((entry) => entry.node.session).length;
-  return <aside className="fork-tree-rail" aria-label="相关 Session">
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild><button className="fork-tree-trigger" aria-label={`查看 ${count} 个相关 Session`} data-tooltip="查看对话分支"><GitFork size={16} /><span>{count}</span></button></Popover.Trigger>
-      <Popover.Portal><Popover.Content className="fork-tree-popover" side="right" align="start" sideOffset={8} collisionPadding={12} aria-label="对话分支">
+  return <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild><button className="header-button" aria-label="查看对话分支" data-tooltip="对话分支"><GitFork size={16} /></button></Popover.Trigger>
+      <Popover.Portal><Popover.Content className="fork-tree-popover" side="bottom" align="end" sideOffset={8} collisionPadding={12} aria-label="对话分支">
         <header><GitFork size={15} /><strong>对话分支</strong><span>{count}</span></header>
-        <ForkDiagram entries={entries} threadId={threadId} labeled onOpen={(id) => { setOpen(false); onOpen(id); }} />
+        <ForkDiagram entries={entries} threadId={threadId} onOpen={(id) => { setOpen(false); onOpen(id); }} />
       </Popover.Content></Popover.Portal>
-    </Popover.Root>
-    <div className="fork-tree-overview"><ForkDiagram entries={entries} threadId={threadId} onOpen={onOpen} /></div>
-  </aside>;
+  </Popover.Root>;
 }
