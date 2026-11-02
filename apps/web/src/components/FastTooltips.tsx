@@ -3,9 +3,15 @@ import { createPortal } from "react-dom";
 
 export const TOOLTIP_DELAY_MS = 150;
 
+export interface TooltipDetailRow {
+  label: string;
+  value: string;
+  detail?: string;
+}
+
 // Delegate across the app and Radix portals without wrapping toolbar controls.
 export function FastTooltips() {
-  const [active, setActive] = useState<{ element: HTMLElement; text: string } | null>(null);
+  const [active, setActive] = useState<{ element: HTMLElement; text: string; rows?: TooltipDetailRow[] } | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const tooltip = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -18,7 +24,13 @@ export function FastTooltips() {
       const element = target.closest<HTMLElement>("[data-tooltip], button[aria-label], a[aria-label]");
       if (!element) return null;
       const text = element.getAttribute("data-tooltip") || (!element.textContent?.trim() ? element.getAttribute("aria-label") : null);
-      return text ? { element, text } : null;
+      if (!text) return null;
+      const details = element.getAttribute("data-tooltip-details");
+      let rows: TooltipDetailRow[] | undefined;
+      if (details) {
+        try { rows = JSON.parse(details) as TooltipDetailRow[]; } catch { /* Fall back to the plain tooltip. */ }
+      }
+      return { element, text, rows };
     };
     const hide = () => { clearTimeout(timer); current = null; setActive(null); };
     const show = (next: NonNullable<ReturnType<typeof candidate>>, immediate: boolean) => {
@@ -79,5 +91,13 @@ export function FastTooltips() {
     };
   }, [active, id]);
 
-  return active ? createPortal(<div ref={tooltip} id={id} role="tooltip" className="fast-tooltip" style={position}>{active.text}</div>, document.body) : null;
+  return active ? createPortal(<div ref={tooltip} id={id} role="tooltip" className={`fast-tooltip${active.rows ? " fast-tooltip-details" : ""}`} style={position}>
+    {active.rows ? <>
+      <div className="tooltip-detail-title">{active.text}</div>
+      <dl className="tooltip-detail-rows">{active.rows.map((row) => <div className="tooltip-detail-row" key={row.label}>
+        <dt>{row.label}</dt>
+        <dd>{row.value}{row.detail && <span className="tooltip-detail-secondary">{row.detail}</span>}</dd>
+      </div>)}</dl>
+    </> : active.text}
+  </div>, document.body) : null;
 }

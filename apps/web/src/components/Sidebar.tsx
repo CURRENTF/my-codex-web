@@ -20,6 +20,7 @@ import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
 import { ServiceRestartDialog } from "./ServiceRestartDialog";
 import { TextInputDialog } from "./ActionDialog";
+import type { TooltipDetailRow } from "./FastTooltips";
 
 const PROJECT_SESSION_PAGE_SIZE = 12;
 
@@ -83,20 +84,20 @@ function SessionRow({ session, active, compact, projectName, detailProjectName, 
   };
   const forkDescription = session.parentThreadId ? `从「${session.forkSourceTitle ?? "父 Session"}」${session.forkTurnNumber ? `第 ${session.forkTurnNumber} 轮` : ""}分叉` : undefined;
   const forkLink = forkDescription && <button className="fork-source-link" aria-label={forkDescription} data-tooltip={compact ? forkDescription : undefined} onClick={() => { if (suppressClick.current) return; if (revealed) onReveal(null); else onOpen(session.parentThreadId!); }}><GitFork size={compact ? 13 : 11} />{!compact && <span>{forkDescription}</span>}</button>;
-  const details = [
-    session.title,
-    `${BACKEND_LABELS[sessionBackend(session.threadId)]}${detailProjectName ? ` · ${detailProjectName}` : ""}`,
-    `${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""}`,
-    `更新于 ${new Date(session.updatedAt).toLocaleString()}（${relativeTime(session.updatedAt, now)}）`,
-    session.pinned ? "已置顶" : undefined,
-    session.hasGoal ? "已设置 Goal" : undefined,
-    forkDescription,
-  ].filter(Boolean).join("\n");
+  const flags = [session.pinned && "已置顶", session.hasGoal && "Goal", session.scheduledPollingEnabled && "定时轮询"].filter(Boolean).join("、");
+  const details: TooltipDetailRow[] = [
+    { label: "状态", value: statusText(runtimeState) },
+    { label: "项目", value: detailProjectName ?? "Other" },
+    { label: "后端", value: BACKEND_LABELS[sessionBackend(session.threadId)] },
+    { label: "更新", value: relativeTime(session.updatedAt, now), detail: new Date(session.updatedAt).toLocaleString() },
+    ...(flags ? [{ label: "标记", value: flags }] : []),
+    ...(forkDescription ? [{ label: "来源", value: forkDescription }] : []),
+  ];
   return <div className={`session-row-shell ${compact ? "compact" : ""} ${active ? "active" : ""} ${revealed ? "actions-revealed" : ""}`} data-thread-id={session.threadId} data-updated-at={session.updatedAt} data-pinned={session.pinned}>
     <div ref={track} className="session-swipe-track" onScroll={() => { suppressClick.current = true; }} onScrollEnd={settleScroll} onTouchStart={() => { programmaticTarget.current = null; if (!revealed) onReveal(null); }}>
       <div className="session-row-content">
         <div className="session-row-line">
-          <button className="session-row" aria-current={active ? "page" : undefined} data-tooltip={compact ? details : undefined} onClick={open}>
+          <button className="session-row" aria-current={active ? "page" : undefined} data-tooltip={compact ? session.title : undefined} data-tooltip-details={compact ? JSON.stringify(details) : undefined} onClick={open}>
             <span className="session-copy"><span className="session-title">{session.title}</span>{!compact && <span className="session-meta">{sessionBackend(session.threadId) !== "codex" && <>{BACKEND_LABELS[sessionBackend(session.threadId)]}<span aria-hidden>·</span></>}{projectName && <>{projectName}<span aria-hidden>·</span></>}{relativeTime(session.updatedAt, now)}</span>}</span>
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{!compact && session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
