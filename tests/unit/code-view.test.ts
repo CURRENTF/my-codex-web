@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, open, readFile, writeFile, rm, realpath, rename, symlink, link, stat } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, open, readFile, writeFile, rm, realpath, rename, symlink, link, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,8 @@ describe("built-in workspace editor", () => {
     await mkdir(root);
     target = path.join(root, "hello.ts");
     await writeFile(target, "export const hello = '你好';\r\n", { mode: 0o755 });
+    // Creation modes are filtered by umask (0077 in the deployed service).
+    await chmod(target, 0o755);
     files = new CodeViewFiles();
   });
   afterEach(async () => { await rm(base, { recursive: true, force: true }); });
