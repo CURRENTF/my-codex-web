@@ -44,8 +44,8 @@ export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }
   </span>;
 }
 
-function SessionRow({ session, active, projectName, now, revealed, busy, onReveal, onOpen, onPin, onRename, onArchive }: {
-  session: SessionSummary; active: boolean; projectName?: string; now: number; revealed: boolean; busy: boolean;
+function SessionRow({ session, active, compact, projectName, detailProjectName, now, revealed, busy, onReveal, onOpen, onPin, onRename, onArchive }: {
+  session: SessionSummary; active: boolean; compact: boolean; projectName?: string; detailProjectName?: string; now: number; revealed: boolean; busy: boolean;
   onReveal(threadId: string | null): void; onOpen(threadId: string): void; onPin(session: SessionSummary): void; onRename(session: SessionSummary): void; onArchive(session: SessionSummary): void;
 }) {
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
@@ -81,14 +81,26 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
     if (revealed) { onReveal(null); return; }
     onOpen(session.threadId);
   };
-  return <div className={`session-row-shell ${active ? "active" : ""} ${revealed ? "actions-revealed" : ""}`} data-thread-id={session.threadId} data-updated-at={session.updatedAt} data-pinned={session.pinned}>
+  const forkDescription = session.parentThreadId ? `从「${session.forkSourceTitle ?? "父 Session"}」${session.forkTurnNumber ? `第 ${session.forkTurnNumber} 轮` : ""}分叉` : undefined;
+  const forkLink = forkDescription && <button className="fork-source-link" aria-label={forkDescription} data-tooltip={compact ? forkDescription : undefined} onClick={() => { if (suppressClick.current) return; if (revealed) onReveal(null); else onOpen(session.parentThreadId!); }}><GitFork size={compact ? 13 : 11} />{!compact && <span>{forkDescription}</span>}</button>;
+  const details = [
+    session.title,
+    `${BACKEND_LABELS[sessionBackend(session.threadId)]}${detailProjectName ? ` · ${detailProjectName}` : ""}`,
+    `${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""}`,
+    `更新于 ${new Date(session.updatedAt).toLocaleString()}（${relativeTime(session.updatedAt, now)}）`,
+    session.pinned ? "已置顶" : undefined,
+    session.hasGoal ? "已设置 Goal" : undefined,
+    forkDescription,
+  ].filter(Boolean).join("\n");
+  return <div className={`session-row-shell ${compact ? "compact" : ""} ${active ? "active" : ""} ${revealed ? "actions-revealed" : ""}`} data-thread-id={session.threadId} data-updated-at={session.updatedAt} data-pinned={session.pinned}>
     <div ref={track} className="session-swipe-track" onScroll={() => { suppressClick.current = true; }} onScrollEnd={settleScroll} onTouchStart={() => { programmaticTarget.current = null; if (!revealed) onReveal(null); }}>
       <div className="session-row-content">
         <div className="session-row-line">
-          <button className="session-row" aria-current={active ? "page" : undefined} onClick={open}>
-            <span className="session-copy"><span className="session-title">{session.title}</span><span className="session-meta">{sessionBackend(session.threadId) !== "codex" && <>{BACKEND_LABELS[sessionBackend(session.threadId)]}<span aria-hidden>·</span></>}{projectName && <>{projectName}<span aria-hidden>·</span></>}{relativeTime(session.updatedAt, now)}</span></span>
-            <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
+          <button className="session-row" aria-current={active ? "page" : undefined} data-tooltip={compact ? details : undefined} onClick={open}>
+            <span className="session-copy"><span className="session-title">{session.title}</span>{!compact && <span className="session-meta">{sessionBackend(session.threadId) !== "codex" && <>{BACKEND_LABELS[sessionBackend(session.threadId)]}<span aria-hidden>·</span></>}{projectName && <>{projectName}<span aria-hidden>·</span></>}{relativeTime(session.updatedAt, now)}</span>}</span>
+            <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{!compact && session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
+          {compact && forkLink}
           <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} data-tooltip={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
             <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
             <DropdownMenu.Item className="menu-item" disabled={busy || runtimeState === "disconnected"} onSelect={() => onRename(session)}><PencilSimple size={14} />重命名</DropdownMenu.Item>
@@ -96,7 +108,7 @@ function SessionRow({ session, active, projectName, now, revealed, busy, onRevea
             <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>
           </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
         </div>
-        {session.parentThreadId && <button className="fork-source-link" onClick={() => { if (suppressClick.current) return; if (revealed) onReveal(null); else onOpen(session.parentThreadId!); }}><GitFork size={11} /><span>从「{session.forkSourceTitle ?? "父 Session"}」{session.forkTurnNumber ? `第 ${session.forkTurnNumber} 轮` : ""}分叉</span></button>}
+        {!compact && forkLink}
       </div>
       <div className="session-swipe-actions" aria-hidden={!revealed}>
         <button type="button" className="session-swipe-action pin" tabIndex={revealed ? 0 : -1} disabled={busy} aria-label={session.pinned ? `取消置顶 ${session.title}` : `置顶 ${session.title}`} onClick={() => onPin(session)}><PushPin size={17} weight={session.pinned ? "fill" : "bold"} /><span>{session.pinned ? "取消置顶" : "置顶"}</span></button>
@@ -135,6 +147,8 @@ export function Sidebar(props: SidebarProps) {
   const [restartOpen, setRestartOpen] = useState(false);
   const liquidGlass = useAppearancePreferences((state) => state.liquidGlass);
   const setLiquidGlass = useAppearancePreferences((state) => state.setLiquidGlass);
+  const compactSessions = useAppearancePreferences((state) => state.compactSessions);
+  const setCompactSessions = useAppearancePreferences((state) => state.setCompactSessions);
   const longTextConfirmation = useComposerPreferences((state) => state.longTextConfirmation);
   const setLongTextConfirmation = useComposerPreferences((state) => state.setLongTextConfirmation);
   const showUserMessageRail = useComposerPreferences((state) => state.showUserMessageRail);
@@ -164,7 +178,7 @@ export function Sidebar(props: SidebarProps) {
       setBusyThreadId(null);
     }
   };
-  const sessionRow = (session: SessionSummary, projectName?: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} projectName={projectName} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId || (rename.isPending && rename.variables?.threadId === session.threadId)} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onRename={(target) => { rename.reset(); setRevealedThreadId(null); setRenameName(target.title); setRenameTarget(target); }} onArchive={(target) => void runSessionAction(target, "archive")} />;
+  const sessionRow = (session: SessionSummary, projectName?: string) => <SessionRow key={session.threadId} session={session} active={session.threadId === props.activeThreadId} compact={compactSessions} projectName={projectName} detailProjectName={projectNames[session.projectId] ?? "Other"} now={now} revealed={revealedThreadId === session.threadId} busy={busyThreadId === session.threadId || (rename.isPending && rename.variables?.threadId === session.threadId)} onReveal={setRevealedThreadId} onOpen={props.onOpen} onPin={(target) => void runSessionAction(target, "pin")} onRename={(target) => { rename.reset(); setRevealedThreadId(null); setRenameName(target.title); setRenameTarget(target); }} onArchive={(target) => void runSessionAction(target, "archive")} />;
   const projectNames = useMemo(() => Object.fromEntries(props.projects.map((p) => [p.id, p.name])), [props.projects]);
   const notificationLabel = props.notificationState === "enabled" ? "关闭 Session 完成通知"
     : props.notificationState === "blocked" ? "浏览器已禁止此站点发送通知，请在网站设置中允许"
@@ -178,6 +192,10 @@ export function Sidebar(props: SidebarProps) {
           <button className="app-settings-row" role="switch" aria-checked={liquidGlass} aria-label="液态玻璃" onClick={() => setLiquidGlass(!liquidGlass)}>
             <span><strong>液态玻璃</strong><small>通透的面板与柔和高光，随系统切换深浅色。</small></span>
             <span className={`settings-toggle ${liquidGlass ? "enabled" : ""}`} aria-hidden="true"><span /></span>
+          </button>
+          <button className="app-settings-row" role="switch" aria-checked={compactSessions} aria-label="Compact 模式" onClick={() => setCompactSessions(!compactSessions)}>
+            <span><strong>Compact 模式</strong></span>
+            <span className={`settings-toggle ${compactSessions ? "enabled" : ""}`} aria-hidden="true"><span /></span>
           </button>
           <div className="menu-separator" />
           <SelfUpdateControl settingsRow />
