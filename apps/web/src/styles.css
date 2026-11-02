@@ -304,7 +304,41 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .timeline { height: 100%; }
 .timeline-static { overflow-y: auto; }
 .timeline-shell { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
-.timeline-shell > .timeline { min-width: 0; flex: 1; }
+.timeline-content { position: relative; min-width: 0; min-height: 0; flex: 1; }
+/* Branch topology is a data diagram; the blue path leads to the selected leaf. */
+.fork-tree-rail { display: flex; width: 108px; min-width: 0; flex: 0 0 108px; flex-direction: column; align-items: stretch; padding: 14px 0 12px 8px; }
+.fork-tree-trigger { display: flex; width: fit-content; min-height: 32px; align-items: center; gap: 7px; margin: 0 0 12px 4px; padding: 6px 8px; border-radius: var(--radius-control); background: transparent; color: var(--text-soft); cursor: pointer; }
+.fork-tree-trigger span { font-size: 11px; font-variant-numeric: tabular-nums; }
+.fork-tree-trigger:hover, .fork-tree-trigger[data-state="open"] { background: var(--surface-hover); color: var(--text); }
+.fork-tree-overview { display: flex; min-height: 0; flex: 1; align-items: center; }
+.fork-diagram-scroll { max-width: 100%; max-height: 100%; overflow: auto; padding: 2px; overscroll-behavior: contain; }
+.fork-diagram { position: relative; min-width: 0; flex: none; }
+.fork-tree-lines { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.fork-tree-lines path { fill: none; stroke: var(--text-soft); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.fork-tree-lines path.active-path { stroke: var(--accent); }
+.fork-tree-tip, .fork-tree-missing { position: absolute; display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; border-radius: var(--radius-control); background: var(--surface); color: var(--text-soft); }
+.fork-tree-tip { cursor: pointer; }
+.fork-tree-tick { width: 12px; height: 4px; flex: 0 0 auto; border-radius: 999px; background: currentColor; }
+.fork-tree-tip:hover { background: var(--surface-hover); color: var(--text); }
+.fork-tree-tip.current { color: var(--accent); }
+.fork-tree-tip.current .fork-tree-tick { width: 20px; outline: 1px solid var(--accent); outline-offset: 4px; }
+.fork-tree-missing .fork-tree-tick { height: 6px; border: 1px dashed var(--text-soft); background: transparent; }
+.fork-tree-popover { z-index: 40; width: min(360px, calc(100vw - 24px), var(--radix-popover-content-available-width)); max-height: min(540px, var(--radix-popover-content-available-height)); overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); background: var(--surface); padding: 12px; box-shadow: var(--shadow-menu); }
+.fork-tree-popover header { display: flex; height: 28px; align-items: center; gap: 7px; color: var(--text-soft); font-size: 12px; }
+.fork-tree-popover header strong { color: var(--text); font-weight: 600; }
+.fork-tree-popover header > span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.fork-tree-popover .fork-diagram-scroll { max-height: min(460px, calc(var(--radix-popover-content-available-height) - 65px)); margin-top: 8px; }
+.fork-diagram-scroll.labeled .fork-tree-tip, .fork-diagram-scroll.labeled .fork-tree-missing { width: 224px; height: 38px; justify-content: flex-start; gap: 12px; padding: 0 10px; text-align: left; }
+.fork-diagram-scroll.labeled .fork-tree-tick { width: 12px; }
+.fork-tree-label { display: grid; min-width: 0; gap: 2px; }
+.fork-tree-label strong { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.fork-tree-label small { color: var(--text-soft); font-size: 10px; }
+.fork-tree-tip.current .fork-tree-label strong { color: var(--accent); }
+@container session-pane (max-width: 880px) {
+  .fork-tree-rail { width: 40px; flex-basis: 40px; padding: 10px 0 0 4px; }
+  .fork-tree-overview, .fork-tree-trigger span { display: none; }
+  .fork-tree-trigger { margin: 0; padding: 8px; }
+}
 /* Compact message ticks stay centered; only the hovered neighborhood expands. */
 .user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: 36px; height: min(calc(var(--rail-count) * var(--rail-tick-spacing) + 4px), calc(100% - 32px)); transform: translateY(-50%); }
 .user-message-rail-track { position: absolute; inset: 8px 0 8px 4px; pointer-events: none; }
