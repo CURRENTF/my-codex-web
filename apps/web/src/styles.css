@@ -304,7 +304,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .timeline { height: 100%; }
 .timeline-static { overflow-y: auto; }
 .timeline-shell { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
-.timeline-shell > .timeline { min-width: 0; flex: 1; }
+.timeline-shell > .timeline, .timeline-shell > .timeline-empty { min-width: 0; flex: 1; }
 /* Branch topology is a data diagram; the blue path leads to the selected leaf. */
 .fork-diagram-scroll { max-width: 100%; max-height: 100%; overflow: auto; padding: 2px; overscroll-behavior: contain; }
 .fork-diagram { position: relative; min-width: 0; flex: none; }
