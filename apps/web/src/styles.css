@@ -330,19 +330,24 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .fork-tree-label small { color: var(--text-soft); font-size: 10px; }
 .fork-tree-tip.current .fork-tree-label strong { color: var(--accent); }
 /* Compact message ticks stay centered; only the hovered neighborhood expands. */
-.user-message-rail { position: absolute; top: 50%; left: 12px; z-index: 4; width: var(--rail-width, 36px); height: min(calc(var(--rail-count) * var(--rail-tick-spacing) + 4px), calc(100% - 32px)); transform: translateY(-50%); }
+.user-message-rail { --rail-edge: 36px; --rail-column-step: var(--rail-compact-step, 12px); position: absolute; top: 50%; left: 12px; z-index: 4; width: calc(var(--rail-edge) + var(--rail-columns, 0) * var(--rail-column-step, 12px)); height: min(calc(var(--rail-count) * var(--rail-tick-spacing) + 4px), calc(100% - 32px)); transform: translateY(-50%); }
+.user-message-rail.with-branches { --rail-edge: 16px; }
+.user-message-rail.with-branches:is(:hover, :focus-within) { --rail-edge: 36px; --rail-column-step: var(--rail-expanded-step); }
 .user-message-rail-track { position: absolute; inset: 8px 0 8px 4px; pointer-events: none; }
-.user-message-rail-tick { position: absolute; left: 0; width: 32px; height: 2px; transform-origin: left center; background: color-mix(in srgb, var(--text) 20%, var(--surface)); transition: transform .16s cubic-bezier(.2,.8,.2,1); }
+.user-message-rail-tick { position: absolute; left: 0; width: 32px; height: 2px; transform: translateX(calc(var(--rail-column, 0) * var(--rail-column-step))) translateY(-50%) scaleX(var(--rail-scale, .22)); transform-origin: left center; background: color-mix(in srgb, var(--text) 20%, var(--surface)); transition: transform .16s cubic-bezier(.2,.8,.2,1); }
 .user-message-rail-tick.current { background: var(--text-soft); }
 .user-message-rail-tick.selected { background: var(--text); }
 .user-message-rail-tick.branched { background: var(--accent); }
 .user-message-rail-tick.leaf { height: 3px; border-radius: 2px; }
-.user-message-rail-branch { position: absolute; z-index: 1; width: 16px; margin: -8px 0 0 -4px; padding: 0; border-radius: 4px; background: transparent; cursor: pointer; color: var(--text-soft); }
+.user-message-rail-branch { position: absolute; left: 4px; z-index: 1; width: min(20px, var(--rail-column-step)); margin: -8px 0 0 -4px; padding: 0; border-radius: 4px; background: transparent; cursor: pointer; color: var(--text-soft); transform: translateX(calc(var(--rail-column) * var(--rail-column-step))); transition: transform .16s cubic-bezier(.2,.8,.2,1); }
 .user-message-rail-branch-tick { position: absolute; left: 4px; transform: translateY(-50%); width: 5px; height: 2px; background: color-mix(in srgb, var(--text) 30%, var(--surface)); pointer-events: none; }
 .user-message-rail-branch-tick.leaf { width: 8px; height: 3px; border-radius: 2px; background: var(--text-soft); }
 .user-message-rail-branch:hover .user-message-rail-branch-tick, .user-message-rail-branch:focus-visible .user-message-rail-branch-tick { width: 12px; background: var(--text); }
-.user-message-rail-branch:active { transform: none; }
-.user-message-rail-junction { position: absolute; height: 5px; border-top: 1px solid var(--line-strong); border-right: 1px solid var(--line-strong); border-top-right-radius: 4px; pointer-events: none; }
+.user-message-rail-branch:active { transform: translateX(calc(var(--rail-column) * var(--rail-column-step))); }
+.user-message-rail-junction { position: absolute; left: 4px; width: calc(var(--rail-span) * var(--rail-column-step) + 3px); height: 5px; border-top: 1px solid var(--line-strong); border-right: 1px solid var(--line-strong); border-top-right-radius: 4px; transform: translateX(calc(var(--rail-column) * var(--rail-column-step))); transition: transform .16s cubic-bezier(.2,.8,.2,1); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .user-message-rail-tick, .user-message-rail-branch, .user-message-rail-junction { transition: none; }
+}
 
 .user-message-rail-hit { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; background: transparent; cursor: pointer; }
 .user-message-rail-hit:active { transform: none; }

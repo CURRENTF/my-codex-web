@@ -75,18 +75,31 @@ export function UserMessageRail({ targets, virtual, onNavigate, sessions = EMPTY
   const selected = activePreviewIndex === null ? null : targets[activePreviewIndex];
   const selectedPosition = activePreviewIndex === null ? 50 : localPosition(activePreviewIndex);
 
-  const lastColumn = Math.max(0, ...branches.map((branch) => branch.column));
-  const columnStep = Math.min(18, 80 / Math.max(1, lastColumn));
-  const railWidth = 36 + lastColumn * columnStep;
+  const messageIndices = visibleIndices.filter((index) => index < targets.length);
+  const visibleBranches = branches.filter((branch) => branch.node.session && branch.node.id !== threadId
+    && Math.max(branch.end, Math.max(branch.start, branch.sharedUntil) + .45) >= firstVisible
+    && Math.max(branch.start, branch.sharedUntil) <= lastVisible);
+  const junctions = branches.filter((branch) => branch.parentColumn !== null && branch.start >= firstVisible && branch.start <= lastVisible);
+  const emptyColumn = branches.find((branch) => branch.node.id === threadId)?.column ?? 0;
+  const columns = [...new Set([
+    ...messageIndices.map((index) => messageColumns[index] ?? 0),
+    ...visibleBranches.map((branch) => branch.column),
+    ...junctions.flatMap((branch) => [branch.parentColumn!, branch.column]),
+    ...(!targets.length ? [emptyColumn] : []),
+  ])].sort((a, b) => a - b);
+  const column = (original: number) => Math.max(0, columns.indexOf(original));
+  const lastColumn = Math.max(0, columns.length - 1);
+  const compactStep = Math.min(12, 96 / Math.max(1, lastColumn));
+  const expandedStep = Math.min(36, 240 / Math.max(1, lastColumn));
 
-  return <div className={`user-message-rail${branches.length ? " with-branches" : ""}`} ref={rail} style={{ "--rail-count": visibleIndices.length, "--rail-width": `${railWidth}px`, "--rail-tick-spacing": `${USER_MESSAGE_TICK_SPACING}px` } as CSSProperties}>
+  return <div className={`user-message-rail${branches.length ? " with-branches" : ""}`} ref={rail} style={{ "--rail-count": visibleIndices.length, "--rail-columns": lastColumn, "--rail-compact-step": `${compactStep}px`, "--rail-expanded-step": `${expandedStep}px`, "--rail-tick-spacing": `${USER_MESSAGE_TICK_SPACING}px` } as CSSProperties}>
     <div className="user-message-rail-track" ref={track} aria-hidden="true">
-      {visibleIndices.filter((index) => index < targets.length).map((index) => {
+      {messageIndices.map((index) => {
         const distance = activePreviewIndex === null ? Infinity : Math.abs(index - activePreviewIndex);
         const scale = [1, .76, .54, .36][distance] ?? .22;
-        return <span key={targets[index]!.key} className={`user-message-rail-tick${messageColumns[index] ? " branched" : ""}${branches.length && index === targets.length - 1 ? " leaf" : ""}${index === currentFocus ? " current" : ""}${distance === 0 ? " selected" : ""}`} style={{ left: (messageColumns[index] ?? 0) * columnStep, top: `${localPosition(index)}%`, transform: `translateY(-50%) scaleX(${scale})` }} />;
+        return <span key={targets[index]!.key} className={`user-message-rail-tick${messageColumns[index] ? " branched" : ""}${branches.length && index === targets.length - 1 ? " leaf" : ""}${index === currentFocus ? " current" : ""}${distance === 0 ? " selected" : ""}`} style={{ "--rail-column": column(messageColumns[index] ?? 0), "--rail-scale": scale, top: `${localPosition(index)}%` } as CSSProperties} />;
       })}
-      {!targets.length && branches.length > 0 && <span className="user-message-rail-tick branched leaf" style={{ left: (branches.find((branch) => branch.node.id === threadId)?.column ?? 0) * columnStep, top: `${localPosition(0)}%`, transform: "translateY(-50%) scaleX(.25)" }} />}
+      {!targets.length && branches.length > 0 && <span className="user-message-rail-tick branched leaf" style={{ "--rail-column": column(emptyColumn), "--rail-scale": .25, top: `${localPosition(0)}%` } as CSSProperties} />}
     </div>
     <button type="button" className="user-message-rail-hit" disabled={!targets.length} aria-label={`我的消息导航，显示第 ${firstMessage + 1} 至 ${lastMessage + 1} 条，共 ${targets.length} 条${activePreviewIndex !== null ? `，第 ${activePreviewIndex + 1} 条` : ""}`} aria-description="上下方向键选择消息，回车跳转" aria-describedby={selected ? previewId : undefined}
       onPointerMove={(event) => setPreviewIndex(indexAt(event.clientY))}
@@ -110,23 +123,22 @@ export function UserMessageRail({ targets, virtual, onNavigate, sessions = EMPTY
         setPreviewIndex(index);
         onNavigate(targets[index]!);
       }} />
-    {onOpenThread && branches.filter((branch) => branch.node.session && branch.node.id !== threadId).map((branch) => {
+    {onOpenThread && visibleBranches.map((branch) => {
       const suffixStart = Math.max(branch.start, branch.sharedUntil);
       const tip = Math.max(branch.end, suffixStart + .45);
-      if (tip < firstVisible || suffixStart > lastVisible) return null;
       const start = Math.max(firstVisible, suffixStart);
       const end = Math.min(lastVisible, tip);
       const top = localPosition(start);
       const bottom = localPosition(end);
       const ticks = branch.node.session!.turnCount === undefined ? [] : visibleIndices.filter((row) => row >= suffixStart && row <= branch.end && Math.abs(row - tip) > .4);
       return <button type="button" key={branch.node.id} className="user-message-rail-branch" aria-label={`切换到 ${branch.node.title}`}
-        data-tooltip={`${branch.node.title}\n${forkPositionLabel(branch.node.session!)}`} style={{ left: 4 + branch.column * columnStep, top: `calc(8px + (100% - 16px) * ${top / 100})`, height: `calc((100% - 16px) * ${(bottom - top) / 100} + 16px)` }}
+        data-tooltip={`${branch.node.title}\n${forkPositionLabel(branch.node.session!)}`} style={{ "--rail-column": column(branch.column), top: `calc(8px + (100% - 16px) * ${top / 100})`, height: `calc((100% - 16px) * ${(bottom - top) / 100} + 16px)` } as CSSProperties}
         onPointerEnter={() => setPreviewIndex(null)} onFocus={() => setPreviewIndex(null)} onClick={() => onOpenThread(branch.node.id)}>
         {ticks.map((row) => <span className="user-message-rail-branch-tick" key={row} style={{ top: `${8 + (row - start) * USER_MESSAGE_TICK_SPACING}px` }} />)}
         {tip <= lastVisible && <span className="user-message-rail-branch-tick leaf" style={{ top: `calc(100% - 8px)` }} />}
       </button>;
     })}
-    {branches.filter((branch) => branch.parentColumn !== null && branch.start >= firstVisible && branch.start <= lastVisible).map((branch) => <span key={`junction:${branch.node.id}`} className="user-message-rail-junction" aria-hidden="true" style={{ left: 4 + branch.parentColumn! * columnStep, width: (branch.column - branch.parentColumn!) * columnStep + 3, top: `calc(8px + (100% - 16px) * ${localPosition(branch.start) / 100})` }} />)}
+    {junctions.map((branch) => <span key={`junction:${branch.node.id}`} className="user-message-rail-junction" aria-hidden="true" style={{ "--rail-column": column(branch.parentColumn!), "--rail-span": column(branch.column) - column(branch.parentColumn!), top: `calc(8px + (100% - 16px) * ${localPosition(branch.start) / 100})` } as CSSProperties} />)}
     {selected && <div className="user-message-rail-preview" id={previewId} role="tooltip" style={{ top: `${selectedPosition}%` }}>
       <strong>{selected.preview}</strong>
       {selected.responsePreview && <p>{selected.responsePreview}</p>}
