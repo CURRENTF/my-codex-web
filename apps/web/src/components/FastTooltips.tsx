@@ -2,6 +2,14 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export const TOOLTIP_DELAY_MS = 150;
+const DETAIL_TITLE_MAX_LENGTH = 120;
+
+function detailTitle(text: string): string {
+  const characters = Array.from(text.replace(/\s+/g, " ").trim());
+  return characters.length > DETAIL_TITLE_MAX_LENGTH
+    ? `${characters.slice(0, DETAIL_TITLE_MAX_LENGTH - 1).join("")}…`
+    : characters.join("");
+}
 
 export interface TooltipDetailRow {
   label: string;
@@ -93,7 +101,7 @@ export function FastTooltips() {
 
   return active ? createPortal(<div ref={tooltip} id={id} role="tooltip" className={`fast-tooltip${active.rows ? " fast-tooltip-details" : ""}`} style={position}>
     {active.rows ? <>
-      <div className="tooltip-detail-title">{active.text}</div>
+      <div className="tooltip-detail-title">{detailTitle(active.text)}</div>
       <dl className="tooltip-detail-rows">{active.rows.map((row) => <div className="tooltip-detail-row" key={row.label}>
         <dt>{row.label}</dt>
         <dd>{row.value}{row.detail && <span className="tooltip-detail-secondary">{row.detail}</span>}</dd>
