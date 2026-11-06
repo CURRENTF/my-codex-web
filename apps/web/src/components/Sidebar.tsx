@@ -18,6 +18,7 @@ import type { BrowserNotificationControlState } from "../browser-notifications";
 import { MachineMonitorSetting } from "./MachineMonitor";
 import { SessionDefaultsSettings } from "./SessionDefaultsSettings";
 import { SelfUpdateControl } from "./SelfUpdateControl";
+import { AccountQuota } from "./AccountQuota";
 import { ServiceRestartDialog } from "./ServiceRestartDialog";
 import { TextInputDialog } from "./ActionDialog";
 import type { TooltipDetailRow } from "./FastTooltips";
@@ -187,6 +188,7 @@ export function Sidebar(props: SidebarProps) {
   return <aside className="sidebar">
     <div className="sidebar-top">
       <button className="new-session-button" aria-label="新建 Session" onClick={() => props.onNew()}><Plus size={17} weight="bold" />新建</button>
+      <AccountQuota />
       <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label="设置" data-tooltip="设置"><Gear size={19} /></button></Popover.Trigger>
         <Popover.Portal><Popover.Content className="app-settings menu-content" sideOffset={8} align="start" collisionPadding={12} aria-label="设置">
           <h2 className="app-settings-title">设置</h2>

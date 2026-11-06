@@ -170,6 +170,9 @@ export function App() {
       if (eventConnectionState !== "connected") consume(event);
       if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
       if (event.type === "backend.connection.changed") void client.invalidateQueries({ queryKey: ["bootstrap"] });
+      if (event.type === "account.rateLimits.updated" || event.type === "backend.connection.changed" || eventConnectionState === "connected") {
+        void client.invalidateQueries({ queryKey: ["account-rate-limits"] });
+      }
       if (event.type === "session.summary.updated" && event.threadId) {
         const summaryPayload = typeof event.payload === "object" && event.payload !== null
           ? event.payload as { reason?: string; name?: string | null; pinned?: boolean; scheduledPollingEnabled?: boolean; prefill?: unknown; summary?: SessionSummary }

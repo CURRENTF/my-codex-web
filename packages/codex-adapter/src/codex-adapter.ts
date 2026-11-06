@@ -3,6 +3,8 @@ import type { InitializeResponse } from "@codex-web/codex-schema";
 import type { AccessMode, Goal, ModelOption, RuntimeState, SessionThread, SessionTurn, SkillOption, SubagentAgentStatus, SubagentDescriptor } from "@codex-web/shared-types";
 import type { Account } from "@codex-web/codex-schema/v2/Account";
 import type { GetAccountResponse } from "@codex-web/codex-schema/v2/GetAccountResponse";
+import type { GetAccountRateLimitsResponse } from "@codex-web/codex-schema/v2/GetAccountRateLimitsResponse";
+import type { AccountRateLimits } from "@codex-web/shared-types";
 import type { ModelListResponse } from "@codex-web/codex-schema/v2/ModelListResponse";
 import type { ReviewStartResponse } from "@codex-web/codex-schema/v2/ReviewStartResponse";
 import type { ReviewTarget } from "@codex-web/codex-schema/v2/ReviewTarget";
@@ -310,6 +312,11 @@ export class CodexAdapter extends EventEmitter {
       codexHome: options.codexHome,
     });
     this.supervisor.on("notification", (message) => {
+      if (message.method === "account/rateLimits/updated" || message.method === "account/updated") {
+        // Rolling notifications can omit metadata; clients refetch the full snapshot.
+        this.emit("rateLimitsUpdated");
+        return;
+      }
       if (this.handleInternalTitleNotification(message)) return;
       const event = projectAdapterEvent(message);
       if (!event) return;
@@ -391,6 +398,32 @@ export class CodexAdapter extends EventEmitter {
 
   async readAccount(): Promise<GetAccountResponse> {
     return this.supervisor.transport.request<GetAccountResponse>("account/read", { refreshToken: false });
+  }
+
+  async readAccountRateLimits(): Promise<AccountRateLimits> {
+    if (!this.connected) return { status: "unavailable", limits: [] };
+    const { account } = await this.readAccount();
+    if (!account) return { status: "unavailable", limits: [] };
+    if (account.type !== "chatgpt") return { status: "unsupported", limits: [] };
+    try {
+      const response = await this.supervisor.transport.request<GetAccountRateLimitsResponse>("account/rateLimits/read", undefined, 10_000);
+      const buckets = Object.entries(response.rateLimitsByLimitId ?? {}).filter((entry) => entry[1] != null);
+      const limits = buckets.length ? buckets : [[response.rateLimits.limitId ?? "codex", response.rateLimits] as const];
+      return {
+        status: "available",
+        limits: limits.map(([id, limit]) => ({
+          id, name: limit!.limitName ?? null,
+          planType: limit!.planType ?? account.planType,
+          credits: limit!.credits ? { balance: limit!.credits.balance, unlimited: limit!.credits.unlimited } : null,
+          primary: limit!.primary ?? null, secondary: limit!.secondary ?? null,
+        })),
+      };
+    } catch (error) {
+      if (error instanceof JsonRpcError && [-32600, -32601, -32602].includes(error.code ?? 0)) {
+        return { status: "unsupported", limits: [] };
+      }
+      throw error;
+    }
   }
 
   async readSessionCost(threadId: string) {

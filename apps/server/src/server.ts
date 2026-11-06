@@ -172,6 +172,7 @@ export async function createServer() {
     if (normalized.type === "turnCompleted") promptScheduler.handleTurnCompleted(normalized.threadId, normalized.turn);
   });
   adapter.on("pendingRequest", (request) => sessions.handlePendingRequest(request));
+  adapter.codex.on("rateLimitsUpdated", () => events.publish("account.rateLimits.updated", {}));
   adapter.on("stderr", (line: string) => app.log.debug({ source: "codex-app-server", bytes: Buffer.byteLength(line) }, "Codex App Server wrote to stderr"));
   adapter.on("warning", (warning) => app.log.warn({ warning: safeErrorForLog(warning) }, "Codex Adapter warning"));
   adapter.on("error", (error) => app.log.error({ error: safeErrorForLog(error) }, "Codex Adapter error"));
@@ -428,6 +429,10 @@ export async function createServer() {
     return reply.type(content.mimeType).send(streamLocalFile(content.path));
   });
   app.get("/api/models", async () => adapter.models);
+  app.get("/api/account/rate-limits", async (_request, reply) => {
+    reply.header("cache-control", "private, no-store");
+    return adapter.codex.readAccountRateLimits();
+  });
   app.get("/api/backends", async () => adapter.describe());
   app.get("/api/backends/:backendId", async (request, reply) => {
     reply.header("cache-control", "no-store");

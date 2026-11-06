@@ -279,6 +279,24 @@ export interface SkillOption {
   scope: "user" | "repo" | "system" | "admin";
 }
 
+export interface AccountRateLimitWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface AccountRateLimits {
+  status: "available" | "unsupported" | "unavailable";
+  limits: Array<{
+    id: string;
+    name: string | null;
+    planType?: string | null;
+    credits?: { balance: string | null; unlimited: boolean } | null;
+    primary: AccountRateLimitWindow | null;
+    secondary: AccountRateLimitWindow | null;
+  }>;
+}
+
 export interface MachineMetrics {
   sampledAt: string;
   hostname: string;

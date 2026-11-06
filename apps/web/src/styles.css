@@ -112,6 +112,23 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 .sidebar-switch button { display: flex; height: 29px; align-items: center; justify-content: center; gap: 6px; border-radius: 7px; background: transparent; color: var(--text-soft); font-size: 12px; font-weight: 600; cursor: pointer; }
 .sidebar-switch button.active { background: var(--surface-strong); color: var(--text); box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent); }
 .sidebar-list { min-height: 0; flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+.account-quota { flex-shrink: 0; }
+.quota-ring { width: 30px; height: 30px; }
+.quota-ring-track, .quota-ring-value { fill: none; stroke-width: 2; }
+.quota-ring-track { stroke: color-mix(in srgb, var(--text-faint) 25%, transparent); }
+.quota-ring-value { stroke: var(--text-soft); stroke-linecap: round; }
+.quota-ring-center { fill: var(--text-faint); opacity: .5; }
+.account-quota.low .quota-ring-value { stroke: var(--danger); }
+.quota-popover.menu-content { width: min(300px, calc(100vw - 24px)); max-height: min(480px, var(--radix-popover-content-available-height)); overflow-y: auto; padding: 6px 14px; border-radius: 14px; }
+.quota-source { padding: 10px 0 12px; border-bottom: 1px solid var(--line); color: var(--text-faint); font-size: 12px; }
+.quota-group { display: grid; gap: 14px; padding: 14px 0; }
+.quota-group + .quota-group { border-top: 1px solid var(--line); }
+.quota-group-name { color: var(--text-soft); font-size: 12px; overflow-wrap: anywhere; }
+.quota-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text); font-size: 13px; }
+.quota-row > span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.quota-row.low > span:last-child { color: var(--danger); }
+.quota-manage { display: block; padding: 12px 0 8px; border-top: 1px solid var(--line); color: var(--text); font-size: 13px; }
+.quota-manage:hover { color: var(--accent); }
 .list-caption { display: flex; height: 30px; align-items: center; justify-content: space-between; padding: 0 8px; color: var(--text-faint); font-size: 11px; font-weight: 650; }
 .list-caption > span:first-child { color: var(--text-soft); }
 .sort-button, .caption-action { display: flex; align-items: center; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
