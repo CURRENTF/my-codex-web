@@ -36,8 +36,8 @@ const PLAN_NAMES: Record<string, string> = {
 
 export function AccountQuota() {
   const connection = useAppStore((state) => state.connectionState);
-  const codexConnection = useAppStore((state) => state.codexConnectionState);
-  const connected = connection === "connected" && codexConnection === "connected";
+  const codexAvailable = useAppStore((state) => state.codexAvailable);
+  const connected = connection === "connected" && codexAvailable;
   const query = useQuery({
     queryKey: ["account-rate-limits"],
     queryFn: ({ signal }) => api<AccountRateLimits>("/api/account/rate-limits", { signal, cache: "no-store" }),

@@ -137,11 +137,17 @@ export function App() {
   const projects = projectsQuery.data ?? bootstrapData?.projects ?? []; const allSessions = allSessionsQuery.data ?? []; const sessions = search.trim() ? (filteredSessionsQuery.data ?? []) : allSessions;
   const connectionState = useAppStore((state) => state.connectionState);
   const codexConnectionState = useAppStore((state) => state.codexConnectionState);
+  const codexAvailable = useAppStore((state) => state.codexAvailable);
   const connectionNotice = connectionState === "disconnected" ? "正在重连 Web 服务" :
-    connectionState === "connected" && codexConnectionState !== "connected" ? "Codex 暂不可用" : null;
+    connectionState !== "connected" ? null :
+    codexConnectionState !== "connected" ? "Codex 暂不可用" :
+    !codexAvailable ? "Codex 账户暂不可用" : null;
   const applyLiveSnapshot = useCallback((snapshot: BootstrapPayload, transportState: BootstrapPayload["connection"]["state"]) => {
     const codex = snapshot.backends?.find((backend) => backend.id === "codex");
-    useAppStore.setState({ codexConnectionState: codex?.available === false ? "disconnected" : "connected" });
+    useAppStore.setState({
+      codexConnectionState: (codex?.connected ?? codex?.available ?? true) ? "connected" : "disconnected",
+      codexAvailable: codex?.available ?? true,
+    });
     initialize(snapshot.runtimeStates, snapshot.activeSideChats, snapshot.itemDeltas, snapshot.pendingRequests, transportState, snapshot.eventSeq, snapshot.sessionPrefills, snapshot.subagents);
   }, [initialize]);
   const selected = allSessions.find((session) => session.threadId === selectedThreadId); const selectedProject = projects.find((project) => project.id === selected?.projectId) ?? null;

@@ -23,7 +23,7 @@ export class BackendRouter extends EventEmitter implements AgentBackend {
   }
   get models() { return this.codex.models; }
   describeCodex(connected = this.codex.connected): BackendOption {
-    return { id: "codex", name: "Codex", available: connected && !this.codex.requiresLogin,
+    return { id: "codex", name: "Codex", connected, available: connected && !this.codex.requiresLogin,
       models: this.codex.models, ...(!connected ? { message: "Codex 正在重连。" } : this.codex.requiresLogin ? { message: "请在服务所在机器完成 codex login。" } : {}) };
   }
   async describeBackend(backend: BackendId, refresh = false): Promise<BackendOption> {

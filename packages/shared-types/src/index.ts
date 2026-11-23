@@ -9,6 +9,7 @@ export interface BackendOption {
   id: BackendId;
   name: string;
   available: boolean;
+  connected?: boolean;
   message?: string;
   models: ModelOption[];
 }

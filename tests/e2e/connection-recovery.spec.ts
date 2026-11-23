@@ -2,7 +2,7 @@ import { expect, test, type WebSocketRoute } from "@playwright/test";
 import type { BootstrapPayload, Project, SessionSummary } from "@codex-web/shared-types";
 import type { SessionPayload } from "../../apps/web/src/api";
 
-test("recovers an open workspace after a transport outage and prompts for expired login", async ({ page }) => {
+test("recovers the workspace and keeps archive available during a Codex account outage", async ({ page }) => {
   const project: Project = {
     id: "project", name: "Example", rootPath: "/example", canonicalPath: "/example", orderIndex: 0,
     defaultModel: null, defaultReasoning: null, defaultAccessMode: "workspaceWrite",
@@ -24,6 +24,7 @@ test("recovers an open workspace after a transport outage and prompts for expire
   let transportDown = false;
   let rejectedSockets = 0;
   let openedSockets = 0;
+  let archivedThread: string | undefined;
   let socket: WebSocketRoute | undefined;
 
   await page.routeWebSocket("**/api/events", (connection) => {
@@ -44,6 +45,10 @@ test("recovers an open workspace after a transport outage and prompts for expire
     if (url.pathname === "/api/bootstrap") return route.fulfill({ json: bootstrap });
     if (url.pathname === "/api/projects") return route.fulfill({ json: [project] });
     if (url.pathname === "/api/sessions") return route.fulfill({ json: sessions });
+    if (route.request().method() === "POST" && /^\/api\/sessions\/[^/]+\/archive$/.test(url.pathname)) {
+      archivedThread = url.pathname.split("/")[3];
+      return route.fulfill({ json: { ok: true } });
+    }
     const session = sessions.find(({ threadId }) => url.pathname === `/api/sessions/${threadId}`);
     if (session) {
       const payload: SessionPayload = {
@@ -89,4 +94,24 @@ test("recovers an open workspace after a transport outage and prompts for expire
   await expect(page).toHaveURL(/\/sessions\/second$/);
   await expect(composer).toBeEnabled();
   await expect(composer).toHaveValue("draft before disconnect");
+
+  const codex = bootstrap.backends![0]!;
+  codex.connected = true;
+  codex.available = false;
+  bootstrap.eventSeq = 2;
+  socket!.send(JSON.stringify({
+    type: "backend.connection.changed", seq: 2, emittedAt: Date.now(),
+    payload: { backend: "codex", state: "connected", available: false },
+  }));
+  const accountNotice = page.getByText("Codex 账户暂不可用", { exact: true });
+  await expect(accountNotice).toBeVisible();
+  await expect(composer).toBeDisabled();
+  await page.reload();
+  await expect(accountNotice).toBeVisible();
+  await expect(rows.filter({ has: page.locator(".status-icon") })).toHaveCount(2);
+  await page.getByRole("button", { name: /^first：.*更多操作$/ }).click();
+  const archive = page.getByRole("menuitem", { name: "归档" });
+  await expect(archive).toBeEnabled();
+  await archive.click();
+  await expect.poll(() => archivedThread).toBe("first");
 });
