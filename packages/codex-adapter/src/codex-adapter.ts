@@ -288,6 +288,7 @@ export class CodexAdapter extends EventEmitter {
   readonly supervisor: CodexProcessSupervisor;
   private ready = false;
   private accountValue: Account | null = null;
+  private accountRequiresLogin = false;
   private accountChecked = false;
   private accountCheckPromise: Promise<void> | null = null;
   private modelsValue: ModelOption[] = [];
@@ -356,6 +357,7 @@ export class CodexAdapter extends EventEmitter {
 
   get connected(): boolean { return this.ready; }
   get account(): Account | null { return this.accountValue; }
+  get requiresLogin(): boolean { return this.accountRequiresLogin; }
   get models(): ModelOption[] { return this.modelsValue; }
 
   async start(): Promise<void> {
@@ -387,7 +389,11 @@ export class CodexAdapter extends EventEmitter {
     requireSupportedCodexCli(initialization.userAgent);
     transport.notify("initialized");
     const [, models] = await Promise.all([
-      this.ensureAccountChecked(),
+      this.ensureAccountChecked().catch((error) => {
+        if (!transport.connected) throw error;
+        // Workspace discovery can fail independently of the App Server's session RPCs.
+        this.emit("warning", error);
+      }),
       this.listModels(),
     ]);
     this.modelsValue = models;
@@ -396,8 +402,8 @@ export class CodexAdapter extends EventEmitter {
     this.emit("connection", { state: "connected" });
   }
 
-  async readAccount(): Promise<GetAccountResponse> {
-    return this.supervisor.transport.request<GetAccountResponse>("account/read", { refreshToken: false });
+  async readAccount(timeoutMs?: number): Promise<GetAccountResponse> {
+    return this.supervisor.transport.request<GetAccountResponse>("account/read", { refreshToken: false }, timeoutMs);
   }
 
   async readAccountRateLimits(): Promise<AccountRateLimits> {
@@ -440,9 +446,10 @@ export class CodexAdapter extends EventEmitter {
 
   private ensureAccountChecked(): Promise<void> {
     if (this.accountChecked) return Promise.resolve();
-    this.accountCheckPromise ??= this.readAccount()
+    this.accountCheckPromise ??= this.readAccount(5_000)
       .then((account) => {
         this.accountValue = account.account;
+        this.accountRequiresLogin = account.account === null && account.requiresOpenaiAuth !== false;
         this.accountChecked = true;
       })
       .catch((error: unknown) => {

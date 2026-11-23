@@ -58,7 +58,9 @@ export function SessionPane({ threadId, project, projects, models, sessions = []
   const backend = sessionBackend(threadId);
   const { codexFeatures } = backendCapabilities(backend);
   const codexConnectionState = useAppStore((state) => state.codexConnectionState);
-  const runtime = liveRuntime ?? payload?.runtime; const state: RuntimeState = (connectionState === "connected" && (!codexFeatures || codexConnectionState === "connected")) ? (runtime?.state ?? "idle") : "disconnected";
+  const connectionUnavailable = connectionState !== "connected" || (codexFeatures && codexConnectionState !== "connected");
+  const runtime = liveRuntime ?? payload?.runtime;
+  const state: RuntimeState = connectionUnavailable ? "disconnected" : runtime?.state ?? "idle";
   const title = sideChat ? "Side Chat" : payload?.thread.name || payload?.thread.preview || "Session";
   const [errorTarget, setErrorTarget] = useState<HTMLDivElement | null>(null);
   const [pendingFork, setPendingFork] = useState<PendingFork | null>(null);
@@ -153,7 +155,7 @@ export function SessionPane({ threadId, project, projects, models, sessions = []
   if (query.isLoading) return <div className="pane-loading"><div className="header-skeleton" /><div className="timeline-skeleton"><i /><i /><i /></div></div>;
   if (!payload || (query.isError && query.error instanceof ApiError && [401, 403, 404].includes(query.error.status))) return <div className="pane-error"><TerminalWindow size={28} /><h2>{sideChat ? "Side Chat 已不可用" : "无法打开 Session"}</h2><p>{query.error?.message ?? "Session 不可用"}</p><div className="pane-error-actions"><button className="button secondary" onClick={() => query.refetch()}>重试</button>{sideChat && onCloseSideChat && <button className="button danger-ghost" onClick={onCloseSideChat}>关闭 Side Chat</button>}</div></div>;
   return <section className={`session-pane ${sideChat ? "side-chat-pane" : ""}`}>
-    <header className="session-header"><div className="breadcrumb"><span className="breadcrumb-project" data-tooltip={projectLabel}>{projectLabel}</span><span className="breadcrumb-separator" aria-hidden="true">/</span><strong data-tooltip={title}>{title}</strong><span className="session-backend-label">{BACKEND_LABELS[backend]}</span></div><div className="header-status"><StatusIcon state={state} /><span>{statusText(state)}{elapsed !== null && (state === "running" || state === "waitingForInput") ? ` ${elapsed}s` : ""}</span></div><span className="header-spacer" />
+    <header className="session-header"><div className="breadcrumb"><span className="breadcrumb-project" data-tooltip={projectLabel}>{projectLabel}</span><span className="breadcrumb-separator" aria-hidden="true">/</span><strong data-tooltip={title}>{title}</strong><span className="session-backend-label">{BACKEND_LABELS[backend]}</span></div>{!connectionUnavailable && <div className="header-status"><StatusIcon state={state} /><span>{statusText(state)}{elapsed !== null && (state === "running" || state === "waitingForInput") ? ` ${elapsed}s` : ""}</span></div>}<span className="header-spacer" />
       <div className="session-header-metrics"><SessionCost threadId={threadId} revision={`${state}:${runtime?.activeTurnId ?? ""}`} /><ContextUsageIndicator usage={runtime?.contextUsage} /></div>
       <div className="session-header-actions" role="group" aria-label="会话操作">
       {!sideChat && codexFeatures && <GoalBar threadId={threadId} goal={payload.goal} disabled={sessionDisconnected} />}
@@ -166,7 +168,7 @@ export function SessionPane({ threadId, project, projects, models, sessions = []
     </header>
     <PendingBanner threadId={threadId} />
     <div className="session-notices">
-      {query.isError && <div className="parallel-write-warning" role="status"><WarningCircle size={15} weight="fill" /><span>显示已缓存的历史，同步失败：{query.error.message}</span><button className="button secondary" onClick={() => void query.refetch()}>重试</button></div>}
+      {query.isError && !connectionUnavailable && <div className="parallel-write-warning" role="status"><WarningCircle size={15} weight="fill" /><span>显示已缓存的历史，同步失败：{query.error.message}</span><button className="button secondary" onClick={() => void query.refetch()}>重试</button></div>}
       {/* Turn errors live in Timeline; reserve top notices for operation failures. */}
       <div ref={setErrorTarget} className="session-operation-errors" />
       {!pendingFork && fork.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Fork 创建失败：{fork.error.message}</span><button onClick={() => fork.reset()} aria-label="关闭 Fork 创建错误"><X size={14} /></button></div>}

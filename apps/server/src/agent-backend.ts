@@ -21,14 +21,16 @@ export class BackendRouter extends EventEmitter implements AgentBackend {
     }
     codex.on("connection", (event) => this.emit("connection", event));
   }
-  get account() { return this.codex.account; }
   get models() { return this.codex.models; }
+  describeCodex(connected = this.codex.connected): BackendOption {
+    return { id: "codex", name: "Codex", available: connected && !this.codex.requiresLogin,
+      models: this.codex.models, ...(!connected ? { message: "Codex 正在重连。" } : this.codex.requiresLogin ? { message: "请在服务所在机器完成 codex login。" } : {}) };
+  }
   async describeBackend(backend: BackendId, refresh = false): Promise<BackendOption> {
     if (backend === "pi") return this.pi.describe();
     if (backend === "agy") return this.agy ? this.agy.describe(refresh) : { id: "agy", name: "agy", available: false, models: [], message: "agy 未配置。" };
-    const models = refresh && this.codex.connected ? await this.codex.refreshModels() : this.codex.models;
-    return { id: "codex", name: "Codex", available: this.codex.connected && this.codex.account !== null,
-      models, ...(!this.codex.account ? { message: "请在服务所在机器完成 codex login。" } : !this.codex.connected ? { message: "Codex 正在重连。" } : {}) };
+    if (refresh && this.codex.connected) await this.codex.refreshModels();
+    return this.describeCodex();
   }
   async describe(): Promise<BackendOption[]> {
     return Promise.all([this.describeBackend("codex"), this.describeBackend("pi"), ...(this.agy ? [this.describeBackend("agy")] : [])]);

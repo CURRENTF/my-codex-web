@@ -473,22 +473,28 @@ describe("Codex Adapter initialization", () => {
     expect(request.mock.calls.filter(([method]) => method === "model/list")).toHaveLength(2);
   });
 
-  it("retries account/read after a transient initialization failure", async () => {
+  it("keeps sessions available when account discovery fails and checks login on the next initialization", async () => {
     let accountAttempts = 0;
     const request = vi.fn(async (method: string) => {
       if (method === "initialize") return initialization();
-      if (method === "account/read" && accountAttempts++ === 0) throw new Error("temporary account failure");
-      if (method === "account/read") return { account: null };
+      if (method === "account/read" && accountAttempts++ === 0) throw new JsonRpcError("workspace routing discovery failed", -32603);
+      if (method === "account/read") return { account: null, requiresOpenaiAuth: true };
       if (method === "model/list") return { data: [], nextCursor: null };
       return {};
     });
-    const transport = { request, notify: vi.fn() };
+    const transport = { request, notify: vi.fn(), connected: true };
     const adapter = new CodexAdapter({ cwd: "/tmp", codexHome: "/tmp/codex-web-adapter-home", version: "test" });
     (adapter.supervisor as unknown as { transportValue: typeof transport }).transportValue = transport;
     vi.spyOn(adapter.supervisor, "markReady").mockImplementation(() => undefined);
 
-    await expect(adapter.initialize()).rejects.toThrow("temporary account failure");
+    const warning = vi.fn();
+    adapter.on("warning", warning);
     await adapter.initialize();
+    expect(adapter.connected).toBe(true);
+    expect(adapter.requiresLogin).toBe(false);
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({ code: -32603 }));
+    await adapter.initialize();
+    expect(adapter.requiresLogin).toBe(true);
 
     expect(request.mock.calls.filter(([method]) => method === "account/read")).toHaveLength(2);
   });

@@ -7,10 +7,10 @@ import { removeSessionHistory } from "./session-history-cache";
 import { MachineMonitor } from "./components/MachineMonitor";
 import { sessionCreationDefaults, useComposerPreferences } from "./composer-preferences";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
-import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, Trash, WarningCircle, X } from "@phosphor-icons/react";
+import { FolderOpen, List, LockKey, ShieldWarning, SpinnerGap, TerminalWindow, Trash, WarningCircle, WifiSlash, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
-import type { Preferences, Project, SessionSummary, TurnUiEventPayload, UiEvent } from "@codex-web/shared-types";
+import type { BootstrapPayload, Preferences, Project, SessionSummary, TurnUiEventPayload, UiEvent } from "@codex-web/shared-types";
 import { api, authenticateWebUi, bootstrap, endpoints, isPasswordRequiredError, newClientRequestId, type SessionPayload } from "./api";
 import { applySessionEvent } from "./live-session";
 import { fetchMergedSession } from "./session-query";
@@ -98,6 +98,7 @@ export function App() {
   const [sideCloseError, setSideCloseError] = useState<string | null>(null);
   const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [sessionCreateError, setSessionCreateError] = useState<string | null>(null);
+  const [webLoginExpired, setWebLoginExpired] = useState(false);
   const [turnNotificationsEnabled, setTurnNotificationsEnabled] = useState(readTurnCompletionNotificationsEnabled);
   const [notificationPermission, setNotificationPermission] = useState<BrowserNotificationPermission>(currentBrowserNotificationPermission);
   const initialized = useRef(false); const lastFocusScan = useRef(0); const autoOpenSuppressedRef = useRef(false); const workspaceRef = useRef<HTMLElement>(null); const mainComposerRef = useRef<HTMLTextAreaElement>(null);
@@ -127,20 +128,27 @@ export function App() {
     retry: (failureCount, error) => !isPasswordRequiredError(error) && failureCount < 2,
   });
   const bootstrapData = bootstrapQuery.data; const preferences = bootstrapData?.preferences;
-  const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: endpoints.projects, enabled: !!bootstrapData });
-  const allSessionsQuery = useQuery({ queryKey: ["sessions", "", preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions("", preferences?.sortDirection ?? "desc", signal), enabled: !!bootstrapData?.authReady });
-  const filteredSessionsQuery = useQuery({ queryKey: ["sessions", search, preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions(search, preferences?.sortDirection ?? "desc", signal), enabled: !!bootstrapData?.authReady && !!search.trim() });
+  const webLoginRequired = webLoginExpired || isPasswordRequiredError(bootstrapQuery.error);
+  const bootstrapReady = !!bootstrapData && !webLoginRequired;
+  const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: endpoints.projects, enabled: bootstrapReady });
+  const allSessionsQuery = useQuery({ queryKey: ["sessions", "", preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions("", preferences?.sortDirection ?? "desc", signal), enabled: bootstrapReady && !!bootstrapData?.authReady });
+  const filteredSessionsQuery = useQuery({ queryKey: ["sessions", search, preferences?.sortDirection], queryFn: ({ signal }) => endpoints.sessions(search, preferences?.sortDirection ?? "desc", signal), enabled: bootstrapReady && !!bootstrapData?.authReady && !!search.trim() });
   const consume = useAppStore((state) => state.consume); const initialize = useAppStore((state) => state.initialize); const markDisconnected = useAppStore((state) => state.markDisconnected); const sideChats = useAppStore((state) => state.sideChats);
   const projects = projectsQuery.data ?? bootstrapData?.projects ?? []; const allSessions = allSessionsQuery.data ?? []; const sessions = search.trim() ? (filteredSessionsQuery.data ?? []) : allSessions;
-  useEffect(() => {
-    if (bootstrapData?.backends) useAppStore.setState({ codexConnectionState: bootstrapData.backends.find((backend) => backend.id === "codex")?.available ? "connected" : "disconnected" });
-  }, [bootstrapData]);
-  const bootstrapReady = !!bootstrapData;
+  const connectionState = useAppStore((state) => state.connectionState);
+  const codexConnectionState = useAppStore((state) => state.codexConnectionState);
+  const connectionNotice = connectionState === "disconnected" ? "正在重连 Web 服务" :
+    connectionState === "connected" && codexConnectionState !== "connected" ? "Codex 暂不可用" : null;
+  const applyLiveSnapshot = useCallback((snapshot: BootstrapPayload, transportState: BootstrapPayload["connection"]["state"]) => {
+    const codex = snapshot.backends?.find((backend) => backend.id === "codex");
+    useAppStore.setState({ codexConnectionState: codex?.available === false ? "disconnected" : "connected" });
+    initialize(snapshot.runtimeStates, snapshot.activeSideChats, snapshot.itemDeltas, snapshot.pendingRequests, transportState, snapshot.eventSeq, snapshot.sessionPrefills, snapshot.subagents);
+  }, [initialize]);
   const selected = allSessions.find((session) => session.threadId === selectedThreadId); const selectedProject = projects.find((project) => project.id === selected?.projectId) ?? null;
   const sideChat = useMemo(() => Object.values(sideChats).find((item) => item.parentThreadId === selectedThreadId), [sideChats, selectedThreadId]);
   const sideThreadId = sideChat?.threadId ?? null;
-  const notificationContext = useRef({ activeThreadId: selectedThreadId, sessions: allSessions, enabled: turnNotificationsEnabled, permission: notificationPermission });
-  notificationContext.current = { activeThreadId: selectedThreadId, sessions: allSessions, enabled: turnNotificationsEnabled, permission: notificationPermission };
+  const notificationContext = useRef({ activeThreadId: selectedThreadId, sessions: allSessions, enabled: turnNotificationsEnabled, permission: notificationPermission, navigate });
+  notificationContext.current = { activeThreadId: selectedThreadId, sessions: allSessions, enabled: turnNotificationsEnabled, permission: notificationPermission, navigate };
   useEffect(() => setSideCloseError(null), [sideThreadId]);
   const mainRuntime = useAppStore((state) => selectedThreadId ? state.runtimes[selectedThreadId] : undefined);
   const sideRuntime = useAppStore((state) => sideThreadId ? state.runtimes[sideThreadId] : undefined);
@@ -152,8 +160,10 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!bootstrapData || initialized.current) return; initialized.current = true; initialize(bootstrapData.runtimeStates, bootstrapData.activeSideChats, bootstrapData.itemDeltas, bootstrapData.pendingRequests, bootstrapData.connection.state, bootstrapData.eventSeq, bootstrapData.sessionPrefills, bootstrapData.subagents);
-  }, [bootstrapData, initialize]);
+    if (!bootstrapData || initialized.current || webLoginRequired) return;
+    initialized.current = true;
+    applyLiveSnapshot(bootstrapData, bootstrapData.connection.state === "connected" ? "connecting" : bootstrapData.connection.state);
+  }, [applyLiveSnapshot, bootstrapData, webLoginRequired]);
   useEffect(() => {
     if (!allSessionsQuery.isSuccess) return;
     const threadId = recentSessionToAutoOpen(selectedThreadId, allSessions, projects, preferences?.lastProjectId, autoOpenSuppressedRef.current || autoOpenSuppressed);
@@ -168,7 +178,7 @@ export function App() {
       const liveDeltas = useAppStore.getState().deltas;
       const eventConnectionState = event.type === "connection.changed" ? (event.payload as { state?: string }).state : undefined;
       if (eventConnectionState !== "connected") consume(event);
-      if (eventConnectionState === "connected") void refreshSnapshot().catch(resetSocketAndReconnect);
+      if (eventConnectionState === "connected") void refreshSnapshot().catch(recoverSnapshot);
       if (event.type === "backend.connection.changed") void client.invalidateQueries({ queryKey: ["bootstrap"] });
       if (event.type === "account.rateLimits.updated" || event.type === "backend.connection.changed" || eventConnectionState === "connected") {
         void client.invalidateQueries({ queryKey: ["account-rate-limits"] });
@@ -208,7 +218,7 @@ export function App() {
             documentVisible: document.visibilityState === "visible",
           };
           if (shouldNotifyTurnCompletion(input, context.enabled, context.permission)) {
-            if (showTurnCompletionNotification(input, (threadId) => navigate(`/sessions/${threadId}`))) playCompletionNotificationSound();
+            if (showTurnCompletionNotification(input, (threadId) => notificationContext.current.navigate(`/sessions/${threadId}`))) playCompletionNotificationSound();
           }
         }
       }
@@ -226,7 +236,8 @@ export function App() {
           if (disposed) return false;
           client.setQueryData(["bootstrap"], fresh);
           client.setQueryData(["projects"], fresh.projects);
-          initialize(fresh.runtimeStates, fresh.activeSideChats, fresh.itemDeltas, fresh.pendingRequests, fresh.connection.state, fresh.eventSeq, fresh.sessionPrefills, fresh.subagents);
+          const transportState = socket?.readyState === WebSocket.OPEN ? fresh.connection.state : useAppStore.getState().connectionState;
+          applyLiveSnapshot(fresh, transportState);
           const replay = bufferedEvents.filter((event) => event.seq > fresh.eventSeq).sort((left, right) => left.seq - right.seq);
           bufferedEvents = [];
           buffering = false;
@@ -263,13 +274,15 @@ export function App() {
       const delay = Math.min(10_000, 500 * 2 ** retryAttempt++);
       retryTimer = window.setTimeout(() => {
         retryTimer = undefined;
-        void refreshSnapshot().then((ready) => { if (ready) connect(); }).catch(scheduleReconnect);
+        void refreshSnapshot().then((ready) => { if (ready) connect(); }).catch(recoverSnapshot);
       }, delay);
     };
-    const resetSocketAndReconnect = () => {
+    const recoverSnapshot = (error: unknown) => {
+      if (disposed) return;
       closeCurrentSocket();
       markDisconnected();
-      scheduleReconnect();
+      if (isPasswordRequiredError(error)) setWebLoginExpired(true);
+      else scheduleReconnect();
     };
     const connect = () => {
       if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
@@ -279,7 +292,7 @@ export function App() {
       nextSocket.onopen = () => {
         if (socket !== nextSocket) return;
         retryAttempt = 0;
-        void refreshSnapshot().catch(resetSocketAndReconnect);
+        void refreshSnapshot().catch(recoverSnapshot);
       };
       nextSocket.onmessage = (message) => {
         if (socket !== nextSocket) return;
@@ -296,7 +309,7 @@ export function App() {
     };
     connect();
     return () => { disposed = true; if (retryTimer !== undefined) window.clearTimeout(retryTimer); closeCurrentSocket(); };
-  }, [bootstrapReady, client, consume, initialize, markDisconnected, navigate]);
+  }, [applyLiveSnapshot, bootstrapReady, client, consume, markDisconnected]);
   useEffect(() => {
     const refreshNotificationState = () => {
       setNotificationPermission(currentBrowserNotificationPermission());
@@ -518,11 +531,12 @@ export function App() {
   };
 
   if (bootstrapQuery.isLoading) return <main className="app-loading"><SpinnerGap size={26} className="spinning" /><span>正在连接 Codex App Server</span></main>;
-  if (isPasswordRequiredError(bootstrapQuery.error)) return <WebPasswordGate onAuthenticated={async () => {
+  if (webLoginRequired) return <WebPasswordGate onAuthenticated={async () => {
     const result = await bootstrapQuery.refetch();
     if (result.error) throw result.error;
+    setWebLoginExpired(false);
   }} />;
-  if (bootstrapQuery.isError || !bootstrapData) return <main className="blocking-page"><div className="blocking-panel"><div className="blocking-icon"><TerminalWindow size={28} /></div><h1>服务初始化失败</h1><p>{bootstrapQuery.error?.message}</p><button className="button primary" onClick={() => bootstrapQuery.refetch()}>重试</button></div></main>;
+  if (!bootstrapData) return <main className="blocking-page"><div className="blocking-panel"><div className="blocking-icon"><TerminalWindow size={28} /></div><h1>服务初始化失败</h1><p>{bootstrapQuery.error?.message}</p><button className="button primary" onClick={() => bootstrapQuery.refetch()}>重试</button></div></main>;
   const gate = bootstrapGate(bootstrapData.connection.state, bootstrapData.authReady);
   if (gate === "disconnected") return <ConnectionGate />;
   if (gate === "authRequired") return <AuthGate />;
@@ -539,6 +553,7 @@ export function App() {
         <div id="main-session-pane" className={`main-pane ${mobilePane === "main" ? "mobile-active" : ""}`}>{selectedThreadId && selectedProject ? <SessionPane key={selectedThreadId} sessions={allSessions} threadId={selectedThreadId} project={selectedProject} projects={projects} models={sessionBackend(selectedThreadId) !== "codex" ? bootstrapData.backends?.find((backend) => backend.id === sessionBackend(selectedThreadId))?.models ?? [] : bootstrapData.models} linkedSideChatActive={sideRuntime?.state === "running" || sideRuntime?.state === "waitingForInput"} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onComposerReady={bindMainComposer} onOpenThread={(id) => navigate(`/sessions/${id}`)} onChangeBackend={(backend) => createSession(selectedProject.id, backend, undefined, selectedThreadId)} onOpenSideChat={() => setMobilePane("side")} onArchived={(id) => void handleArchived(id)} /> : <div className="no-selection"><div className="no-selection-mark" aria-hidden="true"><TerminalWindow size={28} weight="duotone" /></div><div className="no-selection-copy"><h2>{allSessionsQuery.isLoading ? "正在加载 Session" : "开始新的 Session"}</h2><p>{allSessionsQuery.isLoading ? "正在读取最近的工作。" : "当前 Project 还没有可打开的 Session。"}</p></div>{!allSessionsQuery.isLoading && <button className="button primary" onClick={() => requestNewSession()}>新建 Session</button>}</div>}</div>
         {sideThreadId && selectedProject && <><div className="resizable-divider" role="separator" aria-orientation="vertical" aria-label="调整 Side Chat 宽度" onPointerDown={(event) => { event.preventDefault(); const handle = event.currentTarget; handle.setPointerCapture(event.pointerId); document.body.classList.add("side-chat-resizing"); const startX = event.clientX; const startWidth = preferences?.sideChatWidth ?? 42; const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth; const move = (moveEvent: PointerEvent) => { const next = resizedSideChatWidth(startWidth, startX - moveEvent.clientX, workspaceWidth); workspaceRef.current?.style.setProperty("--live-side-width", `${next}%`); }; const finish = (finishEvent: PointerEvent) => { document.body.classList.remove("side-chat-resizing"); if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId); const next = resizedSideChatWidth(startWidth, startX - finishEvent.clientX, workspaceWidth); workspaceRef.current?.style.removeProperty("--live-side-width"); updatePreferences.mutate({ sideChatWidth: next }); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); }; window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish); }} /><div id="side-chat-pane" className={`side-pane ${mobilePane === "side" ? "mobile-active" : ""}`}><SessionPane key={sideThreadId} threadId={sideThreadId} project={selectedProject} projects={projects} models={bootstrapData.models} sideChat parallelWriteWarning={parallelWriteWarning} fullAccessNoticeSeen={fullAccessNoticeSeen} onAcknowledgeFullAccess={acknowledgeFullAccess} onOpenThread={(id) => navigate(`/sessions/${id}`)} onOpenSideChat={() => undefined} onCloseSideChat={() => void closeSide()} /></div></>}
       </div>
+      <div className="workspace-connection-notice" role="status">{connectionNotice && <><WifiSlash size={14} aria-hidden="true" />{connectionNotice}</>}</div>
     </main>{newSessionProjectId && <NewSessionDialog projectName={projects.find((project) => project.id === newSessionProjectId)?.name ?? "Project"} onClose={() => setNewSessionProjectId(null)} onCreate={async (backend, models) => { await createSession(newSessionProjectId, backend, models); }} />}<MachineMonitor /><ProjectSettingsDialog project={settingsProject} models={bootstrapData.models} onClose={() => setSettingsProject(null)} /><ProjectDirectoryDialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen} onAdd={addProjectAtPath} /><ConfirmationDialog open={!!removingProject} title="移除 Project" description={removingProject ? `从侧边栏移除“${removingProject.name}”？目录和 Codex Session 不会被删除。` : ""} icon={<Trash size={18} weight="fill" />} pending={projectRemovePending} error={projectRemoveError} confirmLabel="确认移除" onOpenChange={(open) => { if (!open) { setRemovingProject(null); setProjectRemoveError(null); } }} onConfirm={() => void removeProject()} />
   </div>;
 }

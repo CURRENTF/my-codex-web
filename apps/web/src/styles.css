@@ -159,6 +159,7 @@ code, pre { font-family: var(--mono); }
 .session-status-menu .status-icon.scheduled-running { animation: spin 4s linear infinite; }
 .session-status-menu.justFinished .status-icon.scheduled { color: var(--success); }
 .session-status-more-icon { opacity: 0; transform: scale(.7) rotate(-8deg); }
+.session-status-menu.no-status .session-status-more-icon { opacity: 1; transform: none; }
 .session-status-menu:hover .status-icon, .session-status-menu:focus-visible .status-icon, .session-status-menu[data-state="open"] .status-icon { opacity: 0; }
 .session-status-menu:hover .session-status-more-icon, .session-status-menu:focus-visible .session-status-more-icon, .session-status-menu[data-state="open"] .session-status-more-icon { opacity: 1; transform: scale(1) rotate(0); }
 .session-status-menu.running { color: var(--accent); }
@@ -214,12 +215,15 @@ code, pre { font-family: var(--mono); }
 .self-update-trigger.failed { color: var(--danger); }
 .self-update-trigger.unavailable { color: var(--text-faint); }
 
-.workspace { container: workspace / inline-size; position: relative; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--surface); }
+.workspace { container: workspace / inline-size; position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--surface); }
+.workspace-connection-notice { display: flex; flex: none; min-height: 30px; align-items: center; justify-content: center; gap: 6px; padding: 4px 12px; border-top: 1px solid var(--line); background: var(--surface-strong); color: var(--text-soft); font-size: 12px; }
+.workspace-connection-notice:empty { display: none; }
+.workspace-connection-notice svg { flex: none; color: var(--warning); }
 .workspace-error-stack { position: absolute; z-index: 30; top: 8px; left: 50%; display: grid; width: min(620px, calc(100% - 24px)); gap: 6px; transform: translateX(-50%); }
 .workspace-error { display: flex; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--surface-strong)); padding: 7px 9px; box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 8%, transparent); color: var(--danger); font-size: 11px; }
 .workspace-error span { min-width: 0; flex: 1; color: var(--text-soft); }
 .workspace-error button { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: transparent; color: var(--text-soft); cursor: pointer; }
-.workspace-layout { position: relative; display: grid; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.workspace-layout { position: relative; display: grid; flex: 1; width: 100%; min-width: 0; min-height: 0; overflow: hidden; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .workspace-layout.with-side-chat { grid-template-columns: minmax(420px, 1fr) 5px clamp(360px, var(--live-side-width, var(--side-width, 42%)), calc(100cqw - 425px)); }
 .main-pane, .side-pane { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .side-pane { border-left: 1px solid var(--line); }

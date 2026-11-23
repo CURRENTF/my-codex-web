@@ -39,9 +39,9 @@ export function sessionSwipeIsRevealed(scrollLeft: number): boolean {
   return scrollLeft >= SESSION_SWIPE_ACTION_WIDTH / 2;
 }
 
-export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }: { state: RuntimeState; scheduledPollingEnabled?: boolean }) {
+export function SessionStatusMenuIcon({ state, scheduledPollingEnabled = false }: { state?: RuntimeState; scheduledPollingEnabled?: boolean }) {
   return <span className="session-status-menu-icon" aria-hidden>
-    {scheduledPollingEnabled ? <Alarm className={`status-icon scheduled${state === "running" ? " scheduled-running" : ""}`} size={16} weight="regular" /> : <StatusIcon state={state} size={20} />}
+    {state && (scheduledPollingEnabled ? <Alarm className={`status-icon scheduled${state === "running" ? " scheduled-running" : ""}`} size={16} weight="regular" /> : <StatusIcon state={state} size={20} />)}
     <DotsThreeCircle className="session-status-more-icon" size={20} weight="regular" />
   </span>;
 }
@@ -53,11 +53,15 @@ function SessionRow({ session, active, compact, projectName, detailProjectName, 
   const liveRuntime = useAppStore((state) => state.runtimes[session.threadId]);
   const connectionState = useAppStore((state) => state.connectionState);
   const codexConnectionState = useAppStore((state) => state.codexConnectionState);
-  const runtimeState = connectionState === "connected" && (sessionBackend(session.threadId) !== "codex" || codexConnectionState === "connected") ? (liveRuntime?.state ?? session.runtimeState) : "disconnected";
+  const connectionUnavailable = connectionState !== "connected" || (sessionBackend(session.threadId) === "codex" && codexConnectionState !== "connected");
+  const runtimeState = liveRuntime?.state ?? session.runtimeState;
+  const displayedState = connectionUnavailable ? undefined : runtimeState;
+  const statusLabel = displayedState ? statusText(displayedState) : undefined;
+  const statusDetails = [statusLabel, session.scheduledPollingEnabled && "定时轮询已启用", "更多操作"].filter(Boolean);
   const track = useRef<HTMLDivElement>(null);
   const programmaticTarget = useRef<number | null>(null);
   const suppressClick = useRef(false);
-  const archiveDisabled = busy || runtimeState === "running" || runtimeState === "waitingForInput" || runtimeState === "disconnected";
+  const archiveDisabled = busy || connectionUnavailable || runtimeState === "running" || runtimeState === "waitingForInput" || runtimeState === "disconnected";
   useEffect(() => {
     const element = track.current;
     if (!element) return;
@@ -87,7 +91,7 @@ function SessionRow({ session, active, compact, projectName, detailProjectName, 
   const forkLink = forkDescription && <button className="fork-source-link" aria-label={forkDescription} data-tooltip={compact ? forkDescription : undefined} onClick={() => { if (suppressClick.current) return; if (revealed) onReveal(null); else onOpen(session.parentThreadId!); }}><GitFork size={compact ? 13 : 11} />{!compact && <span>{forkDescription}</span>}</button>;
   const flags = [session.pinned && "已置顶", session.hasGoal && "Goal", session.scheduledPollingEnabled && "定时轮询"].filter(Boolean).join("、");
   const details: TooltipDetailRow[] = [
-    { label: "状态", value: statusText(runtimeState) },
+    ...(statusLabel ? [{ label: "状态", value: statusLabel }] : []),
     { label: "项目", value: detailProjectName ?? "Other" },
     { label: "后端", value: BACKEND_LABELS[sessionBackend(session.threadId)] },
     { label: "更新", value: relativeTime(session.updatedAt, now), detail: new Date(session.updatedAt).toLocaleString() },
@@ -103,9 +107,9 @@ function SessionRow({ session, active, compact, projectName, detailProjectName, 
             <span className="session-signals">{session.pinned && <PushPin className="session-pinned-icon" size={13} weight="fill" aria-label="已置顶" />}{session.hasGoal && <Target size={13} weight="bold" />}{!compact && session.parentThreadId && <GitFork size={13} weight="bold" />}</span>
           </button>
           {compact && forkLink}
-          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${runtimeState}`} aria-label={`${session.title}：${statusText(runtimeState)}${session.scheduledPollingEnabled ? "，定时轮询已启用" : ""}，更多操作`} data-tooltip={`${statusText(runtimeState)}${session.scheduledPollingEnabled ? " · 定时轮询已启用" : ""} · 更多操作`}><SessionStatusMenuIcon state={runtimeState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
+          <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" className={`session-status-menu ${displayedState ?? "no-status"}`} aria-label={`${session.title}：${statusDetails.join("，")}`} data-tooltip={statusDetails.join(" · ")}><SessionStatusMenuIcon state={displayedState} scheduledPollingEnabled={session.scheduledPollingEnabled} /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={4} align="end">
             <DropdownMenu.Item className="menu-item" disabled={busy} onSelect={() => onPin(session)}><PushPin size={14} weight={session.pinned ? "fill" : "regular"} />{session.pinned ? "取消置顶" : "置顶"}</DropdownMenu.Item>
-            <DropdownMenu.Item className="menu-item" disabled={busy || runtimeState === "disconnected"} onSelect={() => onRename(session)}><PencilSimple size={14} />重命名</DropdownMenu.Item>
+            <DropdownMenu.Item className="menu-item" disabled={busy || connectionUnavailable || runtimeState === "disconnected"} onSelect={() => onRename(session)}><PencilSimple size={14} />重命名</DropdownMenu.Item>
             <DropdownMenu.Separator className="menu-separator" />
             <DropdownMenu.Item className="menu-item danger-item" disabled={archiveDisabled} onSelect={() => onArchive(session)}><Archive size={14} />归档</DropdownMenu.Item>
           </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>

@@ -154,7 +154,7 @@ export async function createServer() {
       runtimes.handleConnection(state, "codex");
     },
     onRecovered: () => {
-      if (!startupPhase && adapter.account) {
+      if (!startupPhase && !adapter.codex.requiresLogin) {
         void indexer.scanStartupRoots()
           .then(() => restoreSubagentsSafely("reconnect"))
           .then(() => indexer.scanAllInBackground())
@@ -314,7 +314,9 @@ export async function createServer() {
   app.get("/api/bootstrap", async (_request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");
     if (!passwordRequired) setSessionCookie(reply);
-    const backends = await adapter.describe();
+    // Read Codex readiness with the event sequence below, after the other backends finish probing.
+    const backends = (await adapter.describe()).map((backend) =>
+      backend.id === "codex" ? adapter.describeCodex(connectionState === "connected") : backend);
     return {
       eventSeq: events.currentSeq,
       connection: { state: "connected", codexVersion: null },

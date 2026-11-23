@@ -58,8 +58,8 @@ describe("viewport layout CSS", () => {
 
   it("combines each Session status and action menu into one visible control", () => {
     expect(sidebarSource).toContain("DotsThreeCircle");
-    expect(sidebarSource).toContain("statusText(runtimeState)");
-    expect(sidebarSource).toContain("session-status-menu ${runtimeState}");
+    expect(sidebarSource).toContain("statusText(displayedState)");
+    expect(sidebarSource).toContain('session-status-menu ${displayedState ?? "no-status"}');
     expect(sidebarSource).not.toContain('<StatusIcon state={runtimeState} />');
     expect(sidebarSource).not.toContain("session-row-more");
     expect(rule(".session-status-menu")).toContain("display: grid");

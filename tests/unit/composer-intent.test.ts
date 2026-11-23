@@ -47,7 +47,7 @@ describe("Composer submission intent", () => {
   it("disables submission while a Session is waiting for reconnect reconciliation", () => {
     expect(composerSource).toContain("const disconnected = runtimeState === \"disconnected\"");
     expect(composerSource).toContain("const blocked = (disabled || disconnected) && !running");
-    expect(composerSource).toContain("Session 尚未完成重同步");
+    expect(composerSource).toContain("disabled={blocked}");
   });
 
   it("clears remembered Steer intent when a Slash command is queued for the next Turn", () => {
