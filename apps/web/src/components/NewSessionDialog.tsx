@@ -35,7 +35,7 @@ export function NewSessionDialog({ projectName, onClose, onCreate }: {
               <input type="radio" name="session-backend" aria-label={BACKEND_LABELS[id]} value={id} checked={backend === id} onChange={() => { setBackend(id); setError(null); }} />
               <span className="backend-symbol" aria-hidden="true">{id === "codex" ? <TerminalWindow size={23} /> : <Cpu size={23} />}</span>
               <span className="backend-copy"><strong>{BACKEND_LABELS[id]}</strong><small>{id === "codex" ? "使用 Codex 的模型与会话能力" : id === "pi" ? "使用 pi 配置的模型与工具" : "使用 agy CLI 的模型与工具"}</small></span>
-              <span className="backend-choice-state">{query.isFetching ? "检查中" : option?.available ? "可用" : "未就绪"}</span>
+              <span className={`backend-choice-state${query.isFetching ? "" : option?.available ? " available" : " unavailable"}`}>{query.isFetching ? "检查中" : option?.available ? "可用" : "未就绪"}</span>
               <CheckCircle size={19} weight={backend === id ? "fill" : "regular"} className="backend-check" aria-hidden="true" />
             </label>;
           })}
@@ -46,7 +46,7 @@ export function NewSessionDialog({ projectName, onClose, onCreate }: {
         </div>
         {error && <p className="dialog-error" role="alert">{error}</p>}
         <div className="dialog-actions backend-dialog-actions">
-          <button className="button secondary backend-refresh" disabled={query.isFetching || pending} onClick={() => void query.refetch()} aria-label="刷新后端状态"><ArrowClockwise size={15} />刷新状态</button>
+          <button className="button secondary backend-refresh" disabled={query.isFetching || pending} onClick={() => void query.refetch()} aria-label="刷新后端状态"><ArrowClockwise size={15} className={query.isFetching ? "spinning" : undefined} />刷新状态</button>
           <Dialog.Close asChild><button className="button secondary" disabled={pending}>取消</button></Dialog.Close>
           <button className="button primary" disabled={pending || query.isFetching || !selected?.available} onClick={() => void create()}>{pending ? "正在创建" : `使用 ${BACKEND_LABELS[backend]} 创建`}<ArrowRight size={15} /></button>
         </div>

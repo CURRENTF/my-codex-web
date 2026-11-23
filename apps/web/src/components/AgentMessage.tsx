@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import { appUrl } from "../app-base";
-import { ArrowSquareOut, CheckCircle, DownloadSimple, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningDiamond, type Icon } from "@phosphor-icons/react";
+import { ArrowSquareOut, Check, CheckCircle, Clipboard, DownloadSimple, FileCode, FolderOpen, GitBranch, GitCommit, MagnifyingGlass, UploadSimple, WarningCircle, WarningDiamond, type Icon } from "@phosphor-icons/react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -11,11 +12,33 @@ import { normalizeStandaloneMermaid } from "../mermaid-renderer";
 import { DownloadLink } from "./DownloadLink";
 import { MermaidDiagram } from "./MermaidDiagram";
 
+function CodeBlockCopy({ text, language }: { text: string; language?: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = window.setTimeout(() => setState("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  const label = state === "copied" ? "已复制代码" : state === "error" ? "复制失败，点击重试" : "复制代码";
+  return <div className="code-block-header" data-copied={state === "copied" ? "true" : undefined}>
+    {language && <span className="code-block-lang">{language}</span>}
+    <button type="button" className="code-block-copy" data-state={state} aria-label={label} onClick={() => {
+      void navigator.clipboard.writeText(text).then(() => setState("copied"), () => setState("error"));
+    }}>
+      {state === "copied" ? <Check size={12} /> : state === "error" ? <WarningCircle size={12} /> : <Clipboard size={12} />}
+      <span>{state === "copied" ? "已复制" : state === "error" ? "失败" : "复制"}</span>
+    </button>
+  </div>;
+}
+
 const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {
   const code = node?.children[0];
-  if (code?.type === "element" && code.tagName === "code" && Array.isArray(code.properties.className) && code.properties.className.includes("language-mermaid")) {
+  if (code?.type === "element" && code.tagName === "code") {
+    const classNames = Array.isArray(code.properties.className) ? code.properties.className.map(String) : [];
     const source = code.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "");
-    return <MermaidDiagram source={source} />;
+    if (classNames.includes("language-mermaid")) return <MermaidDiagram source={source} />;
+    const language = classNames.find((name) => name.startsWith("language-"))?.slice("language-".length);
+    return <div className="code-block-wrap"><CodeBlockCopy text={source} language={language} /><pre {...props}>{children}</pre></div>;
   }
   return <pre {...props}>{children}</pre>;
 };

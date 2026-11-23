@@ -1,3 +1,4 @@
+import { ArrowSquareOut } from "@phosphor-icons/react";
 import * as Popover from "@radix-ui/react-popover";
 import { useQuery } from "@tanstack/react-query";
 import type { AccountRateLimits, AccountRateLimitWindow } from "@codex-web/shared-types";
@@ -63,12 +64,12 @@ export function AccountQuota() {
       {plan && <div className="quota-source">额度来源：你的 {plan} 套餐</div>}
       {limits.map((limit) => <div className="quota-group" key={limit.id}>
         {limits.length > 1 && limit.name && <div className="quota-group-name">{limit.name}</div>}
-        {windows(limit).map((window, index) => <div className={`quota-row${remaining(window) <= 10 ? " low" : ""}`} key={index} title={window.resetsAt == null ? undefined : `${new Date(window.resetsAt * 1_000).toLocaleString()} 重置`}>
+        {windows(limit).map((window, index) => <div className={`quota-row${remaining(window) <= 10 ? " low" : ""}`} key={index} data-tooltip={window.resetsAt == null ? undefined : `${new Date(window.resetsAt * 1_000).toLocaleString()} 重置`}>
           <span>{windowLabel(window)}</span><span>剩余 {remaining(window)}%</span>
         </div>)}
         {creditBalance(limit) !== null && <div className="quota-row"><span>额度</span><span>{creditBalance(limit)}</span></div>}
       </div>)}
-      <a className="quota-manage" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">管理用量</a>
+      <a className="quota-manage" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer"><span>管理用量</span><ArrowSquareOut size={14} aria-hidden="true" /></a>
     </Popover.Content></Popover.Portal>
   </Popover.Root>;
 }

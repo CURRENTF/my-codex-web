@@ -4,7 +4,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { useComposerPreferences } from "../composer-preferences";
 import { useAppearancePreferences } from "../appearance-preferences";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alarm, Archive, ArrowClockwise, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, PencilSimple, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
+import { Alarm, Archive, ArrowClockwise, Bell, BellSlash, CaretDown, CaretRight, ClockCounterClockwise, DotsThree, DotsThreeCircle, Folder, FolderOpen, Gear, GitFork, MagnifyingGlass, PencilSimple, Plus, PushPin, Target, WarningCircle, X } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ModelOption, Preferences, Project, RuntimeState, SessionSummary } from "@codex-web/shared-types";
@@ -156,6 +156,7 @@ export function Sidebar(props: SidebarProps) {
   const showUserMessageRail = useComposerPreferences((state) => state.showUserMessageRail);
   const setShowUserMessageRail = useComposerPreferences((state) => state.setShowUserMessageRail);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dragOverProjectId, setDragOverProjectId] = useState<string | null>(null);
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
   const [busyThreadId, setBusyThreadId] = useState<string | null>(null);
@@ -197,7 +198,7 @@ export function Sidebar(props: SidebarProps) {
             <span className={`settings-toggle ${liquidGlass ? "enabled" : ""}`} aria-hidden="true"><span /></span>
           </button>
           <button className="app-settings-row" role="switch" aria-checked={compactSessions} aria-label="Compact 模式" onClick={() => setCompactSessions(!compactSessions)}>
-            <span><strong>Compact 模式</strong></span>
+            <span><strong>Compact 模式</strong><small>单行紧凑显示侧边栏 Session，悬停查看详情。</small></span>
             <span className={`settings-toggle ${compactSessions ? "enabled" : ""}`} aria-hidden="true"><span /></span>
           </button>
           <div className="menu-separator" />
@@ -228,8 +229,8 @@ export function Sidebar(props: SidebarProps) {
     </div>
     <label className="search-field"><MagnifyingGlass size={15} /><input value={props.search} onChange={(event) => props.onSearch(event.target.value)} placeholder="搜索 Session" aria-label="搜索 Session" />{props.search && <button onClick={() => props.onSearch("")} aria-label="清除搜索"><X size={13} /></button>}</label>
     <div className="sidebar-switch" role="tablist">
-      <button className={props.preferences.sidebarMode === "recent" ? "active" : ""} onClick={() => props.onMode("recent")}><ClockCounterClockwise size={15} />最近</button>
-      <button className={props.preferences.sidebarMode === "projects" ? "active" : ""} onClick={() => props.onMode("projects")}><Folder size={15} />项目</button>
+      <button role="tab" aria-selected={props.preferences.sidebarMode === "recent"} className={props.preferences.sidebarMode === "recent" ? "active" : ""} onClick={() => props.onMode("recent")}><ClockCounterClockwise size={15} />最近</button>
+      <button role="tab" aria-selected={props.preferences.sidebarMode === "projects"} className={props.preferences.sidebarMode === "projects" ? "active" : ""} onClick={() => props.onMode("projects")}><Folder size={15} />项目</button>
     </div>
     {actionError && <div className="sidebar-action-error" role="alert"><WarningCircle size={14} weight="fill" /><span>{actionError}</span><button type="button" onClick={() => setActionError("")} aria-label="关闭操作错误"><X size={13} /></button></div>}
     <div className="sidebar-list">
@@ -237,18 +238,18 @@ export function Sidebar(props: SidebarProps) {
         <div className="list-caption"><span>最近</span><button className="sort-button" onClick={() => props.onSort(props.preferences.sortDirection === "desc" ? "asc" : "desc")}>更新时间 {props.preferences.sortDirection === "desc" ? "↓" : "↑"}</button></div>
         {sessions.map((session) => sessionRow(session, projectNames[session.projectId] ?? "Other"))}
       </> : <>
-        <div className="list-caption"><span>项目</span><button className="caption-action" onClick={props.onAddProject}><Plus size={14} /></button></div>
+        <div className="list-caption"><span>项目</span><button className="caption-action" aria-label="添加 Project" onClick={props.onAddProject}><Plus size={14} /></button></div>
         {props.projects.map((project) => {
           const isExpanded = expanded[project.id] ?? true;
           const projectSessions = sessions.filter((session) => session.projectId === project.id);
           const visibleCount = visibleCounts[project.id] ?? PROJECT_SESSION_PAGE_SIZE;
           const visible = projectSessions.slice(0, visibleCount);
           const nextPageSize = Math.min(PROJECT_SESSION_PAGE_SIZE, projectSessions.length - visible.length);
-          return <section className="project-group" key={project.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/project-id", project.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const source = event.dataTransfer.getData("text/project-id"); if (source && source !== project.id) props.onReorder(source, project.id); }}>
+          return <section className={`project-group ${dragOverProjectId === project.id ? "drag-over" : ""}`} key={project.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/project-id", project.id)} onDragEnd={() => setDragOverProjectId(null)} onDragOver={(event) => { event.preventDefault(); if (dragOverProjectId !== project.id) setDragOverProjectId(project.id); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null) && dragOverProjectId === project.id) setDragOverProjectId(null); }} onDrop={(event) => { event.preventDefault(); setDragOverProjectId(null); const source = event.dataTransfer.getData("text/project-id"); if (source && source !== project.id) props.onReorder(source, project.id); }}>
             <div className="project-row">
               <button className={`project-toggle ${project.available ? "" : "unavailable"}`} onClick={() => setExpanded((state) => ({ ...state, [project.id]: !isExpanded }))}>{isExpanded ? <CaretDown size={14} /> : <CaretRight size={14} />}<span>{project.name}</span>{!project.available && <small>目录不可用</small>}</button>
               <button className="project-add" disabled={!project.available} onClick={() => props.onNew(project.id)} aria-label={`在 ${project.name} 新建 Session`}><Plus size={15} /></button>
-              <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="project-more" aria-label={`${project.name} 更多操作`}>•••</button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end">
+              <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="project-more" aria-label={`${project.name} 更多操作`}><DotsThree size={16} weight="bold" /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content" sideOffset={5} align="end">
                 <DropdownMenu.Item className="menu-item" disabled={!project.available} onSelect={() => props.onNew(project.id)}>新建 Session</DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={() => props.onRescan(project.id)}>重新扫描</DropdownMenu.Item>
                 <DropdownMenu.Item asChild disabled={!project.available}><a className="menu-item" href={codeViewUrl(project.canonicalPath)} target="_blank" rel="noreferrer" data-tooltip="在 Code View 中打开">code</a></DropdownMenu.Item>

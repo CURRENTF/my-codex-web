@@ -111,7 +111,7 @@
 :root[data-appearance="glass"] .composer:focus-within { border-color: var(--accent); }
 :root[data-appearance="glass"] .composer:is(.steer-mode, .queue-mode, .dragging-files) { border-color: var(--accent); }
 :root[data-appearance="glass"] .composer-wrap { padding-bottom: 18px; }
-:root[data-appearance="glass"] :is(.menu-content, .popover-content, .dialog-content, .composer-suggestion-menu) {
+:root[data-appearance="glass"] :is(.menu-content, .popover-content, .dialog-content, .composer-suggestion-menu, .settings-select-menu, .schedule-panel, .fork-tree-popover, .fast-tooltip, .user-message-rail-preview, .async-question-dock) {
   border-color: var(--glass-edge);
   border-radius: 16px;
   background: var(--glass-sheen), var(--glass-floating);
@@ -119,6 +119,7 @@
   -webkit-backdrop-filter: var(--glass-filter);
   backdrop-filter: var(--glass-filter);
 }
+:root[data-appearance="glass"] .fast-tooltip { border-radius: 10px; }
 :root[data-appearance="glass"] .dialog-content { border-radius: var(--radius-panel); }
 :root[data-appearance="glass"] .menu-item { border-radius: 10px; }
 :root[data-appearance="glass"] :is(.empty-mark, .empty-illustration, .no-selection-mark) {
@@ -126,12 +127,19 @@
   background: var(--glass-sheen), var(--glass-floating);
   box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
 }
-:root[data-appearance="glass"] .machine-monitor-trigger {
+:root[data-appearance="glass"] .machine-monitor {
   border-color: var(--glass-edge);
   border-radius: 999px;
-  background: var(--glass-floating);
+  background: var(--glass-sheen), var(--glass-floating);
   box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
 }
+:root[data-appearance="glass"] .machine-monitor.expanded { border-radius: 16px; }
+:root[data-appearance="glass"] .machine-monitor:not(.expanded) .machine-monitor-drag { border-radius: 999px 0 0 999px; }
+:root[data-appearance="glass"] .machine-monitor:not(.expanded) .machine-monitor-toggle { border-radius: 0 999px 999px 0; }
+:root[data-appearance="glass"] .machine-monitor.expanded .machine-monitor-drag { border-radius: 15px 0 0 0; }
+:root[data-appearance="glass"] .machine-monitor.expanded .machine-monitor-toggle { border-radius: 0 15px 0 0; }
 
 /* Preserve the existing drawer and split-pane breakpoints. Compact screens
    spend their space on content, with glass retained on the controls/drawer. */

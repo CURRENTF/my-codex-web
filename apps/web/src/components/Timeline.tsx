@@ -14,7 +14,33 @@ import { userMessageTargets, userMessageText, type UserMessageTarget } from "../
 import { AgentMessage, MarkdownMessage } from "./AgentMessage";
 import { UserMessageRail } from "./UserMessageRail";
 
-function copy(text: string): void { void navigator.clipboard.writeText(text); }
+function TurnCopyButton({ text }: { text: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = window.setTimeout(() => setState("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return <button type="button" data-state={state} onClick={() => {
+    void navigator.clipboard.writeText(text).then(() => setState("copied"), () => setState("error"));
+  }}>
+    {state === "copied" ? <Check size={13} /> : state === "error" ? <WarningCircle size={13} /> : <Clipboard size={13} />}
+    {state === "copied" ? "已复制" : state === "error" ? "复制失败" : "复制"}
+  </button>;
+}
+
+function diffLineClass(line: string): string {
+  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")) return "diff-line meta";
+  if (line.startsWith("@@")) return "diff-line hunk";
+  if (line.startsWith("+")) return "diff-line add";
+  if (line.startsWith("-")) return "diff-line del";
+  return "diff-line";
+}
+
+function DiffLines({ diff }: { diff?: string }) {
+  if (!diff) return <>没有可显示的 Diff</>;
+  return <>{diff.split("\n").map((line, index) => <span key={index} className={diffLineClass(line)}>{line || " "}</span>)}</>;
+}
 
 interface DisplayAttachment { key: string; kind: "image" | "file"; name: string; url?: string; detail?: string }
 
@@ -75,7 +101,7 @@ function diffStats(diff = ""): { additions: number; deletions: number } {
 
 function CommandCard({ item, liveDelta, turnStatus }: { item: Extract<CodexItem, { type: "commandExecution" }>; liveDelta?: string; turnStatus: CodexTurn["status"] }) {
   const [open, setOpen] = useState(false); const output = commandOutputText(item.aggregatedOutput, liveDelta, open); const result = commandResultDisplay(item.status, item.exitCode, turnStatus);
-  return <div className="tool-card"><button className="tool-card-header" onClick={() => setOpen(!open)}><TerminalWindow size={16} /><span className="tool-title">{item.command}</span><span className={`tool-result ${result.tone}`}>{result.label}</span></button>
+  return <div className="tool-card"><button type="button" className="tool-card-header" aria-expanded={open} onClick={() => setOpen(!open)}><CaretRight className={`tool-caret ${open ? "open" : ""}`} size={13} weight="bold" /><TerminalWindow size={16} /><span className="tool-title">{item.command}</span><span className={`tool-result ${result.tone}`}>{result.label}</span></button>
     <div className="tool-subline"><code>{item.cwd}</code>{item.durationMs !== null && <span>{(item.durationMs / 1_000).toFixed(1)}s</span>}</div>
     {output && <pre className={`command-output ${open ? "" : "preview"}`}>{output}</pre>}
   </div>;
@@ -90,7 +116,7 @@ function FileCard({ item, onOpenDiff }: { item: Extract<CodexItem, { type: "file
 
 function ToolCard({ title, status, details, icon = <Code size={16} /> }: { title: string; status: string; details?: string; icon?: ReactNode }) {
   if (!details) return <div className="tool-card compact"><div className="tool-card-header static">{icon}<span className="tool-title">{title}</span><span className="tool-result">{status}</span></div></div>;
-  return <details className="tool-card compact expandable"><summary className="tool-card-header">{icon}<span className="tool-title">{title}</span><span className="tool-result">{status}</span></summary><pre className="tool-details">{details}</pre></details>;
+  return <details className="tool-card compact expandable"><summary className="tool-card-header"><CaretRight className="tool-caret" size={13} weight="bold" />{icon}<span className="tool-title">{title}</span><span className="tool-result">{status}</span></summary><pre className="tool-details">{details}</pre></details>;
 }
 
 function ToolImage({ item }: { item: Extract<CodexItem, { type: "imageView" | "imageGeneration" }> }) {
@@ -109,9 +135,9 @@ function Item({ item, turnStatus, onOpenDiff, cwd, grouped = false }: { item: Co
   if (item.type === "reasoning") {
     const content = <div className="summary-content">{[...item.summary, ...(delta ? [delta] : [])].map((text, index) => <p key={index}>{text}</p>)}</div>;
     if (grouped) return <section className="activity-reasoning"><div className="activity-reasoning-label"><Wrench size={14} />思考摘要</div>{content}</section>;
-    return <details className="summary-card"><summary><Wrench size={15} />思考与执行摘要</summary>{content}</details>;
+    return <details className="summary-card"><summary><CaretRight className="summary-caret" size={13} weight="bold" /><Wrench size={15} />思考与执行摘要</summary>{content}</details>;
   }
-  if (item.type === "plan") return <details className="summary-card"><summary><CheckCircle size={15} />Plan</summary><pre className="plan-text">{item.text}{delta ?? ""}</pre></details>;
+  if (item.type === "plan") return <details className="summary-card"><summary><CaretRight className="summary-caret" size={13} weight="bold" /><CheckCircle size={15} />Plan</summary><pre className="plan-text">{item.text}{delta ?? ""}</pre></details>;
   if (item.type === "commandExecution") return <CommandCard item={item} liveDelta={delta} turnStatus={turnStatus} />;
   if (item.type === "fileChange") return <FileCard item={item} onOpenDiff={onOpenDiff} />;
   if (item.type === "mcpToolCall") return <ToolCard title={`${item.server} / ${item.tool}`} status={item.status} details={item.details} />;
@@ -180,7 +206,7 @@ function TurnBlock({ turn, previousTurnId, canFork, onFork, onSideChat, onOpenDi
     : entry.kind === "activity"
     ? <ActivityGroup key={`activity-${entry.items[0]?.id ?? index}`} items={entry.items} turnStatus={turn.status} onOpenDiff={onOpenDiff} cwd={cwd} />
     : <Item key={entry.item.id ?? `${turn.id}-${index}`} item={entry.item} turnStatus={turn.status} onOpenDiff={onOpenDiff} cwd={cwd} />)}
-    {turn.status !== "inProgress" && <footer className="turn-footer"><span className="turn-outcome">{turn.status === "completed" ? <Check size={13} /> : <XCircle size={13} />}{duration ? `已处理 ${duration}` : "处理完成"}{completedAt && <span className="turn-completed-at">· 完成于 {completedAt}</span>}</span>{finalMessage && <button onClick={() => copy(finalMessage.text)}><Clipboard size={13} />复制</button>}{canFork && <><button onClick={() => onFork(turn.id, "after", turn.id)}><GitFork size={13} />从此轮之后 Fork</button><button onClick={() => onFork(previousTurnId, "before", turn.id)}><GitFork size={13} />从此问题之前 Fork</button><button onClick={() => onSideChat(turn.id)}>从此处 Side Chat</button></>}</footer>}
+    {turn.status !== "inProgress" && <footer className="turn-footer"><span className="turn-outcome">{turn.status === "completed" ? <Check size={13} /> : <XCircle size={13} />}{duration ? `已处理 ${duration}` : "处理完成"}{completedAt && <span className="turn-completed-at">· 完成于 {completedAt}</span>}</span>{finalMessage && <TurnCopyButton text={finalMessage.text} />}{canFork && <><button onClick={() => onFork(turn.id, "after", turn.id)}><GitFork size={13} />从此轮之后 Fork</button><button onClick={() => onFork(previousTurnId, "before", turn.id)}><GitFork size={13} />从此问题之前 Fork</button><button onClick={() => onSideChat(turn.id)}>从此处 Side Chat</button></>}</footer>}
   </section>;
 }
 
@@ -272,5 +298,5 @@ export function Timeline({ threadId, turns, canFork = true, cwd, onFork, onSideC
   const timeline = !hasContent ? empty : useStaticTimeline
     ? <div ref={staticTimeline} className="timeline timeline-static">{turns.map((turn, index) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock key={turn.id} turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; })}{optimistic}</div>
     : <Virtuoso ref={virtualTimeline} className="timeline" data={turns} followOutput="smooth" initialTopMostItemIndex={Math.max(0, turns.length - 1)} components={{ Footer: () => optimistic }} itemContent={(index, turn) => { const boundary = forkBoundaryForTurn(turns, index); return <TurnBlock turn={turn} previousTurnId={boundary.previousCompletedTurnId} canFork={canFork && boundary.canFork} onFork={onFork} onSideChat={onSideChat} onOpenDiff={setSelectedDiff} cwd={cwd} />; }} />;
-  return <div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{showUserMessageRail && <UserMessageRail threadId={threadId} sessions={sessions} turns={turns} onOpenThread={onOpenThread} targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output">{selectedDiff.diff || "没有可显示的 Diff"}</pre></aside>}</div>;
+  return <div ref={timelineShell} className={`timeline-shell ${selectedDiff ? "with-diff" : ""}`}>{timeline}{showUserMessageRail && <UserMessageRail threadId={threadId} sessions={sessions} turns={turns} onOpenThread={onOpenThread} targets={messageTargets} virtual={!useStaticTimeline} onNavigate={scrollToMessage} />}{selectedDiff && <aside className="diff-panel"><header><div><strong>{selectedDiff.path}</strong><span>{selectedDiff.kind}</span></div><button onClick={() => setSelectedDiff(null)} aria-label="关闭 Diff"><X size={16} /></button></header><pre className="diff-output"><DiffLines diff={selectedDiff.diff} /></pre></aside>}</div>;
 }

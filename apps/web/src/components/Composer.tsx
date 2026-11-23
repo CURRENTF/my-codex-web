@@ -79,7 +79,7 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
   const capabilities = backendCapabilities(backend);
   const { codexFeatures, steer: supportsSteer } = capabilities;
   const supportsCommand = (name: string) => (capabilities.compact || name !== "compact") && (codexFeatures || !["goal", "review", "fork", "side", "permissions", "skills"].includes(name));
-  const queryClient = useQueryClient(); const textarea = useRef<HTMLTextAreaElement>(null); const fileInput = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient(); const textarea = useRef<HTMLTextAreaElement>(null); const fileInput = useRef<HTMLInputElement>(null); const suggestionList = useRef<HTMLDivElement>(null);
   const bindTextarea = useCallback((element: HTMLTextAreaElement | null) => { textarea.current = element; onTextareaReady?.(element); }, [onTextareaReady]);
   const steerDraftTurnId = useRef<string | null>(null);
   const submittedAttachmentIds = useRef<string[]>([]);
@@ -216,6 +216,9 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
   }, [argumentTrigger, completedSkillMention, cursor, dismissedMenuDraft, draft, models, running, selectedModel?.supportedReasoning, skills.data, skills.isLoading, trigger]);
   const menuKey = menu ? `${menu.kind}:${menu.options.map((option) => option.key).join("|")}` : "";
   useEffect(() => setMenuIndex(0), [menuKey]);
+  useEffect(() => {
+    suggestionList.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [menuIndex, menuKey]);
 
   const updateDraft = useCallback((next: string, nextCursor = next.length, dismissMenu = false) => {
     setDraft(threadId, next); setCursor(nextCursor); setDismissedMenuDraft(dismissMenu ? next : null);
@@ -574,7 +577,7 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
       })}
     </div>}
     <div className="composer-shell">
-      {menu && <div className="composer-suggestion-menu" role="listbox" aria-label={menu.title}><header><span>{menu.kind === "skill" ? <Cube size={14} /> : <Command size={14} />}{menu.title}</span><small>{menu.options.length} 项</small></header><div className="composer-suggestion-list">{menu.options.length ? menu.options.map((option, index) => <button key={option.key} role="option" aria-selected={index === menuIndex} className={index === menuIndex ? "selected" : ""} onMouseDown={(event) => { event.preventDefault(); selectMenuOption(option); }}><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.meta && <code>{option.meta}</code>}</button>) : <div className="composer-suggestion-empty">没有匹配项</div>}</div><footer>{menu.hint}</footer></div>}
+      {menu && <div className="composer-suggestion-menu" role="listbox" aria-label={menu.title}><header><span>{menu.kind === "skill" ? <Cube size={14} /> : <Command size={14} />}{menu.title}</span><small>{menu.options.length} 项</small></header><div ref={suggestionList} className="composer-suggestion-list">{menu.options.length ? menu.options.map((option, index) => <button key={option.key} role="option" aria-selected={index === menuIndex} className={index === menuIndex ? "selected" : ""} onMouseDown={(event) => { event.preventDefault(); selectMenuOption(option); }}><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.meta && <code>{option.meta}</code>}</button>) : <div className="composer-suggestion-empty">没有匹配项</div>}</div><footer>{menu.hint}</footer></div>}
       <div className={`composer ${running ? `${deliveryMode}-mode` : ""} ${draggingFiles ? "dragging-files" : ""}`} onDragEnter={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDraggingFiles(true); } }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingFiles(false); }} onDrop={(event) => { event.preventDefault(); setDraggingFiles(false); void uploadFiles([...event.dataTransfer.files]); }}>
         {(attachments.length > 0 || uploadingCount > 0) && <div className="attachment-tray" aria-label="待发送附件">
           {attachments.map((attachment) => <div className={`attachment-chip ${attachment.kind}`} key={attachment.id}>

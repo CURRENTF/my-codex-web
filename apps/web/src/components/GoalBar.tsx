@@ -25,7 +25,7 @@ export function GoalBar({ threadId, goal, disabled = false }: { threadId: string
     <Flag size={16} weight={goal ? "fill" : "regular"} />
   </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content goal-popover" sideOffset={8} align="end">
     <div className="popover-heading"><Flag size={17} weight="fill" /><span>Session Goal</span></div>
-    {goal && <p className="field-hint">已使用 {formatTokens(goal.tokensUsed)} / {goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens</p>}
+    {goal && <p className="goal-usage-meta">已使用 {formatTokens(goal.tokensUsed)} / {goal.tokenBudget ? formatTokens(goal.tokenBudget) : "∞"} tokens</p>}
     <label className="field-label">Objective<textarea rows={3} value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="描述需要持续推进的目标" /></label>
     {goal && objective !== goal.objective && <p className="field-hint">修改 Objective 会重置使用统计。</p>}
     <div className="goal-form-row"><label className="field-label">Token Budget<input type="number" min="1" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="不限" /></label><label className="field-label">Status<SettingsSelect className="settings-dialog-select" variant="status" ariaLabel="Status" menuLabel="Goal Status" value={status} options={statusOptions} placeholder="Status" onValueChange={(next) => setStatus(next as Goal["status"])} /></label></div>

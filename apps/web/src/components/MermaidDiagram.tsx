@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { WarningCircle } from "@phosphor-icons/react";
 import { renderMermaid } from "../mermaid-renderer";
 
 interface DiagramResult {
@@ -41,7 +42,7 @@ export function MermaidDiagram({ source }: { source: string }) {
         <details className="mermaid-source"><summary>源码</summary>{code}</details>
       </>
       : <>
-        {current?.failed && <span className="mermaid-error" role="status">图表暂时无法渲染，显示源码</span>}
+        {current?.failed && <span className="mermaid-error" role="status"><WarningCircle size={14} weight="fill" aria-hidden="true" />图表暂时无法渲染，显示源码</span>}
         {code}
       </>}
   </figure>;

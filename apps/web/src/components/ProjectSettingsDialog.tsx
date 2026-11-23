@@ -59,14 +59,16 @@ export function ProjectSettingsDialog({ project, models, onClose }: { project: P
       <Dialog.Content className="dialog-content project-settings-dialog" aria-describedby="project-settings-description">
         <div className="dialog-heading"><GearSix size={18} weight="fill" /><Dialog.Title>Project 设置</Dialog.Title></div>
         <Dialog.Description className="dialog-description" id="project-settings-description">新 Session 默认使用这些设置。普通 Fork 优先继承父 Session 当前设置。</Dialog.Description>
-        <label className="field-label">显示名称<input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></label>
-        <div className="settings-grid">
-          <label className="field-label">默认模型<SettingsSelect className="settings-dialog-select" variant="model" ariaLabel="默认模型" menuLabel="默认模型" value={model} options={modelOptions} placeholder="App Server 默认" onValueChange={(next) => { setModel(next); const option = models.find((item) => item.model === next || item.id === next); setReasoning(option?.supportedReasoning.find((item) => item.effort === "high")?.effort ?? option?.defaultReasoning ?? ""); }} /></label>
-          <label className="field-label">默认 Reasoning<SettingsSelect className="settings-dialog-select" variant="reasoning" ariaLabel="默认 Reasoning" menuLabel="默认 Reasoning" value={reasoning} options={reasoningOptions} placeholder="系统默认" onValueChange={setReasoning} /></label>
-        </div>
-        <label className="field-label">默认权限<AccessModeSelect className="settings-dialog-select" ariaLabel="默认权限" value={accessMode} onValueChange={setAccessMode} /></label>
-        {save.isError && <p className="dialog-error">{save.error.message}</p>}
-        <div className="dialog-actions"><Dialog.Close asChild><button className="button secondary">取消</button></Dialog.Close><button className="button primary" disabled={!name.trim() || save.isPending} onClick={() => save.mutate()}>保存设置</button></div>
+        <form onSubmit={(event) => { event.preventDefault(); if (name.trim() && !save.isPending) save.mutate(); }}>
+          <label className="field-label">显示名称<input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></label>
+          <div className="settings-grid">
+            <label className="field-label">默认模型<SettingsSelect className="settings-dialog-select" variant="model" ariaLabel="默认模型" menuLabel="默认模型" value={model} options={modelOptions} placeholder="App Server 默认" onValueChange={(next) => { setModel(next); const option = models.find((item) => item.model === next || item.id === next); setReasoning(option?.supportedReasoning.find((item) => item.effort === "high")?.effort ?? option?.defaultReasoning ?? ""); }} /></label>
+            <label className="field-label">默认 Reasoning<SettingsSelect className="settings-dialog-select" variant="reasoning" ariaLabel="默认 Reasoning" menuLabel="默认 Reasoning" value={reasoning} options={reasoningOptions} placeholder="系统默认" onValueChange={setReasoning} /></label>
+          </div>
+          <label className="field-label">默认权限<AccessModeSelect className="settings-dialog-select" ariaLabel="默认权限" value={accessMode} onValueChange={setAccessMode} /></label>
+          {save.isError && <p className="dialog-error">{save.error.message}</p>}
+          <div className="dialog-actions"><Dialog.Close asChild><button className="button secondary" type="button" disabled={save.isPending}>取消</button></Dialog.Close><button className="button primary" type="submit" disabled={!name.trim() || save.isPending}>{save.isPending ? "正在保存" : "保存设置"}</button></div>
+        </form>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;

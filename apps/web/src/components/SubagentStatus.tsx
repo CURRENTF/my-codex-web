@@ -46,7 +46,7 @@ export function SubagentStatusView({ parentThreadId, allAgents }: {
   >
     <UsersThree size={16} />
     {entries.length > 0 && <strong>{activeCount || entries.length}</strong>}
-  </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content subagent-popover" sideOffset={8} align="end">
+  </button></Popover.Trigger><Popover.Portal><Popover.Content className="popover-content subagent-popover" sideOffset={8} align="end" collisionPadding={12}>
     <header className="subagent-popover-header"><span><UsersThree size={17} /><strong>Subagents</strong></span><small>{summary}</small></header>
     {entries.length
       ? <div className="subagent-list" role="list">{entries.map(({ agent, nestingDepth }) => <SubagentAgentRow key={agent.threadId} agent={agent} nestingDepth={nestingDepth} />)}</div>

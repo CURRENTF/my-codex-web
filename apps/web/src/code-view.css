@@ -6,14 +6,15 @@
 .code-files { background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .code-directory-bar span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-filter { display: grid; gap: 6px; padding: 12px; font-size: 12px; color: var(--text-soft); }
-.code-filter input, .code-login input { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
+.code-filter input, .code-login input { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); outline: 0; background: var(--surface); color: var(--text); transition: border-color .14s ease, box-shadow .14s ease; }
+.code-filter input:focus, .code-login input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent); }
 .code-filter input::placeholder { color: var(--text-soft); }
 .code-file-list { overflow: auto; padding: 0 6px 12px; }
-.code-file-entry { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border-radius: 5px; cursor: pointer; font-size: 13px; }
+.code-file-entry { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background-color .14s ease, color .14s ease; }
 .code-file-entry svg { flex-shrink: 0; color: var(--text-soft); }
 .code-file-entry span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-file-entry:hover { background: var(--surface-hover); }
-.code-file-entry.selected { background: var(--accent-soft); color: var(--text); }
+.code-file-entry.selected { background: var(--accent-soft); color: var(--text); font-weight: 550; }
 .code-document { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .code-document-bar > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-document-bar .button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -23,7 +24,8 @@
 .code-editor-pane[hidden] { display: none; }
 .code-html-preview { flex: 1; width: 100%; min-height: 0; border: 0; background: white; color-scheme: light; }
 .code-view-modes { display: flex; flex-shrink: 0; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-control); }
-.code-view-modes button { padding: 5px 8px; border-radius: 4px; background: transparent; color: var(--text-soft); cursor: pointer; white-space: nowrap; }
+.code-view-modes button { padding: 5px 8px; border-radius: 4px; background: transparent; color: var(--text-soft); cursor: pointer; white-space: nowrap; transition: background-color .14s ease, color .14s ease; }
+.code-view-modes button:hover:not([aria-pressed="true"]) { background: var(--surface-hover); color: var(--text); }
 .code-view-modes button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); }
 .code-document-footer { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); padding: 7px 12px; font-size: 11px; color: var(--text-soft); }
 .code-document-footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -40,8 +42,8 @@
 .code-error { color: var(--danger); }
 .code-error button { margin-left: auto; flex-shrink: 0; }
 .code-discard span { flex: 1; }
-.code-loading, .code-empty { padding: 16px; color: var(--text-soft); }
-.code-loading { background: var(--surface-hover); min-height: 80px; }
+.code-loading, .code-empty { padding: 16px; color: var(--text-soft); font-size: 12px; }
+.code-loading { display: grid; min-height: 80px; place-items: center; border-radius: 8px; background: var(--surface-hover); animation: skeleton-pulse 1.6s ease-in-out infinite; }
 .code-login { width: min(360px, 90%); margin: auto; display: grid; gap: 16px; }
 .code-login label { display: grid; gap: 8px; }
 .code-view { --code-keyword: #6547ad; --code-string: #26713c; --code-literal: #9c472b; --code-function: #276c92; }
