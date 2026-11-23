@@ -498,6 +498,7 @@ code, pre { font-family: var(--mono); }
 .agent-image-link { display: block; width: fit-content; max-width: 100%; margin: .8em 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-strong); }
 .agent-image-link img { display: block; max-width: 100%; max-height: min(560px, 70dvh); object-fit: contain; }
 .agent-inline-link { display: inline-flex; align-items: center; gap: 3px; border-radius: 5px; padding: 0 3px; color: var(--accent); text-decoration: none; }
+.agent-inline-link > span { align-self: baseline; }
 .agent-inline-link:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); text-decoration: underline; }
 .agent-inline-link.file { color: var(--text-soft); font-family: ui-monospace, SFMono-Regular, monospace; font-size: .88em; }
 .file-download-error { display: block; margin: 6px 0; color: var(--danger); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

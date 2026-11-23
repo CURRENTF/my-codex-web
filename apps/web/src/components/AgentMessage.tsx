@@ -58,18 +58,18 @@ export function MarkdownMessage({ text, cwd, localImageUrls = {}, localPathUrls 
         }
         const localPathUrl = href ? localPathUrls[href] ?? (filePath ? localPathUrls[filePath] : undefined) : undefined;
         if (localPathUrl) {
-          return <a className="agent-inline-link external" href={appUrl(localPathUrl)} target="_blank" rel="noreferrer" data-tooltip={href}><ArrowSquareOut size={14} />{children}</a>;
+          return <a className="agent-inline-link external" href={appUrl(localPathUrl)} target="_blank" rel="noreferrer" data-tooltip={href}><ArrowSquareOut size={14} /><span>{children}</span></a>;
         }
         if (filePath) {
           const isDirectory = (localPathKinds[href!] ?? localPathKinds[filePath]) === "directory";
           if (!isDirectory && isDownloadOnlyFile(filePath)) {
-            return <DownloadLink className="agent-inline-link file" href={fileDownloadUrl(cwd, filePath)} title={`下载 ${filePath}`}><DownloadSimple size={14} />{children}</DownloadLink>;
+            return <DownloadLink className="agent-inline-link file" href={fileDownloadUrl(cwd, filePath)} title={`下载 ${filePath}`}><DownloadSimple size={14} /><span>{children}</span></DownloadLink>;
           }
           const PathIcon = isDirectory ? FolderOpen : FileCode;
-          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(filePath) : codeViewUrl(cwd, filePath)} target="_blank" rel="noreferrer" data-tooltip={filePath}><PathIcon size={14} />{children}</a>;
+          return <a className="agent-inline-link file" href={isDirectory ? codeViewUrl(filePath) : codeViewUrl(cwd, filePath)} target="_blank" rel="noreferrer" data-tooltip={filePath}><PathIcon size={14} /><span>{children}</span></a>;
         }
         if (href && /^https?:\/\//.test(href)) {
-          return <a className="agent-inline-link external" href={href} target="_blank" rel="noreferrer"><ArrowSquareOut size={14} />{children}</a>;
+          return <a className="agent-inline-link external" href={href} target="_blank" rel="noreferrer"><ArrowSquareOut size={14} /><span>{children}</span></a>;
         }
         return <span>{children}</span>;
       },
