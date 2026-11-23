@@ -149,7 +149,7 @@ export class ThreadRuntimeRegistry {
     });
   }
 
-  handleConnection(state: "connected" | "connecting" | "disconnected", backend?: BackendId): void {
+  handleConnection(state: "connected" | "connecting" | "disconnected", backend?: BackendId, backendAvailable?: boolean): void {
     const affected = (id: string) => !backend || sessionBackend(id) === backend;
     if (state === "disconnected") {
       for (const [key, id] of this.liveDeltaThreads) if (affected(id)) { this.liveDeltas.delete(key); this.liveDeltaThreads.delete(key); }
@@ -169,7 +169,11 @@ export class ThreadRuntimeRegistry {
         }
       }
     }
-    this.events.publish(backend ? "backend.connection.changed" : "connection.changed", { state, ...(backend ? { backend } : {}) });
+    if (backend) {
+      this.events.publish("backend.connection.changed", { state, backend, ...(backendAvailable !== undefined ? { available: backendAvailable } : {}) });
+    } else {
+      this.events.publish("connection.changed", { state });
+    }
   }
 
   reconcileFromSnapshot(threadId: string, turns: SessionTurn[]): SnapshotReconciliationResult {

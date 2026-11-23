@@ -467,17 +467,16 @@ code, pre { font-family: var(--mono); }
 .agent-message-text li > ul, .agent-message-text li > ol { margin-top: .2em; margin-bottom: .2em; padding-left: 1.45em; }
 .agent-message-text li + li { margin-top: .18em; }
 .agent-message-text blockquote { margin: .8em 0; border-left: 3px solid var(--line-strong); border-radius: 0 7px 7px 0; background: color-mix(in srgb, var(--surface-hover) 45%, transparent); padding: .35em .85em .35em .95em; color: var(--text-soft); }
-.code-block-wrap { position: relative; min-width: 0; max-width: 100%; margin: .8em 0; }
-.code-block-wrap > pre { margin: 0; }
-.code-block-header { position: absolute; top: 6px; right: 6px; z-index: 1; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity .14s ease; }
-.code-block-wrap:hover .code-block-header, .code-block-wrap:focus-within .code-block-header, .code-block-header[data-copied="true"] { opacity: 1; }
-@media (hover: none) and (pointer: coarse) { .code-block-header { opacity: 1; } }
-.code-block-lang { padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--surface-strong) 88%, transparent); color: var(--text-faint); font-family: var(--mono); font-size: 10px; line-height: 1.4; pointer-events: none; }
-.code-block-copy { display: inline-flex; height: 24px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--surface-strong) 94%, transparent); color: var(--text-soft); font-size: 11px; cursor: pointer; transition: background-color .14s ease, color .14s ease, border-color .14s ease; }
+.agent-message-text pre, .code-block-wrap { max-width: 100%; margin: .8em 0; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--surface-strong) 84%, transparent); }
+.code-block-wrap { min-width: 0; }
+.code-block-header { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 5px 6px 0 13px; }
+.code-block-lang { min-width: 0; margin-right: auto; overflow: hidden; color: var(--text-faint); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.code-block-copy { display: inline-flex; flex: none; height: 24px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--surface-strong) 94%, transparent); color: var(--text-soft); font-size: 11px; cursor: pointer; transition: background-color .14s ease, color .14s ease, border-color .14s ease; }
 .code-block-copy:hover { border-color: var(--line-strong); background: var(--surface-hover); color: var(--text); }
 .code-block-copy[data-state="copied"] { border-color: color-mix(in srgb, var(--success) 35%, var(--line)); color: var(--success); }
 .code-block-copy[data-state="error"] { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); color: var(--danger); }
-.agent-message-text pre { max-width: 100%; margin: .8em 0; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--surface-strong) 84%, transparent); padding: 11px 13px; line-height: 1.55; white-space: pre; }
+.agent-message-text pre { overflow: auto; padding: 11px 13px; line-height: 1.55; white-space: pre; }
+.code-block-wrap > pre { margin: 0; border: 0; background: transparent; padding-top: 6px; }
 .agent-message-text code { font-family: var(--mono); }
 .agent-message-text pre code { display: block; min-width: max-content; color: var(--text); font-size: 12px; }
 .agent-message-text :not(pre) > code { border: 1px solid color-mix(in srgb, var(--line) 75%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--surface-strong) 78%, transparent); padding: .12em .35em; color: var(--text); font-size: .88em; }

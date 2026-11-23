@@ -29,17 +29,27 @@ function TurnCopyButton({ text }: { text: string }) {
   </button>;
 }
 
-function diffLineClass(line: string): string {
-  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")) return "diff-line meta";
-  if (line.startsWith("@@")) return "diff-line hunk";
-  if (line.startsWith("+")) return "diff-line add";
-  if (line.startsWith("-")) return "diff-line del";
-  return "diff-line";
+function classifyDiffLines(diff: string) {
+  let inHunk = false;
+  return diff.split("\n").map((line) => {
+    if (line.startsWith("diff ")) {
+      inHunk = false;
+      return { line, kind: "meta" };
+    }
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      return { line, kind: "hunk" };
+    }
+    if (!inHunk && (line.startsWith("+++ ") || line.startsWith("--- ") || line.startsWith("index "))) return { line, kind: "meta" };
+    if (line.startsWith("+")) return { line, kind: "add" };
+    if (line.startsWith("-")) return { line, kind: "del" };
+    return { line, kind: "context" };
+  });
 }
 
 function DiffLines({ diff }: { diff?: string }) {
   if (!diff) return <>没有可显示的 Diff</>;
-  return <>{diff.split("\n").map((line, index) => <span key={index} className={diffLineClass(line)}>{line || " "}</span>)}</>;
+  return <>{classifyDiffLines(diff).map(({ line, kind }, index) => <span key={index} className={`diff-line ${kind}`}>{line || " "}</span>)}</>;
 }
 
 interface DisplayAttachment { key: string; kind: "image" | "file"; name: string; url?: string; detail?: string }
@@ -92,9 +102,9 @@ function UserMessage({ item, cwd }: { item: Extract<CodexItem, { type: "userMess
 }
 function diffStats(diff = ""): { additions: number; deletions: number } {
   let additions = 0; let deletions = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
-    if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+  for (const { kind } of classifyDiffLines(diff)) {
+    if (kind === "add") additions += 1;
+    if (kind === "del") deletions += 1;
   }
   return { additions, deletions };
 }
@@ -108,9 +118,10 @@ function CommandCard({ item, liveDelta, turnStatus }: { item: Extract<CodexItem,
 }
 
 function FileCard({ item, onOpenDiff }: { item: Extract<CodexItem, { type: "fileChange" }>; onOpenDiff(change: { path: string; kind: string; diff?: string }): void }) {
-  const total = item.changes.reduce((result, change) => { const stats = diffStats(change.diff); return { additions: result.additions + stats.additions, deletions: result.deletions + stats.deletions }; }, { additions: 0, deletions: 0 });
+  const changes = item.changes.map((change) => ({ change, ...diffStats(change.diff) }));
+  const total = changes.reduce((result, { additions, deletions }) => ({ additions: result.additions + additions, deletions: result.deletions + deletions }), { additions: 0, deletions: 0 });
   return <div className="tool-card"><div className="tool-card-header static"><FileCode size={16} /><span className="tool-title">修改文件 {item.changes.length}</span><span className="tool-result ok"><b>+{total.additions}</b> <i>−{total.deletions}</i></span></div>
-    <div className="file-list">{item.changes.map((change) => { const stats = diffStats(change.diff); return <button key={change.path} onClick={() => onOpenDiff(change)}><code>{change.path}</code><span>{change.kind}</span><small><b>+{stats.additions}</b> <i>−{stats.deletions}</i></small></button>; })}</div>
+    <div className="file-list">{changes.map(({ change, additions, deletions }) => <button key={change.path} onClick={() => onOpenDiff(change)}><code>{change.path}</code><span>{change.kind}</span><small><b>+{additions}</b> <i>−{deletions}</i></small></button>)}</div>
   </div>;
 }
 

@@ -168,7 +168,7 @@ export function SessionPane({ threadId, project, projects, models, sessions = []
     </header>
     <PendingBanner threadId={threadId} />
     <div className="session-notices">
-      {query.isError && !connectionUnavailable && <div className="parallel-write-warning" role="status"><WarningCircle size={15} weight="fill" /><span>显示已缓存的历史，同步失败：{query.error.message}</span><button className="button secondary" onClick={() => void query.refetch()}>重试</button></div>}
+      {query.isError && <div className="parallel-write-warning" role="status"><WarningCircle size={15} weight="fill" /><span>显示已缓存的历史，同步失败：{query.error.message}</span><button className="button secondary" onClick={() => void query.refetch()}>重试</button></div>}
       {/* Turn errors live in Timeline; reserve top notices for operation failures. */}
       <div ref={setErrorTarget} className="session-operation-errors" />
       {!pendingFork && fork.isError && <div className="session-action-error" role="alert"><WarningCircle size={15} weight="fill" /><span>Fork 创建失败：{fork.error.message}</span><button onClick={() => fork.reset()} aria-label="关闭 Fork 创建错误"><X size={14} /></button></div>}

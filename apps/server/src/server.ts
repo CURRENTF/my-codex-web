@@ -151,7 +151,7 @@ export async function createServer() {
     reconcile: () => sessions.reconcileAfterReconnect(),
     onState: (state) => {
       connectionState = state;
-      runtimes.handleConnection(state, "codex");
+      runtimes.handleConnection(state, "codex", adapter.describeCodex(state === "connected").available);
     },
     onRecovered: () => {
       if (!startupPhase && !adapter.codex.requiresLogin) {

@@ -20,7 +20,7 @@ function CodeBlockCopy({ text, language }: { text: string; language?: string }) 
     return () => window.clearTimeout(timer);
   }, [state]);
   const label = state === "copied" ? "已复制代码" : state === "error" ? "复制失败，点击重试" : "复制代码";
-  return <div className="code-block-header" data-copied={state === "copied" ? "true" : undefined}>
+  return <div className="code-block-header">
     {language && <span className="code-block-lang">{language}</span>}
     <button type="button" className="code-block-copy" data-state={state} aria-label={label} onClick={() => {
       void navigator.clipboard.writeText(text).then(() => setState("copied"), () => setState("error"));

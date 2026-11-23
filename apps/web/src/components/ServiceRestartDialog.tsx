@@ -55,6 +55,7 @@ export function ServiceRestartDialog({ open, onOpenChange }: { open: boolean; on
   const running = restart.isPending || watching !== null || status?.state === "restarting";
   const statusTone = running ? "restarting" : !status ? "loading" : !status.enabled ? "unavailable" : status.state === "failed" ? "failed" : "idle";
   const statusTitle = running ? "正在重启" : !status ? "读取中" : !status.enabled ? "未配置" : status.state === "failed" ? "重启失败" : "就绪";
+  const statusDetail = !running && (status?.state === "failed" || status?.enabled === false) && status.message !== error ? status.message : null;
   return <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Overlay className="dialog-overlay" />
@@ -63,15 +64,15 @@ export function ServiceRestartDialog({ open, onOpenChange }: { open: boolean; on
         <Dialog.Description className="dialog-description">重启 Web 服务会暂时断开连接，恢复后页面会自动刷新。请先等待正在运行的任务完成。</Dialog.Description>
         <div className={`self-update-status ${statusTone}`} role="status">
           {running || !status ? <SpinnerGap size={17} className="spinning" /> : !status.enabled || status.state === "failed" ? <WarningCircle size={17} weight="fill" /> : <CheckCircle size={17} weight="fill" />}
-          <span><strong>{statusTitle}</strong><small>{running ? "正在重启，等待服务恢复…" : status?.message ?? "正在读取服务状态…"}</small></span>
+          <span><strong>{statusTitle}</strong>{statusDetail && <small>{statusDetail}</small>}</span>
         </div>
         {error && <p className="dialog-error" role="alert">{error}</p>}
         {statusQuery.isError && !running && <p className="dialog-error" role="alert">无法读取服务状态，请稍后重试。</p>}
         <div className="dialog-actions">
           <Dialog.Close asChild><button className="button secondary">{running ? "后台等待" : "取消"}</button></Dialog.Close>
-          <button className="button primary" disabled={!status?.enabled || running || statusQuery.isError} onClick={() => { setError(null); restart.mutate(); }}>
-            {running ? <><SpinnerGap size={15} className="spinning" />正在重启</> : <><ArrowClockwise size={15} />确认重启</>}
-          </button>
+          {!running && <button className="button primary" disabled={!status?.enabled || statusQuery.isError} onClick={() => { setError(null); restart.mutate(); }}>
+            <ArrowClockwise size={15} />确认重启
+          </button>}
         </div>
       </Dialog.Content>
     </Dialog.Portal>

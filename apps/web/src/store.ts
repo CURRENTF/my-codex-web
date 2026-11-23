@@ -454,8 +454,10 @@ export const useAppStore = create<AppStore>((set) => ({
     if (event.seq <= state.lastEventSeq) return state;
     const sequenced = { lastEventSeq: event.seq };
     if (event.type === "backend.connection.changed") {
-      const payload = event.payload as { backend: string; state: AppStore["connectionState"] };
-      return payload.backend === "codex" ? { ...sequenced, codexConnectionState: payload.state } : sequenced;
+      const payload = event.payload as { backend: string; state: AppStore["connectionState"]; available?: boolean };
+      if (payload.backend !== "codex") return sequenced;
+      const codexConnectionState = payload.state === "connected" && payload.available === false ? "disconnected" : payload.state;
+      return { ...sequenced, codexConnectionState };
     }
     if (event.type === "connection.changed") {
       const connectionState = (event.payload as { state?: AppStore["connectionState"] }).state;

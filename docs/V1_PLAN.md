@@ -73,7 +73,7 @@ Composer 包含输入区、Full Access、模型、Reasoning 和发送按钮。�
 
 映射：Turn 开始为 running；active 且有待输入请求为 waitingForInput；completed 为 justFinished；interrupted/failed 保持对应状态；断开为 disconnected。justFinished 显示绿色勾 20 秒后回 idle。失败红标保留到打开 Session 或下一 Turn 开始。
 
-状态必须实时显示在 Sidebar 行、主 Session 标题和 Side Chat 标题。V1 只保证由当前 Web 后端管理的 App Server 进程，不保证另一个 CLI 进程的实时事件。
+连接可用时，在 Sidebar 行、主 Session 标题和 Side Chat 标题实时显示会话状态。Web 连接断开或会话所属后端不可用时，由工作区统一显示连接提示，相关会话隐藏状态图标并禁用消息发送。连接仍然可用但单个 Session 尚未完成对账时，继续显示该 Session 的 `disconnected` 状态。V1 只保证由当前 Web 后端管理的 App Server 进程，不保证另一个 CLI 进程的实时事件。
 
 ## 九、运行中 Steer
 
