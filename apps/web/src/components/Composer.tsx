@@ -62,13 +62,13 @@ function normalizeAccessMode(value: string): AccessMode | null {
   return null;
 }
 
-export function Composer({ errorTarget, threadId, project, models: suppliedModels, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, disabledReason, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
+export function Composer({ errorTarget, threadId, project, models: suppliedModels, runtimeState, activeTurnId, uncertainTurnStart = false, initialSettings, goal = null, contextUsage, latestCompletedTurnId = null, latestTurnId = null, latestTurnStatus = null, compact = false, disabled = false, onTextareaReady, onAccessModeChange, onForkLatest, onOpenSideChat }: {
   errorTarget?: HTMLElement | null;
   threadId: string; project: Project; models: ModelOption[]; runtimeState: RuntimeState; activeTurnId?: string;
   uncertainTurnStart?: boolean;
   initialSettings: { model: string | null; reasoning: string | null; serviceTier: string | null; accessMode: AccessMode };
   goal?: Goal | null; contextUsage?: ContextUsage; latestCompletedTurnId?: string | null; latestTurnId?: string | null; latestTurnStatus?: SessionTurn["status"] | null;
-  compact?: boolean; disabled?: boolean; disabledReason?: string; onTextareaReady?(element: HTMLTextAreaElement | null): void;
+  compact?: boolean; disabled?: boolean; onTextareaReady?(element: HTMLTextAreaElement | null): void;
   onAccessModeChange?(accessMode: AccessMode): void; onForkLatest?(clientRequestId: string): Promise<boolean>; onOpenSideChat?(clientRequestId: string): Promise<boolean>;
 }) {
   const backend = sessionBackend(threadId);
@@ -586,9 +586,8 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
           </div>)}
           {pendingUploads.map((upload) => <div className="attachment-chip uploading" key={upload.id}><span className="attachment-file-icon"><SpinnerGap className="spinning" size={18} /></span><span className="attachment-copy"><strong>{upload.name}</strong><small>正在上传</small></span></div>)}
         </div>}
-        {uploadError && <p className="dialog-error" role="alert">{uploadError}</p>}
         {draggingFiles && <div className="attachment-drop-hint"><Paperclip size={18} />松开即可添加附件</div>}
-        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected ? undefined : blocked ? disabledReason ?? "Project 目录不可用" : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : !codexFeatures ? (backend === "agy" ? "输入消息；可添加文件，/ 执行命令" : "输入消息；可添加图片或文件，/ 执行命令") : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
+        <textarea aria-label="消息" onBlur={() => setConfirmedDraft(null)} onCompositionStart={() => setConfirmedDraft(null)} ref={bindTextarea} value={draft} rows={2} disabled={blocked} onChange={(event) => { rememberSteerIntent(); setResolutionMessage(null); setFeedback(null); setDismissedMenuDraft(null); setDraft(threadId, event.target.value); setCursor(event.target.selectionStart); }} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onSelect={(event) => setCursor(event.currentTarget.selectionStart)} onClick={(event) => setCursor(event.currentTarget.selectionStart)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)} onKeyDown={handleKeyDown} placeholder={uncertainTurnStart ? "请先核实上一条消息是否执行" : disconnected || blocked ? undefined : running && deliveryMode === "queue" ? "输入排队需求；可连续加入多条" : running ? "追加到当前 Turn；Slash 命令会排队执行" : !codexFeatures ? (backend === "agy" ? "输入消息；可添加文件，/ 执行命令" : "输入消息；可添加图片或文件，/ 执行命令") : "输入消息；可粘贴图片或添加文件，$ 调用 Skill，/ 执行命令"} />
         <div className="composer-toolbar">
           <AccessModeSelect className="access-control" backend={backend} value={accessMode} onValueChange={(next) => { effectiveSettings.current = { ...effectiveSettings.current, accessMode: next }; setAccessMode(next); onAccessModeChange?.(next); persistAccessMode.mutate(next); }} disabled={running || blocked} />
           <div className="composer-controls">
@@ -610,11 +609,11 @@ export function Composer({ errorTarget, threadId, project, models: suppliedModel
         </div>
       </div>
     </div>
-    {blocked && disabled && !uncertainTurnStart && <p className="composer-error">{disabledReason ?? "Project 目录不可用；恢复该目录后重新扫描即可继续。"}</p>}
     {resolutionMessage && !resolutionMessage.startsWith("无法") && <p className="composer-resolution">{resolutionMessage}</p>}
     {confirmedDraft !== null && <p className="composer-feedback info" role="status">再按一次 Enter 发送，或点击发送按钮。Shift+Enter 换行。</p>}
     {feedback && feedback.tone !== "error" && <p className={`composer-feedback ${feedback.tone}`}>{feedback.text}</p>}
     {errorTarget && createPortal(<>
+      {uploadError && <ErrorNotice key={`upload-${uploadError}`} message={uploadError} />}
       {resolutionMessage?.startsWith("无法") && <ErrorNotice key={`resolution-${resolutionMessage}`} message={resolutionMessage} onDismiss={() => setResolutionMessage(null)} />}
       {feedback?.tone === "error" && <ErrorNotice key={`feedback-${feedback.text}`} message={feedback.text} onDismiss={() => setFeedback(null)} />}
       {skills.isError && trigger?.kind === "skill" && <ErrorNotice key={`skills-${skills.errorUpdatedAt}`} message={`Skills 加载失败：${skills.error.message}`} timestamp={skills.errorUpdatedAt} />}
